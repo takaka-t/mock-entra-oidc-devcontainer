@@ -1,0 +1,27 @@
+{
+  "name": "${localWorkspaceFolderBasename}",
+  "dockerComposeFile": "./docker/docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        // editor
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        // prettier
+        "prettier.printWidth": 120
+      },
+      "extensions": [
+        // language ja
+        "MS-CEINTL.vscode-language-pack-ja",
+        // formatter
+        "esbenp.prettier-vscode",
+        // git
+        "mhutchie.git-graph",
+        "donjayamanne.githistory",
+        "eamodio.gitlens"
+      ]
+    }
+  }
+}

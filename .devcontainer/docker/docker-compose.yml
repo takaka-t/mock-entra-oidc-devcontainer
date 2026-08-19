@@ -1,0 +1,10 @@
+name: mock-entra-oidc-devcontainer
+
+services:
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    volumes:
+      - ../../:/workspace:cached
+    command: sleep infinity
