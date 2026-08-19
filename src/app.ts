@@ -8,6 +8,7 @@ import { registerRoutes } from "./admin/routes.js";
 import { createHttpFaultMiddleware } from "./faults/http-fault.js";
 import { decodeRoutingPath, rawPathname, routedPathname } from "./http-path.js";
 import { loadSigningKeys } from "./oidc/keys.js";
+import { SigningKeyRolloverState } from "./oidc/key-rollover.js";
 import {
   applyProviderClient,
   createProvider,
@@ -168,9 +169,15 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
     logger: process.env.NODE_ENV !== "test",
     trustProxy: config.trustProxy,
   });
-  const store = new InMemoryScenarioStore();
+  const rolloverState = new SigningKeyRolloverState();
+  const store = new InMemoryScenarioStore({
+    onActivate: (scenario) => {
+      if (scenario === "SIGNING_KEY_ROLLOVER") rolloverState.publish();
+    },
+    onReset: () => rolloverState.reset(),
+  });
   const keys = await loadSigningKeys(config.keyDirectory);
-  const provider = createProvider(config, store, keys, app.log);
+  const provider = createProvider(config, store, keys, rolloverState, app.log);
   const clientStore = new OidcClientStore(
     config.clientConfigFile,
     (client) => applyProviderClient(provider, client),

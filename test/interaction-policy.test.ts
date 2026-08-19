@@ -10,6 +10,11 @@ import { loadConfig } from "../src/config.js";
 
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
+const authorizationFaultCases = [
+  ["AUTH_INTERACTION_REQUIRED", "interaction_required"],
+  ["AUTH_TEMPORARILY_UNAVAILABLE", "temporarily_unavailable"],
+  ["AUTH_SERVER_ERROR", "server_error"],
+] as const;
 
 function mergeCookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
@@ -36,7 +41,13 @@ class BrowserFlow {
 
   constructor(private readonly context: AppContext) {}
 
-  async start(options: { prompt?: string; state?: string } = {}) {
+  async start(
+    options: {
+      prompt?: string;
+      state?: string;
+      responseMode?: "query" | "form_post";
+    } = {},
+  ) {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
@@ -49,6 +60,7 @@ class BrowserFlow {
       code_challenge: challenge,
       code_challenge_method: "S256",
       ...(options.prompt ? { prompt: options.prompt } : {}),
+      ...(options.responseMode ? { response_mode: options.responseMode } : {}),
     });
     return this.inject(`/authorize?${query}`);
   }
@@ -251,6 +263,123 @@ describe("custom interaction policy", () => {
     expect(callback.searchParams.get("error")).toBe("access_denied");
     expect(callback.searchParams.get("state")).toBe("silent-denied");
     expect(context.store.get().scenario).toBe("NORMAL");
+  });
+
+  it.each(authorizationFaultCases)(
+    "returns %s through the validated authorization redirect",
+    async (scenario, expectedError) => {
+      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      const browser = new BrowserFlow(context);
+      const interaction = await browser.openLocation(
+        await browser.start({ state: `${scenario}-state` }),
+      );
+
+      expect(interaction.statusCode).toBe(303);
+      const callback = await browser.followToCallback(interaction);
+      expect(callback.searchParams.get("error")).toBe(expectedError);
+      expect(callback.searchParams.get("state")).toBe(`${scenario}-state`);
+      expect(callback.searchParams.get("code")).toBeNull();
+      expect(context.store.get()).toMatchObject({
+        scenario: "NORMAL",
+        lastCompleted: { scenario, triggeredCount: 1 },
+      });
+    },
+  );
+
+  it.each(authorizationFaultCases)(
+    "cannot bypass %s by posting directly to the interaction",
+    async (scenario, expectedError) => {
+      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      const browser = new BrowserFlow(context);
+      const finished = await browser.submitLocation(
+        await browser.start({ state: `${scenario}-direct` }),
+      );
+      const callback = await browser.followToCallback(finished);
+
+      expect(callback.searchParams.get("error")).toBe(expectedError);
+      expect(callback.searchParams.get("state")).toBe(`${scenario}-direct`);
+      expect(callback.searchParams.get("code")).toBeNull();
+    },
+  );
+
+  it.each(authorizationFaultCases)(
+    "returns %s directly for prompt=none",
+    async (scenario, expectedError) => {
+      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      const response = await new BrowserFlow(context).start({
+        prompt: "none",
+        state: `${scenario}-silent`,
+      });
+      const callback = new URL(String(response.headers.location));
+
+      expect(callback.searchParams.get("error")).toBe(expectedError);
+      expect(callback.searchParams.get("state")).toBe(`${scenario}-silent`);
+      expect(callback.searchParams.get("code")).toBeNull();
+    },
+  );
+
+  it("preserves response_mode=form_post for an authorization fault", async () => {
+    context.store.set({
+      scenario: "AUTH_INTERACTION_REQUIRED",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const response = await new BrowserFlow(context).start({
+      prompt: "none",
+      state: "form-post-state",
+      responseMode: "form_post",
+    });
+
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.body).toContain(
+      '<input type="hidden" name="error" value="interaction_required"/>',
+    );
+    expect(response.body).toContain(
+      '<input type="hidden" name="state" value="form-post-state"/>',
+    );
+    expect(response.body).not.toContain('name="code"');
+  });
+
+  it("does not send an authorization fault to an unregistered redirect URI", async () => {
+    context.store.set({
+      scenario: "AUTH_SERVER_ERROR",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const verifier = randomBytes(32).toString("base64url");
+    const query = new URLSearchParams({
+      client_id: "mock-public-client",
+      redirect_uri: "https://unregistered.example.test/callback",
+      response_type: "code",
+      scope: "openid",
+      state: "must-not-leak",
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+    });
+    const response = await context.app.inject({
+      url: `/authorize?${query}`,
+      headers: { host },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers.location).toBeUndefined();
+    expect(context.store.get()).toMatchObject({
+      scenario: "AUTH_SERVER_ERROR",
+      remainingFailures: 1,
+      triggeredCount: 0,
+    });
+  });
+
+  it("naturally returns login_required for a fresh prompt=none request", async () => {
+    const response = await new BrowserFlow(context).start({
+      prompt: "none",
+      state: "fresh-silent-login",
+    });
+    const callback = new URL(String(response.headers.location));
+
+    expect(callback.searchParams.get("error")).toBe("login_required");
+    expect(callback.searchParams.get("state")).toBe("fresh-silent-login");
+    expect(callback.searchParams.get("code")).toBeNull();
   });
 
   it("allows exactly one concurrent authorization to consume LIMITED 1", async () => {

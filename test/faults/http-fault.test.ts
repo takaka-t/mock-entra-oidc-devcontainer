@@ -48,10 +48,14 @@ describe("HTTP fault middleware", () => {
   it.each([
     ["TOKEN_500", "GET", "/token"],
     ["TOKEN_500", "HEAD", "/token"],
+    ["TOKEN_429", "GET", "/token"],
+    ["TOKEN_429", "HEAD", "/token"],
     ["JWKS_500", "POST", "/jwks"],
     ["JWKS_500", "HEAD", "/jwks"],
+    ["JWKS_INVALID", "POST", "/jwks"],
     ["DISCOVERY_500", "POST", "/.well-known/openid-configuration"],
     ["DISCOVERY_500", "HEAD", "/.well-known/openid-configuration"],
+    ["DISCOVERY_INVALID", "POST", "/.well-known/openid-configuration"],
   ] as const)("does not consume %s for %s %s", (scenario, method, url) => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario, mode: "LIMITED", failureCount: 1 });
@@ -121,6 +125,130 @@ describe("HTTP fault middleware", () => {
       "[MOCK-IDP] fault injected",
     );
   });
+
+  it("returns TOKEN_429 with Retry-After exposed to browser clients", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({
+      scenario: "TOKEN_429",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 17 },
+    });
+    const res = response();
+
+    createHttpFaultMiddleware(store, logger())(
+      {
+        ...request("POST", "/token"),
+        headers: { origin: "https://rp.example.test" },
+      } as IncomingMessage,
+      res.response,
+      vi.fn(),
+    );
+
+    expect(res.response.statusCode).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("17");
+    expect(res.headers.get("access-control-expose-headers")).toBe(
+      "Retry-After",
+    );
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(JSON.parse(String(res.end.mock.calls[0]?.[0]))).toEqual({
+      error: "temporarily_unavailable",
+      error_description: "Injected TOKEN_429 fault",
+    });
+  });
+
+  it("defaults TOKEN_429 Retry-After to 60 seconds", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "TOKEN_429", mode: "CONTINUOUS" });
+    const res = response();
+
+    createHttpFaultMiddleware(store, logger())(
+      request("POST", "/token"),
+      res.response,
+      vi.fn(),
+    );
+
+    expect(res.headers.get("retry-after")).toBe("60");
+  });
+
+  it("adds Retry-After to TOKEN_500 only when configured", () => {
+    const store = new InMemoryScenarioStore();
+    const middleware = createHttpFaultMiddleware(store, logger());
+
+    store.set({ scenario: "TOKEN_500", mode: "CONTINUOUS" });
+    const withoutRetryAfter = response();
+    middleware(request("POST", "/token"), withoutRetryAfter.response, vi.fn());
+    expect(withoutRetryAfter.response.statusCode).toBe(500);
+    expect(withoutRetryAfter.headers.has("retry-after")).toBe(false);
+    expect(withoutRetryAfter.headers.has("access-control-expose-headers")).toBe(
+      false,
+    );
+
+    store.set({
+      scenario: "TOKEN_500",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 5 },
+    });
+    const withRetryAfter = response();
+    middleware(request("POST", "/token"), withRetryAfter.response, vi.fn());
+    expect(withRetryAfter.response.statusCode).toBe(500);
+    expect(withRetryAfter.headers.get("retry-after")).toBe("5");
+    expect(withRetryAfter.headers.get("access-control-expose-headers")).toBe(
+      "Retry-After",
+    );
+  });
+
+  it.each([
+    ["DISCOVERY_INVALID", "/.well-known/openid-configuration", {}],
+    [
+      "JWKS_INVALID",
+      "/jwks",
+      { keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] },
+    ],
+  ] as const)(
+    "returns malformed successful data for %s",
+    (scenario, url, body) => {
+      const store = new InMemoryScenarioStore();
+      store.set({ scenario, mode: "CONTINUOUS" });
+      const res = response();
+
+      createHttpFaultMiddleware(store, logger())(
+        request("GET", url),
+        res.response,
+        vi.fn(),
+      );
+
+      expect(res.response.statusCode).toBe(200);
+      expect(res.headers.get("content-type")).toBe(
+        "application/json; charset=utf-8",
+      );
+      expect(res.headers.get("cache-control")).toBe("no-store");
+      expect(JSON.parse(String(res.end.mock.calls[0]?.[0]))).toEqual(body);
+    },
+  );
+
+  it.each([
+    ["TOKEN_429", "POST", "/token", 429],
+    ["JWKS_INVALID", "GET", "/jwks", 200],
+    ["DISCOVERY_INVALID", "GET", "/.well-known/openid-configuration", 200],
+  ] as const)(
+    "consumes a LIMITED %s fault only once",
+    (scenario, method, url, statusCode) => {
+      const store = new InMemoryScenarioStore();
+      store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      const middleware = createHttpFaultMiddleware(store, logger());
+      const injected = response();
+      const normal = response();
+      const normalNext = vi.fn();
+
+      middleware(request(method, url), injected.response, vi.fn());
+      middleware(request(method, url), normal.response, normalNext);
+
+      expect(injected.response.statusCode).toBe(statusCode);
+      expect(store.get().scenario).toBe("NORMAL");
+      expect(normalNext).toHaveBeenCalledOnce();
+      expect(normal.end).not.toHaveBeenCalled();
+    },
+  );
 
   it("matches exact routes below the configured issuer path", () => {
     const store = new InMemoryScenarioStore();

@@ -6,11 +6,13 @@ import Provider, {
 import type { FastifyBaseLogger } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { OidcClientConfig } from "../clients/types.js";
+import { authorizationFaultDefinitions } from "../faults/authorization-fault.js";
 import { mutateTokenResponse } from "../faults/token-generator.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { FaultDecision } from "../scenario/types.js";
 import { findUser, type MockUser } from "../users/users.js";
 import type { SigningKeys } from "./keys.js";
+import type { SigningKeyRolloverState } from "./key-rollover.js";
 
 function userClaims(
   user: MockUser,
@@ -41,6 +43,7 @@ export function createProvider(
   config: AppConfig,
   store: InMemoryScenarioStore,
   keys: SigningKeys,
+  rolloverState: SigningKeyRolloverState,
   logger: FastifyBaseLogger,
 ): Provider {
   const claimDecisions = new WeakMap<object, FaultDecision | null>();
@@ -69,42 +72,46 @@ export function createProvider(
     return decision;
   };
   const policy = interactionPolicy.base();
-  policy.add(
-    new interactionPolicy.Prompt(
-      { name: "mock_access_denied", requestable: false },
-      new interactionPolicy.Check(
-        "mock_access_denied",
-        "Access denied by mock scenario",
-        "access_denied",
-        (ctx) => {
-          const decision = store.consume(
-            "authorization",
-            store.getRequestTicket(ctx.req),
-          );
-          if (!decision) return false;
-          logger.warn(
-            {
-              scenario: decision.scenario,
-              endpoint: decision.endpoint,
-              mode: decision.mode,
-              faultInjected: true,
-              remainingBefore: decision.remainingBefore,
-              remainingAfter: decision.remainingAfter,
-            },
-            "[MOCK-IDP] authorization denied",
-          );
-          return true;
-        },
+  authorizationFaultDefinitions.forEach((definition, index) => {
+    policy.add(
+      new interactionPolicy.Prompt(
+        { name: definition.promptName, requestable: false },
+        new interactionPolicy.Check(
+          definition.promptName,
+          definition.errorDescription,
+          definition.error,
+          (ctx) => {
+            if (store.get().scenario !== definition.scenario) return false;
+            const decision = store.consume(
+              "authorization",
+              store.getRequestTicket(ctx.req),
+            );
+            if (!decision) return false;
+            logger.warn(
+              {
+                scenario: decision.scenario,
+                endpoint: decision.endpoint,
+                mode: decision.mode,
+                oauthError: definition.error,
+                faultInjected: true,
+                remainingBefore: decision.remainingBefore,
+                remainingAfter: decision.remainingAfter,
+              },
+              "[MOCK-IDP] authorization fault injected",
+            );
+            return true;
+          },
+        ),
       ),
-    ),
-    0,
-  );
+      index,
+    );
+  });
   policy.add(
     new interactionPolicy.Prompt({
       name: "select_account",
       requestable: true,
     }),
-    2,
+    authorizationFaultDefinitions.length + 1,
   );
 
   const configuration: Configuration = {
@@ -232,6 +239,11 @@ export function createProvider(
   provider.proxy = config.trustProxy;
   provider.use(async (ctx, next) => {
     await next();
+    if (ctx.path === "/jwks" && ctx.status === 200 && rolloverState.published) {
+      ctx.body = {
+        keys: [keys.normal.publicJwk, keys.rollover.publicJwk],
+      };
+    }
     if (ctx.path !== "/token" || ctx.status !== 200) return;
     const ticket = store.getRequestTicket(ctx.req);
     const decision = store.consume("token-jwt", ticket);

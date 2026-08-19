@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   defaultDelayMs,
+  defaultRetryAfterSeconds,
   defaultTokenError,
   maxDelayMs,
   scenarios,
@@ -61,6 +62,24 @@ export function parseScenarioInput(value: unknown): SetScenarioInput {
         ? {}
         : { errorDescription: result.errorDescription }),
     };
+  } else if (
+    definition.parameterKind === "retryAfterRequired" ||
+    definition.parameterKind === "retryAfterOptional"
+  ) {
+    const retryAfterSeconds = z.number().int().positive().safe();
+    const result = z
+      .object({
+        retryAfterSeconds:
+          definition.parameterKind === "retryAfterRequired"
+            ? retryAfterSeconds.default(defaultRetryAfterSeconds)
+            : retryAfterSeconds.optional(),
+      })
+      .strict()
+      .parse(parsed.parameters ?? {});
+    parameters =
+      result.retryAfterSeconds === undefined
+        ? {}
+        : { retryAfterSeconds: result.retryAfterSeconds };
   } else {
     z.object({})
       .strict()

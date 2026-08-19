@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { FastifyBaseLogger } from "fastify";
 import {
   defaultDelayMs,
+  defaultRetryAfterSeconds,
   defaultTokenError,
   httpFaultEndpoints,
   scenarios,
@@ -60,6 +61,21 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
 function setNoStoreHeaders(res: ServerResponse): void {
   res.setHeader("cache-control", "no-store");
   res.setHeader("pragma", "no-cache");
+}
+
+function setRetryAfterHeaders(
+  res: ServerResponse,
+  retryAfterSeconds: number,
+): void {
+  res.setHeader("retry-after", String(retryAfterSeconds));
+  const current = res.getHeader("access-control-expose-headers");
+  const values = String(current ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (!values.some((value) => value.toLowerCase() === "retry-after"))
+    values.push("Retry-After");
+  res.setHeader("access-control-expose-headers", values.join(", "));
 }
 
 function responseUnavailable(
@@ -148,26 +164,60 @@ export function createHttpFaultMiddleware(
 
       setNoStoreHeaders(res);
       res.setHeader("content-type", "application/json; charset=utf-8");
-      if (effect === "http-400") {
-        res.statusCode = 400;
-        res.end(
-          JSON.stringify({
-            error: decision.parameters.error ?? defaultTokenError,
-            ...(decision.parameters.errorDescription
-              ? { error_description: decision.parameters.errorDescription }
-              : {}),
-          }),
-        );
-        return;
+      switch (effect) {
+        case "http-400":
+          res.statusCode = 400;
+          res.end(
+            JSON.stringify({
+              error: decision.parameters.error ?? defaultTokenError,
+              ...(decision.parameters.errorDescription
+                ? { error_description: decision.parameters.errorDescription }
+                : {}),
+            }),
+          );
+          return;
+        case "http-429":
+          setRetryAfterHeaders(
+            res,
+            decision.parameters.retryAfterSeconds ?? defaultRetryAfterSeconds,
+          );
+          res.statusCode = 429;
+          res.end(
+            JSON.stringify({
+              error: "temporarily_unavailable",
+              error_description: `Injected ${decision.scenario} fault`,
+            }),
+          );
+          return;
+        case "http-500":
+          if (decision.parameters.retryAfterSeconds !== undefined) {
+            setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds);
+          }
+          res.statusCode = 500;
+          res.end(
+            JSON.stringify({
+              error: "server_error",
+              error_description: `Injected ${decision.scenario} fault`,
+            }),
+          );
+          return;
+        case "discovery-invalid":
+          res.statusCode = 200;
+          res.end(JSON.stringify({}));
+          return;
+        case "jwks-invalid":
+          res.statusCode = 200;
+          res.end(
+            JSON.stringify({
+              keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }],
+            }),
+          );
+          return;
+        default:
+          throw new Error(
+            `Unexpected HTTP fault effect for ${decision.scenario}: ${effect}`,
+          );
       }
-
-      res.statusCode = 500;
-      res.end(
-        JSON.stringify({
-          error: "server_error",
-          error_description: `Injected ${decision.scenario} fault`,
-        }),
-      );
     } catch (error) {
       safelyNext(next, error);
     }

@@ -121,6 +121,39 @@ describe("token fault generator", () => {
   );
 
   it.each(tokenKinds)(
+    "signs a rollover $name with the newly published key",
+    async (kind) => {
+      const source = await makeToken(kind);
+      const rollover = await mutateToken(
+        source,
+        decision("SIGNING_KEY_ROLLOVER"),
+        keys,
+      );
+
+      expect(decodeProtectedHeader(rollover)).toMatchObject({
+        alg: "RS256",
+        kid: "mock-rollover-key",
+        typ: kind.typ,
+      });
+      await expect(
+        jwtVerify(
+          rollover,
+          createLocalJWKSet({
+            keys: [keys.normal.publicJwk, keys.rollover.publicJwk],
+          }),
+        ),
+      ).resolves.toBeDefined();
+      await expect(
+        jwtVerify(
+          rollover,
+          createLocalJWKSet({ keys: [keys.normal.publicJwk] }),
+        ),
+      ).rejects.toMatchObject({ code: "ERR_JWKS_NO_MATCHING_KEY" });
+      expect(decodeJwt(rollover)).toEqual(decodeJwt(source));
+    },
+  );
+
+  it.each(tokenKinds)(
     "creates a future nbf before exp and preserves other $name claims",
     async (kind) => {
       const source = await makeToken(kind);

@@ -1,6 +1,9 @@
 export const scenarioNames = [
   "NORMAL",
   "ACCESS_DENIED",
+  "AUTH_INTERACTION_REQUIRED",
+  "AUTH_TEMPORARILY_UNAVAILABLE",
+  "AUTH_SERVER_ERROR",
   "NO_GROUPS",
   "UNKNOWN_GROUPS",
   "WRONG_AUDIENCE",
@@ -9,11 +12,15 @@ export const scenarioNames = [
   "FUTURE_NBF",
   "INVALID_SIGNATURE",
   "UNKNOWN_KID",
+  "SIGNING_KEY_ROLLOVER",
   "TOKEN_400",
+  "TOKEN_429",
   "TOKEN_500",
   "TOKEN_TIMEOUT",
+  "JWKS_INVALID",
   "JWKS_500",
   "JWKS_TIMEOUT",
+  "DISCOVERY_INVALID",
   "DISCOVERY_500",
   "DISCOVERY_TIMEOUT",
 ] as const;
@@ -28,6 +35,7 @@ export interface ScenarioParameters {
   delayMs?: number;
   error?: string;
   errorDescription?: string;
+  retryAfterSeconds?: number;
 }
 
 export interface ScenarioConfig {
@@ -69,25 +77,35 @@ type TimeoutScenarioName =
   "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
 type ParameterlessScenarioName = Exclude<
   FaultScenarioName,
-  TimeoutScenarioName | "TOKEN_400"
+  TimeoutScenarioName | "TOKEN_400" | "TOKEN_429" | "TOKEN_500"
 >;
 
 interface NoScenarioParameters {
   delayMs?: never;
   error?: never;
   errorDescription?: never;
+  retryAfterSeconds?: never;
 }
 
 interface TimeoutScenarioParameters {
   delayMs?: number;
   error?: never;
   errorDescription?: never;
+  retryAfterSeconds?: never;
 }
 
 interface Token400ScenarioParameters {
   delayMs?: never;
   error?: string;
   errorDescription?: string;
+  retryAfterSeconds?: never;
+}
+
+interface RetryAfterScenarioParameters {
+  delayMs?: never;
+  error?: never;
+  errorDescription?: never;
+  retryAfterSeconds?: number;
 }
 
 type ScenarioSpecificInput =
@@ -102,6 +120,10 @@ type ScenarioSpecificInput =
   | {
       scenario: "TOKEN_400";
       parameters?: Token400ScenarioParameters;
+    }
+  | {
+      scenario: "TOKEN_429" | "TOKEN_500";
+      parameters?: RetryAfterScenarioParameters;
     };
 
 export type ContinuousScenarioInput = ScenarioSpecificInput & {

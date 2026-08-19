@@ -189,6 +189,67 @@ describe("issuer routing and origin enforcement", () => {
     ).toBe(500);
   });
 
+  it("applies resilience scenarios only below the configured issuer path", async () => {
+    context.store.set({
+      scenario: "TOKEN_429",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const throttled = await context.app.inject({
+      method: "POST",
+      url: `${issuerPath}/token`,
+      headers: {
+        host,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "grant_type=authorization_code&code=invalid",
+    });
+    expect(throttled.statusCode).toBe(429);
+    expect(throttled.headers["retry-after"]).toBe("60");
+
+    context.store.set({
+      scenario: "DISCOVERY_INVALID",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    expect(
+      (
+        await context.app.inject({
+          url: `${issuerPath}/.well-known/openid-configuration`,
+          headers: { host },
+        })
+      ).json(),
+    ).toEqual({});
+
+    context.store.set({
+      scenario: "JWKS_INVALID",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    expect(
+      (
+        await context.app.inject({
+          url: `${issuerPath}/jwks`,
+          headers: { host },
+        })
+      ).json(),
+    ).toEqual({ keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
+
+    context.store.set({
+      scenario: "SIGNING_KEY_ROLLOVER",
+      mode: "CONTINUOUS",
+    });
+    expect(
+      (
+        await context.app.inject({
+          url: `${issuerPath}/jwks`,
+          headers: { host },
+        })
+      ).json<{ keys: unknown[] }>().keys,
+    ).toHaveLength(2);
+    context.store.reset();
+  });
+
   it.each([
     `attacker@${host}`,
     `${host}/path`,

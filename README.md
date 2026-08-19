@@ -233,6 +233,10 @@ curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
   -H 'content-type: application/json' \
   -d '{"scenario":"TOKEN_TIMEOUT","mode":"CONTINUOUS","parameters":{"delayMs":100}}'
 
+curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
+  -H 'content-type: application/json' \
+  -d '{"scenario":"TOKEN_429","mode":"LIMITED","failureCount":1,"parameters":{"retryAfterSeconds":60}}'
+
 curl -X DELETE "$MOCK_ORIGIN/__mock/api/scenario"
 curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
   -H 'content-type: application/json' \
@@ -241,29 +245,58 @@ curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 
 `CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の要求にはFaultを返したうえで現在状態がNORMALになります。Timeoutは遅延開始時に消費され、クライアントが切断しても戻しません。
 
-| Scenario            | 対象                      | 動作                                                  |
-| ------------------- | ------------------------- | ----------------------------------------------------- |
-| `NORMAL`            | なし                      | Faultを適用しない                                     |
-| `ACCESS_DENIED`     | Authorization             | 標準OIDC `access_denied`をredirect URIへ返す          |
-| `NO_GROUPS`         | ID/access token claim生成 | `groups`だけを除外                                    |
-| `UNKNOWN_GROUPS`    | ID/access token claim生成 | `groups`を`unknown-group-id`へ変更                    |
-| `WRONG_AUDIENCE`    | ID/access token           | 正常鍵で署名し、`aud`だけを変更                       |
-| `WRONG_ISSUER`      | ID/access token           | 正常鍵で署名し、`iss`だけを変更                       |
-| `EXPIRED_TOKEN`     | ID/access token           | 正常鍵で署名し、整合した過去の`iat`/`nbf`/`exp`を設定 |
-| `FUTURE_NBF`        | ID/access token           | 正常鍵で署名し、`now < nbf < exp`にする               |
-| `INVALID_SIGNATURE` | ID/access token           | 非公開Key Bで署名し、公開Key Aの`kid`を設定           |
-| `UNKNOWN_KID`       | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                  |
-| `TOKEN_400`         | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す                 |
-| `TOKEN_500`         | `POST` Token              | HTTP 500を返す                                        |
-| `TOKEN_TIMEOUT`     | `POST` Token              | 指定時間遅延してから通常処理を続行                    |
-| `JWKS_500`          | `GET` JWKS                | HTTP 500を返す                                        |
-| `JWKS_TIMEOUT`      | `GET` JWKS                | 指定時間遅延してから通常処理を続行                    |
-| `DISCOVERY_500`     | `GET` Discovery           | HTTP 500を返す                                        |
-| `DISCOVERY_TIMEOUT` | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
+| Scenario                       | 対象                      | 動作                                                  |
+| ------------------------------ | ------------------------- | ----------------------------------------------------- |
+| `NORMAL`                       | なし                      | Faultを適用しない                                     |
+| `ACCESS_DENIED`                | Authorization             | 標準OIDC `access_denied`をredirect URIへ返す          |
+| `AUTH_INTERACTION_REQUIRED`    | Authorization             | `interaction_required`をredirect URIへ返す            |
+| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization             | `temporarily_unavailable`をredirect URIへ返す         |
+| `AUTH_SERVER_ERROR`            | Authorization             | `server_error`をredirect URIへ返す                    |
+| `NO_GROUPS`                    | ID/access token claim生成 | `groups`だけを除外                                    |
+| `UNKNOWN_GROUPS`               | ID/access token claim生成 | `groups`を`unknown-group-id`へ変更                    |
+| `WRONG_AUDIENCE`               | ID/access token           | 正常鍵で署名し、`aud`だけを変更                       |
+| `WRONG_ISSUER`                 | ID/access token           | 正常鍵で署名し、`iss`だけを変更                       |
+| `EXPIRED_TOKEN`                | ID/access token           | 正常鍵で署名し、整合した過去の`iat`/`nbf`/`exp`を設定 |
+| `FUTURE_NBF`                   | ID/access token           | 正常鍵で署名し、`now < nbf < exp`にする               |
+| `INVALID_SIGNATURE`            | ID/access token           | 非公開Key Bで署名し、公開Key Aの`kid`を設定           |
+| `UNKNOWN_KID`                  | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                  |
+| `SIGNING_KEY_ROLLOVER`         | Token/JWKS                | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開              |
+| `TOKEN_400`                    | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す                 |
+| `TOKEN_429`                    | `POST` Token              | HTTP 429と`Retry-After`を返す                         |
+| `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                   |
+| `TOKEN_TIMEOUT`                | `POST` Token              | 指定時間遅延してから通常処理を続行                    |
+| `JWKS_INVALID`                 | `GET` JWKS                | HTTP 200で不正なJWKSを返す                            |
+| `JWKS_500`                     | `GET` JWKS                | HTTP 500を返す                                        |
+| `JWKS_TIMEOUT`                 | `GET` JWKS                | 指定時間遅延してから通常処理を続行                    |
+| `DISCOVERY_INVALID`            | `GET` Discovery           | HTTP 200で不正なDiscovery metadataを返す              |
+| `DISCOVERY_500`                | `GET` Discovery           | HTTP 500を返す                                        |
+| `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
 
-JWTシナリオはID tokenとJWT access tokenの双方へ適用されます。`INVALID_SIGNATURE`はJWKS非公開の別鍵、`UNKNOWN_KID`は正常鍵と未公開kidを使います。
+JWTシナリオはID tokenとJWT access tokenの双方へ適用されます。`INVALID_SIGNATURE`はJWKS非公開の別鍵、`UNKNOWN_KID`は正常鍵と未公開kidを使います。`SIGNING_KEY_ROLLOVER`を有効化すると、新しい鍵はScenario完了、Return to Normal、別Scenarioへの切り替え後もJWKSに公開され続けます。Scenario Resetで初期鍵だけの状態へ戻ります。
 
-Timeoutの`delayMs`は1〜300,000msで、未指定時は30,000msです。Token Faultの対象は`POST`、JWKS/Discovery Faultの対象は`GET`だけです。`OPTIONS`と`HEAD`はLimited Countを消費しません。
+Timeoutの`delayMs`は1〜300,000msで、未指定時は30,000msです。`retryAfterSeconds`は1以上のsafe integerです。`TOKEN_429`では未指定時に60秒を使用し、`TOKEN_500`では指定した場合だけ`Retry-After`を返します。Mock自身は待機や再試行を行いません。Token Faultの対象は`POST`、JWKS/Discovery Faultの対象は`GET`だけです。`OPTIONS`と`HEAD`はLimited Countを消費しません。
+
+Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)では、429では`Retry-After`が終わる前にTokenを再取得せず、5xxでは`Retry-After`があれば同様に従い、なければ指数バックオフすることが推奨されています。[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、`TOKEN_429`の既定値は60秒です。
+
+`TOKEN_429`の本文はMockの安定したOAuth形式として`temporarily_unavailable`を返します。Microsoft公式資料が429で明示する契約はHTTP statusと`Retry-After`であり、本Scenarioは特定のAADSTS番号を返しません。
+
+[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は、検証済みredirect URIへ`state`とともに返します。`interaction_required`や`prompt=none`で返る`login_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive認証へ切り替えてください。`temporarily_unavailable`と`server_error`は即時に繰り返さず、バックオフして再試行します。
+
+AADSTS50196のloop検出は専用Scenarioを重複して設けず、既存の`TOKEN_400`で再現できます。
+
+```json
+{
+  "scenario": "TOKEN_400",
+  "mode": "LIMITED",
+  "failureCount": 1,
+  "parameters": {
+    "error": "invalid_grant",
+    "errorDescription": "AADSTS50196: The server terminated an operation because it encountered a loop while processing a request"
+  }
+}
+```
+
+`DISCOVERY_INVALID`、`JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正metadata受信時のlast-known-good継続を試験するためのScenarioです。Microsoft GraphはこのProviderの対象外なので、Graph APIの429は扱いません。
 
 新しいScenarioを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
 

@@ -9,6 +9,7 @@ export interface SigningKey {
 }
 export interface SigningKeys {
   normal: SigningKey;
+  rollover: SigningKey;
   invalid: SigningKey;
 }
 
@@ -57,6 +58,11 @@ export async function loadSigningKeys(directory: string): Promise<SigningKeys> {
       directory,
       "normal-signing-key",
       "mock-normal-key",
+    ),
+    rollover: await loadOrCreate(
+      directory,
+      "rollover-signing-key",
+      "mock-rollover-key",
     ),
     invalid: await loadOrCreate(
       directory,

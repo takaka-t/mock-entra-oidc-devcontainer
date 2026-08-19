@@ -82,6 +82,66 @@ describe("InMemoryScenarioStore", () => {
     ).toThrow();
   });
 
+  it("normalizes required and optional Retry-After parameters", () => {
+    expect(
+      parseScenarioInput({
+        scenario: "TOKEN_429",
+        mode: "CONTINUOUS",
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 60 } });
+    expect(
+      parseScenarioInput({
+        scenario: "TOKEN_429",
+        mode: "LIMITED",
+        failureCount: 1,
+        parameters: { retryAfterSeconds: 15 },
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 15 } });
+    expect(
+      parseScenarioInput({
+        scenario: "TOKEN_500",
+        mode: "CONTINUOUS",
+      }),
+    ).toMatchObject({ parameters: {} });
+    expect(
+      parseScenarioInput({
+        scenario: "TOKEN_500",
+        mode: "CONTINUOUS",
+        parameters: { retryAfterSeconds: 30 },
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 30 } });
+  });
+
+  it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "60"])(
+    "rejects invalid Retry-After seconds %s",
+    (retryAfterSeconds) => {
+      expect(() =>
+        parseScenarioInput({
+          scenario: "TOKEN_429",
+          mode: "CONTINUOUS",
+          parameters: { retryAfterSeconds },
+        }),
+      ).toThrow();
+      expect(() =>
+        parseScenarioInput({
+          scenario: "TOKEN_500",
+          mode: "CONTINUOUS",
+          parameters: { retryAfterSeconds },
+        }),
+      ).toThrow();
+    },
+  );
+
+  it("rejects Retry-After parameters for unrelated scenarios", () => {
+    expect(() =>
+      parseScenarioInput({
+        scenario: "JWKS_500",
+        mode: "CONTINUOUS",
+        parameters: { retryAfterSeconds: 60 },
+      }),
+    ).toThrow();
+  });
+
   it("does not apply a scenario activated after a request started", () => {
     const store = new InMemoryScenarioStore();
     const ticket = store.startRequest({});
@@ -126,5 +186,28 @@ describe("InMemoryScenarioStore", () => {
     expect(store.consume("token-jwt", ticket)?.scenario).toBe("WRONG_ISSUER");
     expect(store.consume("token-jwt", ticket)).toBeNull();
     expect(store.get().triggeredCount).toBe(1);
+  });
+
+  it("separates scenario activation and full reset lifecycle hooks", () => {
+    const activated: string[] = [];
+    let resetCount = 0;
+    const store = new InMemoryScenarioStore({
+      onActivate: (scenario) => activated.push(scenario),
+      onReset: () => resetCount++,
+    });
+
+    store.set({
+      scenario: "SIGNING_KEY_ROLLOVER",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    store.consume("token-jwt");
+    store.clear();
+
+    expect(activated).toEqual(["SIGNING_KEY_ROLLOVER"]);
+    expect(resetCount).toBe(0);
+
+    store.reset();
+    expect(resetCount).toBe(1);
   });
 });

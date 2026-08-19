@@ -112,6 +112,21 @@ describe("admin API and UI", () => {
       mode: "CONTINUOUS",
       parameters: { error: "invalid_grant", unexpected: true },
     },
+    {
+      scenario: "TOKEN_429",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 0 },
+    },
+    {
+      scenario: "TOKEN_500",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 1.5 },
+    },
+    {
+      scenario: "DISCOVERY_INVALID",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 60 },
+    },
   ])("rejects invalid input %#", async (payload) => {
     expect(
       (
@@ -124,6 +139,36 @@ describe("admin API and UI", () => {
     ).toBe(400);
   });
 
+  it("normalizes TOKEN_429 and preserves optional TOKEN_500 Retry-After", async () => {
+    const throttled = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "TOKEN_429", mode: "CONTINUOUS" },
+    });
+    expect(throttled.statusCode).toBe(200);
+    expect(throttled.json().parameters).toEqual({ retryAfterSeconds: 60 });
+
+    const serverError = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: {
+        scenario: "TOKEN_500",
+        mode: "CONTINUOUS",
+        parameters: { retryAfterSeconds: 15 },
+      },
+    });
+    expect(serverError.statusCode).toBe(200);
+    expect(serverError.json().parameters).toEqual({ retryAfterSeconds: 15 });
+
+    const serverErrorWithoutHeader = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+    });
+    expect(serverErrorWithoutHeader.statusCode).toBe(200);
+    expect(serverErrorWithoutHeader.json().parameters).toEqual({});
+  });
+
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
     expect(response.body).toContain("Mock OIDC Provider");
@@ -134,6 +179,23 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('id="refresh"');
     expect(response.body).toContain('id="reset"');
     expect(response.body).toContain('max="300000"');
+    expect(response.body).toContain('id="retryAfterRequired"');
+    expect(response.body).toContain('value="60" required');
+    expect(response.body).toContain('id="retryAfterOptional"');
+    expect(response.body).toContain("retryAfterRequired");
+    expect(response.body).toContain("retryAfterOptional");
+    for (const scenario of [
+      "TOKEN_429",
+      "AUTH_INTERACTION_REQUIRED",
+      "AUTH_TEMPORARILY_UNAVAILABLE",
+      "AUTH_SERVER_ERROR",
+      "DISCOVERY_INVALID",
+      "JWKS_INVALID",
+      "SIGNING_KEY_ROLLOVER",
+    ])
+      expect(response.body).toContain(`value="${scenario}"`);
+    expect(response.body).toContain('<p id="rolloverNote" class="warning">');
+    expect(response.body).toContain("remains published in JWKS");
     expect(response.body).toContain("/__mock/api/scenario");
     expect(response.body).toContain("setInterval");
     expect(response.body).toContain("OIDC Clients");

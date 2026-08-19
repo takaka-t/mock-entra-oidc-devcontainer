@@ -3,12 +3,18 @@ import { parseScenarioInput } from "./validation.js";
 import type {
   FaultDecision,
   FaultEndpoint,
+  FaultScenarioName,
   ScenarioConfig,
   ScenarioHistory,
   ScenarioRequestTicket,
   ScenarioView,
   SetScenarioInput,
 } from "./types.js";
+
+export interface ScenarioStoreHooks {
+  onActivate?: (scenario: FaultScenarioName) => void;
+  onReset?: () => void;
+}
 
 const normal = (): ScenarioConfig => ({
   scenario: "NORMAL",
@@ -26,6 +32,11 @@ export class InMemoryScenarioStore {
   #nextActivationId = 1;
   #requestTickets = new WeakMap<object, ScenarioRequestTicket>();
   #consumedTickets = new WeakSet<ScenarioRequestTicket>();
+  readonly #hooks: ScenarioStoreHooks;
+
+  constructor(hooks: ScenarioStoreHooks = {}) {
+    this.#hooks = hooks;
+  }
 
   get(): ScenarioView {
     return {
@@ -53,6 +64,7 @@ export class InMemoryScenarioStore {
       triggeredCount: 0,
       parameters: { ...parsed.parameters },
     };
+    this.#hooks.onActivate?.(parsed.scenario);
     this.#activationId = this.#nextActivationId++;
     return this.get();
   }
@@ -64,7 +76,9 @@ export class InMemoryScenarioStore {
   }
   reset(): ScenarioView {
     this.#lastCompleted = null;
-    return this.clear();
+    const view = this.clear();
+    this.#hooks.onReset?.();
+    return view;
   }
 
   startRequest(request: object): ScenarioRequestTicket {

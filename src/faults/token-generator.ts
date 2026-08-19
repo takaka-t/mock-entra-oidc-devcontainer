@@ -34,11 +34,17 @@ export async function mutateToken(
     }
   }
   const signingKey =
-    decision.scenario === "INVALID_SIGNATURE" ? keys.invalid : keys.normal;
+    decision.scenario === "INVALID_SIGNATURE"
+      ? keys.invalid
+      : decision.scenario === "SIGNING_KEY_ROLLOVER"
+        ? keys.rollover
+        : keys.normal;
   const kid =
     decision.scenario === "UNKNOWN_KID"
       ? "unknown-kid"
-      : String(keys.normal.publicJwk.kid);
+      : decision.scenario === "INVALID_SIGNATURE"
+        ? String(keys.normal.publicJwk.kid)
+        : String(signingKey.publicJwk.kid);
   const header = {
     ...oldHeader,
     alg: "RS256",

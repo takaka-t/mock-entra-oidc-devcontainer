@@ -8,6 +8,10 @@ import {
   type OidcClientStore,
 } from "../clients/store.js";
 import type { AppConfig } from "../config.js";
+import {
+  authorizationFaultForPrompt,
+  type AuthorizationFaultDefinition,
+} from "../faults/authorization-fault.js";
 import { routedPathname } from "../http-path.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import { parseScenarioInput } from "../scenario/validation.js";
@@ -71,18 +75,19 @@ function interactionHtml(uid: string, issuerPath: string): string {
 
 type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
 
-async function denyInteraction(
+async function finishAuthorizationFault(
   provider: Provider,
   request: FastifyRequest,
   reply: FastifyReply,
+  fault: AuthorizationFaultDefinition,
 ): Promise<void> {
   reply.hijack();
   await provider.interactionFinished(
     request.raw,
     reply.raw,
     {
-      error: "access_denied",
-      error_description: "Access denied by mock scenario",
+      error: fault.error,
+      error_description: fault.errorDescription,
     },
     { mergeWithLastSubmission: false },
   );
@@ -236,10 +241,19 @@ export async function registerRoutes(
     `${config.issuerPath}/interaction/:uid`,
     async (request, reply) => {
       const details = await provider.interactionDetails(request.raw, reply.raw);
+      const authorizationFault = authorizationFaultForPrompt(
+        details.prompt.name,
+      );
+      if (authorizationFault) {
+        await finishAuthorizationFault(
+          provider,
+          request,
+          reply,
+          authorizationFault,
+        );
+        return;
+      }
       switch (details.prompt.name) {
-        case "mock_access_denied":
-          await denyInteraction(provider, request, reply);
-          return;
         case "consent":
           await consentInteraction(provider, request, reply, details);
           return;
@@ -257,8 +271,16 @@ export async function registerRoutes(
     `${config.issuerPath}/interaction/:uid`,
     async (request, reply) => {
       const details = await provider.interactionDetails(request.raw, reply.raw);
-      if (details.prompt.name === "mock_access_denied") {
-        await denyInteraction(provider, request, reply);
+      const authorizationFault = authorizationFaultForPrompt(
+        details.prompt.name,
+      );
+      if (authorizationFault) {
+        await finishAuthorizationFault(
+          provider,
+          request,
+          reply,
+          authorizationFault,
+        );
         return;
       }
       if (details.prompt.name === "consent") {

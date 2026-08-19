@@ -1,6 +1,7 @@
 import type { FaultEndpoint, ScenarioName } from "./types.js";
 
-export type ScenarioParameterKind = "none" | "timeout" | "token400";
+export type ScenarioParameterKind =
+  "none" | "timeout" | "token400" | "retryAfterRequired" | "retryAfterOptional";
 
 export interface ScenarioDefinition {
   endpoint: FaultEndpoint | null;
@@ -8,10 +9,15 @@ export interface ScenarioDefinition {
   effect:
     | "normal"
     | "authorization-denied"
+    | "authorization-error"
     | "claims-mutation"
     | "token-mutation"
+    | "signing-key-rollover"
     | "http-400"
+    | "http-429"
     | "http-500"
+    | "discovery-invalid"
+    | "jwks-invalid"
     | "http-timeout";
 }
 
@@ -21,6 +27,21 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     endpoint: "authorization",
     parameterKind: "none",
     effect: "authorization-denied",
+  },
+  AUTH_INTERACTION_REQUIRED: {
+    endpoint: "authorization",
+    parameterKind: "none",
+    effect: "authorization-error",
+  },
+  AUTH_TEMPORARILY_UNAVAILABLE: {
+    endpoint: "authorization",
+    parameterKind: "none",
+    effect: "authorization-error",
+  },
+  AUTH_SERVER_ERROR: {
+    endpoint: "authorization",
+    parameterKind: "none",
+    effect: "authorization-error",
   },
   NO_GROUPS: {
     endpoint: "claims",
@@ -62,20 +83,35 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "none",
     effect: "token-mutation",
   },
+  SIGNING_KEY_ROLLOVER: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "signing-key-rollover",
+  },
   TOKEN_400: {
     endpoint: "token",
     parameterKind: "token400",
     effect: "http-400",
   },
+  TOKEN_429: {
+    endpoint: "token",
+    parameterKind: "retryAfterRequired",
+    effect: "http-429",
+  },
   TOKEN_500: {
     endpoint: "token",
-    parameterKind: "none",
+    parameterKind: "retryAfterOptional",
     effect: "http-500",
   },
   TOKEN_TIMEOUT: {
     endpoint: "token",
     parameterKind: "timeout",
     effect: "http-timeout",
+  },
+  JWKS_INVALID: {
+    endpoint: "jwks",
+    parameterKind: "none",
+    effect: "jwks-invalid",
   },
   JWKS_500: {
     endpoint: "jwks",
@@ -86,6 +122,11 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     endpoint: "jwks",
     parameterKind: "timeout",
     effect: "http-timeout",
+  },
+  DISCOVERY_INVALID: {
+    endpoint: "discovery",
+    parameterKind: "none",
+    effect: "discovery-invalid",
   },
   DISCOVERY_500: {
     endpoint: "discovery",
@@ -102,6 +143,7 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
 export const maxDelayMs = 300_000;
 export const defaultDelayMs = 30_000;
 export const defaultTokenError = "invalid_grant";
+export const defaultRetryAfterSeconds = 60;
 
 export interface ScenarioUiMetadata {
   label: ScenarioName;
@@ -126,6 +168,7 @@ export const scenarioUiDefaults = {
   delayMs: defaultDelayMs,
   maxDelayMs,
   tokenError: defaultTokenError,
+  retryAfterSeconds: defaultRetryAfterSeconds,
 } as const;
 
 export const httpFaultEndpoints = {
