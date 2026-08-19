@@ -8,9 +8,9 @@ import type {
   UpdateOidcClientInput,
 } from "./types.js";
 import {
-  createClientSchema,
   parseCreateClient,
   parseUpdateClient,
+  persistedClientSchema,
 } from "./validation.js";
 
 export class ClientConflictError extends Error {}
@@ -23,7 +23,6 @@ export const defaultClients = (): OidcClientConfig[] => [
     tokenEndpointAuthMethod: "none",
     redirectUris: ["http://localhost:3000/callback"],
     postLogoutRedirectUris: [],
-    scopes: ["openid", "profile"],
     accessTokenAudience: "urn:mock-api",
   },
   {
@@ -33,7 +32,6 @@ export const defaultClients = (): OidcClientConfig[] => [
     tokenEndpointAuthMethod: "client_secret_basic",
     redirectUris: ["http://localhost:3000/callback"],
     postLogoutRedirectUris: [],
-    scopes: ["openid", "profile"],
     accessTokenAudience: "urn:mock-api",
   },
 ];
@@ -53,9 +51,16 @@ export class OidcClientStore {
 
   async initialize(): Promise<void> {
     let clients: OidcClientConfig[];
+    let migrated = false;
     try {
       const raw: unknown = JSON.parse(await readFile(this.filePath, "utf8"));
-      clients = z.array(createClientSchema).parse(raw) as OidcClientConfig[];
+      migrated =
+        Array.isArray(raw) &&
+        raw.some(
+          (client) =>
+            typeof client === "object" && client !== null && "scopes" in client,
+        );
+      clients = z.array(persistedClientSchema).parse(raw) as OidcClientConfig[];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       clients = defaultClients();
@@ -70,6 +75,7 @@ export class OidcClientStore {
       ids.add(client.clientId);
       await this.applyClient(client);
     }
+    if (migrated) await this.persist(clients);
     this.#clients = new Map(clients.map((client) => [client.clientId, client]));
   }
 

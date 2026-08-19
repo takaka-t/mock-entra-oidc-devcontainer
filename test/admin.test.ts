@@ -134,6 +134,8 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("setInterval");
     expect(response.body).toContain("OIDC Clients");
     expect(response.body).toContain("/__mock/api/clients");
+    expect(response.body).not.toContain("Allowed scopes");
+    expect(response.body).not.toContain("clientScope");
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
     if (!inlineScript) throw new Error("Admin UI inline script was not found");
     expect(() => new Script(inlineScript)).not.toThrow();
@@ -147,7 +149,6 @@ describe("admin API and UI", () => {
       tokenEndpointAuthMethod: "client_secret_post",
       redirectUris: ["http://localhost:4321/callback"],
       postLogoutRedirectUris: ["http://localhost:4321/signed-out"],
-      scopes: ["openid", "email"],
       accessTokenAudience: "urn:admin-api",
     };
     const created = await context.app.inject({
@@ -160,6 +161,7 @@ describe("admin API and UI", () => {
       clientId: payload.clientId,
       clientSecret: "visible-secret",
     });
+    expect(created.json()).not.toHaveProperty("scopes");
     expect(
       (
         await context.app.inject({
@@ -177,7 +179,6 @@ describe("admin API and UI", () => {
       payload: {
         ...updatePayload,
         clientSecret: "changed",
-        scopes: ["openid", "profile"],
       },
     });
     expect(updated.statusCode).toBe(200);
@@ -219,7 +220,6 @@ describe("admin API and UI", () => {
       tokenEndpointAuthMethod: "none",
       redirectUris: ["http://localhost/cb"],
       postLogoutRedirectUris: [],
-      scopes: ["openid"],
       accessTokenAudience: "urn:x",
     },
     {
@@ -228,7 +228,6 @@ describe("admin API and UI", () => {
       tokenEndpointAuthMethod: "client_secret_basic",
       redirectUris: ["http://localhost/cb"],
       postLogoutRedirectUris: [],
-      scopes: ["openid"],
       accessTokenAudience: "urn:x",
     },
     {
@@ -237,7 +236,6 @@ describe("admin API and UI", () => {
       tokenEndpointAuthMethod: "none",
       redirectUris: [],
       postLogoutRedirectUris: [],
-      scopes: ["openid"],
       accessTokenAudience: "urn:x",
     },
     {
@@ -246,8 +244,16 @@ describe("admin API and UI", () => {
       tokenEndpointAuthMethod: "none",
       redirectUris: ["relative"],
       postLogoutRedirectUris: [],
-      scopes: ["profile"],
       accessTokenAudience: "not a uri",
+    },
+    {
+      clientId: "legacy-api-input",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: ["http://localhost/cb"],
+      postLogoutRedirectUris: [],
+      scopes: ["openid"],
+      accessTokenAudience: "urn:x",
     },
   ])("rejects invalid OIDC client %#", async (payload) => {
     const response = await context.app.inject({

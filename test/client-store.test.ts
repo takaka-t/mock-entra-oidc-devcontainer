@@ -15,7 +15,6 @@ const publicClient = {
   tokenEndpointAuthMethod: "none" as const,
   redirectUris: ["http://localhost/callback", "http://localhost/callback"],
   postLogoutRedirectUris: [],
-  scopes: ["openid"],
   accessTokenAudience: "urn:app",
 };
 
@@ -75,5 +74,43 @@ describe("OIDC client store", () => {
     );
     await expect(store.initialize()).rejects.toBeInstanceOf(SyntaxError);
     expect(await readFile(file, "utf8")).toBe("not-json");
+  });
+
+  it("migrates legacy scopes out of persisted clients", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
+    const file = join(directory, "clients.json");
+    await writeFile(
+      file,
+      JSON.stringify([{ ...publicClient, scopes: ["openid", "email"] }]),
+    );
+    const store = new OidcClientStore(
+      file,
+      async () => {},
+      async () => {},
+    );
+    await store.initialize();
+    const migrated = {
+      ...publicClient,
+      redirectUris: ["http://localhost/callback"],
+    };
+    expect(store.list()).toEqual([migrated]);
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual([migrated]);
+  });
+
+  it("rejects unknown persisted client fields during legacy migration", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
+    const file = join(directory, "clients.json");
+    await writeFile(
+      file,
+      JSON.stringify([
+        { ...publicClient, scopes: ["openid"], unexpected: true },
+      ]),
+    );
+    const store = new OidcClientStore(
+      file,
+      async () => {},
+      async () => {},
+    );
+    await expect(store.initialize()).rejects.toBeDefined();
   });
 });

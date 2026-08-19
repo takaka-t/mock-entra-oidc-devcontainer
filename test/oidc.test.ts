@@ -172,6 +172,7 @@ describe("OIDC provider", () => {
       groups: ["app-admin-group-id", "app-user-group-id"],
       nonce: "test-nonce",
     });
+    expect(id.payload.email).toBeUndefined();
     expect(id.payload.nbf).toBe(id.payload.iat);
     const access = await jwtVerify(
       tokens.access_token,
@@ -186,6 +187,7 @@ describe("OIDC provider", () => {
       sub: "user-admin",
       mail: "admin@example.com",
     });
+    expect(access.payload.email).toBeUndefined();
     expect(access.payload.nbf).toBe(access.payload.iat);
   });
 
@@ -196,7 +198,21 @@ describe("OIDC provider", () => {
     );
   });
 
-  it("uses a dynamically registered client's auth method, scopes, email, and audience", async () => {
+  it("issues a refresh token to a public client requesting offline_access", async () => {
+    const flow = await authorize(
+      undefined,
+      "",
+      "mock-public-client",
+      "openid offline_access",
+    );
+    const response = await exchange(flow.code, flow.verifier);
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json<{ refresh_token: string }>().refresh_token).toBeTypeOf(
+      "string",
+    );
+  });
+
+  it("uses a dynamic client's auth method and audience and scopes email claims", async () => {
     await context.clientStore.create({
       clientId: "dynamic-post-client",
       clientType: "CONFIDENTIAL",
@@ -204,7 +220,6 @@ describe("OIDC provider", () => {
       tokenEndpointAuthMethod: "client_secret_post",
       redirectUris: ["http://localhost:3000/callback"],
       postLogoutRedirectUris: ["http://localhost:3000/signed-out"],
-      scopes: ["openid", "profile", "email", "offline_access"],
       accessTokenAudience: "urn:dynamic-api",
     });
     const flow = await authorize(
@@ -233,6 +248,7 @@ describe("OIDC provider", () => {
       refresh_token: string;
     }>();
     expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
+    expect(decodeJwt(tokens.access_token).email).toBe("admin@example.com");
     expect(decodeJwt(tokens.access_token).aud).toBe("urn:dynamic-api");
     expect(tokens.refresh_token).toBeTypeOf("string");
     await context.clientStore.delete("dynamic-post-client");

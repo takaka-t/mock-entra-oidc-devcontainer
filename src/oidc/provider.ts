@@ -15,19 +15,26 @@ import type { SigningKeys } from "./keys.js";
 function userClaims(
   user: MockUser,
   decision: FaultDecision | null | undefined,
-): Omit<MockUser, "groups"> & { groups?: string[]; email: string } {
+  includeEmail: boolean,
+): Omit<MockUser, "groups"> & { groups?: string[]; email?: string } {
   const claims: Omit<MockUser, "groups"> & {
     groups?: string[];
-    email: string;
+    email?: string;
   } = {
     ...user,
-    email: user.mail,
+    ...(includeEmail ? { email: user.mail } : {}),
     groups: [...user.groups],
   };
   if (decision?.scenario === "NO_GROUPS") delete claims.groups;
   if (decision?.scenario === "UNKNOWN_GROUPS")
     claims.groups = ["unknown-group-id"];
   return claims;
+}
+
+const supportedScopes = ["openid", "profile", "email", "offline_access"];
+
+function includesScope(value: unknown, scope: string): boolean {
+  return typeof value === "string" && value.split(" ").includes(scope);
 }
 
 export function createProvider(
@@ -110,13 +117,13 @@ export function createProvider(
         "name",
         "preferred_username",
         "mail",
-        "email",
         "groups",
         "iat",
         "nbf",
       ],
+      email: ["email"],
     },
-    scopes: ["openid", "profile", "email", "offline_access"],
+    scopes: supportedScopes,
     responseTypes: ["code"],
     pkce: { required: () => true },
     extraClientMetadata: {
@@ -143,8 +150,16 @@ export function createProvider(
               ? token.accountId
               : undefined;
           const user = accountId ? findUser(accountId) : undefined;
+          const tokenScope = "scope" in token ? token.scope : undefined;
           if (user)
-            Object.assign(jwt.payload, userClaims(user, claimDecisionFor(ctx)));
+            Object.assign(
+              jwt.payload,
+              userClaims(
+                user,
+                claimDecisionFor(ctx),
+                includesScope(tokenScope, "email"),
+              ),
+            );
           if (typeof jwt.payload.iat === "number")
             jwt.payload.nbf = jwt.payload.iat;
           return jwt;
@@ -165,7 +180,7 @@ export function createProvider(
           const audience = String(metadata.mock_access_token_audience);
           if (resource !== audience) throw new errors.InvalidTarget();
           return {
-            scope: String(metadata.scope),
+            scope: supportedScopes.join(" "),
             audience,
             accessTokenFormat: "jwt",
             jwt: { sign: { alg: "RS256", kid: keys.normal.publicJwk.kid } },
@@ -179,10 +194,10 @@ export function createProvider(
       const scenario = claimDecisionFor(ctx);
       return {
         accountId: user.sub,
-        claims: () => {
+        claims: (_use, scope) => {
           const issuedAt = Math.floor(Date.now() / 1000);
           return {
-            ...userClaims(user, scenario),
+            ...userClaims(user, scenario, includesScope(scope, "email")),
             iat: issuedAt,
             nbf: issuedAt,
           };
@@ -247,12 +262,8 @@ function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
     redirect_uris: client.redirectUris,
     post_logout_redirect_uris: client.postLogoutRedirectUris,
     response_types: ["code"],
-    grant_types: [
-      "authorization_code",
-      ...(client.scopes.includes("offline_access") ? ["refresh_token"] : []),
-    ],
+    grant_types: ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: client.tokenEndpointAuthMethod,
-    scope: client.scopes.join(" "),
     mock_access_token_audience: client.accessTokenAudience,
   };
 }

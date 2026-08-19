@@ -8,13 +8,6 @@ export const tokenEndpointAuthMethods = [
 ] as const;
 export type TokenEndpointAuthMethod = (typeof tokenEndpointAuthMethods)[number];
 
-export const supportedScopes = [
-  "openid",
-  "profile",
-  "email",
-  "offline_access",
-] as const;
-
 export interface OidcClientConfig {
   clientId: string;
   clientType: ClientType;
@@ -22,7 +15,6 @@ export interface OidcClientConfig {
   tokenEndpointAuthMethod: TokenEndpointAuthMethod;
   redirectUris: string[];
   postLogoutRedirectUris: string[];
-  scopes: string[];
   accessTokenAudience: string;
 }
 

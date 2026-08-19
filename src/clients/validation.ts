@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   clientTypes,
-  supportedScopes,
   tokenEndpointAuthMethods,
   type CreateOidcClientInput,
   type UpdateOidcClientInput,
@@ -37,11 +36,6 @@ const commonShape = {
   tokenEndpointAuthMethod: z.enum(tokenEndpointAuthMethods),
   redirectUris: z.array(webUri).min(1).transform(unique),
   postLogoutRedirectUris: z.array(webUri).transform(unique),
-  scopes: z
-    .array(z.enum(supportedScopes))
-    .min(1)
-    .transform(unique)
-    .refine((scopes) => scopes.includes("openid"), "openid is required"),
   accessTokenAudience: absoluteUri,
 };
 
@@ -86,6 +80,20 @@ export const updateClientSchema = z
   .object(commonShape)
   .strict()
   .superRefine(refineClient);
+
+export const persistedClientSchema = z.preprocess((input) => {
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "scopes" in input &&
+    Array.isArray(input.scopes)
+  ) {
+    const { scopes: _legacyScopes, ...client } = input;
+    void _legacyScopes;
+    return client;
+  }
+  return input;
+}, createClientSchema);
 
 export function parseCreateClient(input: unknown): CreateOidcClientInput {
   return normalized(createClientSchema.parse(input));

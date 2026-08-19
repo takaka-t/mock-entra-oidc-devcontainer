@@ -177,7 +177,11 @@ reverse proxyを使用するときだけ`TRUST_PROXY=true`を設定し、信頼�
 
 ### OIDCクライアント管理
 
-Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Scope、Access Token Audienceを設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。`openid` scopeは必須で、`offline_access`を許可するとRefresh Token Grantも有効になります。
+Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Access Token Audienceを設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。
+
+標準OIDC scopeの`openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`email` claimは`email` scopeを要求した場合だけ返され、`offline_access`を要求するとRefresh Tokenが発行されます。`email`は表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
+
+Microsoft Graphや独自Web APIのAPI permissions、Expose an API、Optional claimsはこのMock Providerの対象外です。
 
 Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
 
@@ -192,7 +196,6 @@ curl -X POST http://mock-idp.test:9000/__mock/api/clients \
     "tokenEndpointAuthMethod":"none",
     "redirectUris":["http://localhost:8080/callback"],
     "postLogoutRedirectUris":[],
-    "scopes":["openid","profile","email"],
     "accessTokenAudience":"urn:my-api"
   }'
 ```
