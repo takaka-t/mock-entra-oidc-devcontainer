@@ -1,0 +1,83 @@
+export interface AppConfig {
+  issuer: string;
+  issuerOrigin: string;
+  issuerPath: string;
+  port: number;
+  host: string;
+  trustProxy: boolean;
+  keyDirectory: string;
+  publicClientId: string;
+  confidentialClientId: string;
+  confidentialClientSecret: string;
+  redirectUris: string[];
+  accessTokenAudience: string;
+}
+
+function issuerConfiguration(
+  value: string | undefined,
+): Pick<AppConfig, "issuer" | "issuerOrigin" | "issuerPath"> {
+  const input = value?.trim();
+  if (!input) throw new Error("OIDC_ISSUER is required");
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch {
+    throw new Error("OIDC_ISSUER must be an absolute HTTP(S) URL");
+  }
+  if (!["http:", "https:"].includes(url.protocol))
+    throw new Error("OIDC_ISSUER must use http or https");
+  const authority = /^[a-z][a-z\d+.-]*:\/\/([^/?#]*)/i.exec(input)?.[1];
+  if (
+    url.username ||
+    url.password ||
+    authority?.includes("@") ||
+    input.includes("?") ||
+    input.includes("#")
+  )
+    throw new Error(
+      "OIDC_ISSUER must not contain credentials, query, or fragment",
+    );
+  const issuerPath =
+    url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  return {
+    issuer: `${url.origin}${issuerPath}`,
+    issuerOrigin: url.origin,
+    issuerPath,
+  };
+}
+
+function boolean(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error("TRUST_PROXY must be true or false");
+}
+
+function csv(value: string | undefined, fallback: string[]): string[] {
+  return (
+    value
+      ?.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean) ?? fallback
+  );
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const port = Number(env.PORT ?? 9000);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
+    throw new Error("PORT must be a valid TCP port");
+  return {
+    ...issuerConfiguration(env.OIDC_ISSUER),
+    port,
+    host: env.HOST ?? "0.0.0.0",
+    trustProxy: boolean(env.TRUST_PROXY),
+    keyDirectory: env.KEY_DIRECTORY ?? ".data/keys",
+    publicClientId: env.PUBLIC_CLIENT_ID ?? "mock-public-client",
+    confidentialClientId:
+      env.CONFIDENTIAL_CLIENT_ID ?? "mock-confidential-client",
+    confidentialClientSecret:
+      env.CONFIDENTIAL_CLIENT_SECRET ?? "mock-client-secret-change-me",
+    redirectUris: csv(env.REDIRECT_URIS, ["http://localhost:3000/callback"]),
+    accessTokenAudience: env.ACCESS_TOKEN_AUDIENCE ?? "urn:mock-api",
+  };
+}

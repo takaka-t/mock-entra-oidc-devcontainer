@@ -7,4 +7,21 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ../../:/workspace:cached
+      - node_modules:/workspace/node_modules
+    environment:
+      OIDC_ISSUER: http://mock-idp.test:9000
+      PORT: 9000
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks:
+      mock-idp-network:
+        aliases:
+          - mock-idp.test
     command: sleep infinity
+
+volumes:
+  node_modules:
+
+networks:
+  mock-idp-network:
+    external: true
