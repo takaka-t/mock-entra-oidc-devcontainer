@@ -172,7 +172,29 @@ describe("admin API and UI", () => {
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
     expect(response.body).toContain("Mock OIDC Provider");
-    expect(response.body).toContain("Remaining");
+    expect(response.body).toContain('<html lang="ja">');
+    expect(response.body).toContain("現在のScenario");
+    expect(response.body).toContain("残り失敗回数");
+    expect(response.body).toContain("Retry-After（秒、任意）");
+    expect(response.body).toContain(
+      "Client secretは平文で保存・表示されます。このAdmin APIには認証がないため、インターネットに公開しないでください。",
+    );
+    for (const text of [
+      "適用",
+      "NORMALに戻す",
+      "Scenarioを初期状態に戻す",
+      "OIDC Clientを登録",
+      "OIDC Clientを編集",
+      "保存",
+      "キャンセル",
+      "削除",
+      "登録済みのOIDC Clientはありません。",
+      "すべてのOIDC Clientを初期状態に戻しますか？",
+    ])
+      expect(response.body).toContain(text);
+    expect(response.body).not.toContain(
+      "Never expose this unauthenticated Admin API to the internet.",
+    );
     expect(response.body).toContain('id="scenario"');
     expect(response.body).toContain('id="mode"');
     expect(response.body).toContain('id="normal"');
@@ -195,10 +217,10 @@ describe("admin API and UI", () => {
     ])
       expect(response.body).toContain(`value="${scenario}"`);
     expect(response.body).toContain('<p id="rolloverNote" class="warning">');
-    expect(response.body).toContain("remains published in JWKS");
+    expect(response.body).toContain("新しい署名鍵はJWKSで公開され続けます");
     expect(response.body).toContain("/__mock/api/scenario");
     expect(response.body).toContain("setInterval");
-    expect(response.body).toContain("OIDC Clients");
+    expect(response.body).toContain("OIDC Client");
     expect(response.body).toContain("/__mock/api/clients");
     expect(response.body).toContain("body:'{}'");
     expect(response.body).not.toContain("Allowed scopes");
