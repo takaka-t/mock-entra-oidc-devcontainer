@@ -158,22 +158,46 @@ reverse proxyを使用するときだけ`TRUST_PROXY=true`を設定し、信頼�
 | Redirect URI                   | `http://localhost:3000/callback`   |
 | Access token audience/resource | `urn:mock-api`                     |
 
-両clientともAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
+これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC Clients」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
+
+全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
 環境変数:
 
-| 変数                         | 説明                                                 |
-| ---------------------------- | ---------------------------------------------------- |
-| `OIDC_ISSUER`                | Composeでは`http://mock-idp.test:9000`に固定         |
-| `PORT`                       | Composeではコンテナ内listen portを`9000`に固定       |
-| `HOST`                       | listen address                                       |
-| `TRUST_PROXY`                | 信頼できるreverse proxy配下だけで`true`にする        |
-| `KEY_DIRECTORY`              | 署名鍵の保存先                                       |
-| `PUBLIC_CLIENT_ID`           | public client ID                                     |
-| `CONFIDENTIAL_CLIENT_ID`     | confidential client ID                               |
-| `CONFIDENTIAL_CLIENT_SECRET` | confidential client secret                           |
-| `REDIRECT_URIS`              | 許可するredirect URIのカンマ区切り                   |
-| `ACCESS_TOKEN_AUDIENCE`      | access token audience兼Resource Indicator（絶対URI） |
+| 変数                 | 説明                                             |
+| -------------------- | ------------------------------------------------ |
+| `OIDC_ISSUER`        | Composeでは`http://mock-idp.test:9000`に固定     |
+| `PORT`               | Composeではコンテナ内listen portを`9000`に固定   |
+| `HOST`               | listen address                                   |
+| `TRUST_PROXY`        | 信頼できるreverse proxy配下だけで`true`にする    |
+| `KEY_DIRECTORY`      | 署名鍵の保存先                                   |
+| `CLIENT_CONFIG_FILE` | Client設定ファイル。既定値は`.data/clients.json` |
+
+従来の`PUBLIC_CLIENT_ID`、`CONFIDENTIAL_CLIENT_ID`、`CONFIDENTIAL_CLIENT_SECRET`、`REDIRECT_URIS`、`ACCESS_TOKEN_AUDIENCE`は廃止されました。既定値以外を利用していた場合は、起動後にAdmin UIまたはClient Admin APIからクライアントを登録してください。
+
+### OIDCクライアント管理
+
+Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Scope、Access Token Audienceを設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。`openid` scopeは必須で、`offline_access`を許可するとRefresh Token Grantも有効になります。
+
+Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
+
+```bash
+curl http://mock-idp.test:9000/__mock/api/clients
+
+curl -X POST http://mock-idp.test:9000/__mock/api/clients \
+  -H 'content-type: application/json' \
+  -d '{
+    "clientId":"my-app",
+    "clientType":"PUBLIC",
+    "tokenEndpointAuthMethod":"none",
+    "redirectUris":["http://localhost:8080/callback"],
+    "postLogoutRedirectUris":[],
+    "scopes":["openid","profile","email"],
+    "accessTokenAudience":"urn:my-api"
+  }'
+```
+
+Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、Scenario Resetには影響しません。
 
 ## テストユーザー
 

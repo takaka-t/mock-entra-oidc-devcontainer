@@ -1,6 +1,11 @@
 import type Provider from "oidc-provider";
 import type { FastifyInstance } from "fastify";
 import { z, ZodError } from "zod";
+import {
+  ClientConflictError,
+  ClientNotFoundError,
+  type OidcClientStore,
+} from "../clients/store.js";
 import type { AppConfig } from "../config.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import { parseScenarioInput } from "../scenario/validation.js";
@@ -25,6 +30,7 @@ export async function registerRoutes(
   app: FastifyInstance,
   provider: Provider,
   store: InMemoryScenarioStore,
+  clientStore: OidcClientStore,
   config: AppConfig,
 ): Promise<void> {
   app.get("/health", async () => ({ status: "ok" }));
@@ -47,6 +53,43 @@ export async function registerRoutes(
   });
   app.delete("/__mock/api/scenario", async () => store.clear());
   app.post("/__mock/api/reset", async () => store.reset());
+  app.get("/__mock/api/clients", async () => clientStore.list());
+  app.post("/__mock/api/clients", async (request, reply) => {
+    try {
+      return reply
+        .code(201)
+        .send(await clientStore.create(request.body as never));
+    } catch (error) {
+      return clientError(reply, error);
+    }
+  });
+  app.put<{ Params: { clientId: string } }>(
+    "/__mock/api/clients/:clientId",
+    async (request, reply) => {
+      try {
+        return await clientStore.update(
+          request.params.clientId,
+          request.body as never,
+        );
+      } catch (error) {
+        return clientError(reply, error);
+      }
+    },
+  );
+  app.delete<{ Params: { clientId: string } }>(
+    "/__mock/api/clients/:clientId",
+    async (request, reply) => {
+      try {
+        await clientStore.delete(request.params.clientId);
+        return reply.code(204).send();
+      } catch (error) {
+        return clientError(reply, error);
+      }
+    },
+  );
+  app.post("/__mock/api/clients/reset", async (_request, reply) =>
+    reply.send(await clientStore.reset()),
+  );
 
   app.get<{ Params: { uid: string } }>(
     `${config.issuerPath}/interaction/:uid`,
@@ -139,4 +182,23 @@ export async function registerRoutes(
       );
     },
   );
+}
+
+function clientError(reply: import("fastify").FastifyReply, error: unknown) {
+  if (error instanceof ClientConflictError)
+    return reply
+      .code(409)
+      .send({ error: "client_conflict", message: error.message });
+  if (error instanceof ClientNotFoundError)
+    return reply
+      .code(404)
+      .send({ error: "client_not_found", message: error.message });
+  if (error instanceof ZodError)
+    return reply.code(400).send({
+      error: "invalid_client",
+      message: error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; "),
+    });
+  throw error;
 }

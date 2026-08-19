@@ -6,11 +6,7 @@ export interface AppConfig {
   host: string;
   trustProxy: boolean;
   keyDirectory: string;
-  publicClientId: string;
-  confidentialClientId: string;
-  confidentialClientSecret: string;
-  redirectUris: string[];
-  accessTokenAudience: string;
+  clientConfigFile: string;
 }
 
 function issuerConfiguration(
@@ -53,17 +49,9 @@ function boolean(value: string | undefined): boolean {
   throw new Error("TRUST_PROXY must be true or false");
 }
 
-function csv(value: string | undefined, fallback: string[]): string[] {
-  return (
-    value
-      ?.split(",")
-      .map((item) => item.trim())
-      .filter(Boolean) ?? fallback
-  );
-}
-
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const port = Number(env.PORT ?? 9000);
+  const keyDirectory = env.KEY_DIRECTORY ?? ".data/keys";
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535)
     throw new Error("PORT must be a valid TCP port");
   return {
@@ -71,13 +59,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port,
     host: env.HOST ?? "0.0.0.0",
     trustProxy: boolean(env.TRUST_PROXY),
-    keyDirectory: env.KEY_DIRECTORY ?? ".data/keys",
-    publicClientId: env.PUBLIC_CLIENT_ID ?? "mock-public-client",
-    confidentialClientId:
-      env.CONFIDENTIAL_CLIENT_ID ?? "mock-confidential-client",
-    confidentialClientSecret:
-      env.CONFIDENTIAL_CLIENT_SECRET ?? "mock-client-secret-change-me",
-    redirectUris: csv(env.REDIRECT_URIS, ["http://localhost:3000/callback"]),
-    accessTokenAudience: env.ACCESS_TOKEN_AUDIENCE ?? "urn:mock-api",
+    keyDirectory,
+    clientConfigFile:
+      env.CLIENT_CONFIG_FILE ??
+      (env.NODE_ENV === "test"
+        ? `${keyDirectory}/clients.json`
+        : ".data/clients.json"),
   };
 }

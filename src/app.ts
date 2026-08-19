@@ -3,15 +3,21 @@ import middie from "@fastify/middie";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AppConfig } from "./config.js";
+import { OidcClientStore } from "./clients/store.js";
 import { registerRoutes } from "./admin/routes.js";
 import { createHttpFaultMiddleware } from "./faults/http-fault.js";
 import { loadSigningKeys } from "./oidc/keys.js";
-import { createProvider } from "./oidc/provider.js";
+import {
+  applyProviderClient,
+  createProvider,
+  removeProviderClient,
+} from "./oidc/provider.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 
 export interface AppContext {
   app: FastifyInstance;
   store: InMemoryScenarioStore;
+  clientStore: OidcClientStore;
 }
 
 function managementPath(pathname: string): boolean {
@@ -19,7 +25,9 @@ function managementPath(pathname: string): boolean {
     pathname === "/health" ||
     pathname === "/__mock" ||
     pathname === "/__mock/api/scenario" ||
-    pathname === "/__mock/api/reset"
+    pathname === "/__mock/api/reset" ||
+    pathname === "/__mock/api/clients" ||
+    pathname.startsWith("/__mock/api/clients/")
   );
 }
 
@@ -84,6 +92,12 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
   const store = new InMemoryScenarioStore();
   const keys = await loadSigningKeys(config.keyDirectory);
   const provider = createProvider(config, store, keys, app.log);
+  const clientStore = new OidcClientStore(
+    config.clientConfigFile,
+    (client) => applyProviderClient(provider, client),
+    (clientId) => removeProviderClient(provider, clientId),
+  );
+  await clientStore.initialize();
   const providerHandler = provider.callback();
   await app.register(middie);
   await app.register(formbody);
@@ -127,6 +141,6 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
       next(asError(error));
     }
   });
-  await registerRoutes(app, provider, store, config);
-  return { app, store };
+  await registerRoutes(app, provider, store, clientStore, config);
+  return { app, store, clientStore };
 }

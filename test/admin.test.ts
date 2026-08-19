@@ -132,8 +132,130 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('max="300000"');
     expect(response.body).toContain("/__mock/api/scenario");
     expect(response.body).toContain("setInterval");
+    expect(response.body).toContain("OIDC Clients");
+    expect(response.body).toContain("/__mock/api/clients");
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
     if (!inlineScript) throw new Error("Admin UI inline script was not found");
     expect(() => new Script(inlineScript)).not.toThrow();
+  });
+
+  it("creates, updates, deletes, and resets OIDC clients independently", async () => {
+    const payload = {
+      clientId: "admin-api-client",
+      clientType: "CONFIDENTIAL",
+      clientSecret: "visible-secret",
+      tokenEndpointAuthMethod: "client_secret_post",
+      redirectUris: ["http://localhost:4321/callback"],
+      postLogoutRedirectUris: ["http://localhost:4321/signed-out"],
+      scopes: ["openid", "email"],
+      accessTokenAudience: "urn:admin-api",
+    };
+    const created = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients",
+      payload,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      clientId: payload.clientId,
+      clientSecret: "visible-secret",
+    });
+    expect(
+      (
+        await context.app.inject({
+          method: "POST",
+          url: "/__mock/api/clients",
+          payload,
+        })
+      ).statusCode,
+    ).toBe(409);
+
+    const { clientId, ...updatePayload } = payload;
+    const updated = await context.app.inject({
+      method: "PUT",
+      url: `/__mock/api/clients/${clientId}`,
+      payload: {
+        ...updatePayload,
+        clientSecret: "changed",
+        scopes: ["openid", "profile"],
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      clientId: payload.clientId,
+      clientSecret: "changed",
+    });
+
+    await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+    });
+    await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients/reset",
+    });
+    expect(
+      (await context.app.inject("/__mock/api/scenario")).json().scenario,
+    ).toBe("TOKEN_500");
+    expect(
+      (await context.app.inject("/__mock/api/clients")).json(),
+    ).toHaveLength(2);
+    expect(
+      (
+        await context.app.inject({
+          method: "DELETE",
+          url: `/__mock/api/clients/${payload.clientId}`,
+        })
+      ).statusCode,
+    ).toBe(404);
+  });
+
+  it.each([
+    {
+      clientId: "bad",
+      clientType: "PUBLIC",
+      clientSecret: "no",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: ["http://localhost/cb"],
+      postLogoutRedirectUris: [],
+      scopes: ["openid"],
+      accessTokenAudience: "urn:x",
+    },
+    {
+      clientId: "bad",
+      clientType: "CONFIDENTIAL",
+      tokenEndpointAuthMethod: "client_secret_basic",
+      redirectUris: ["http://localhost/cb"],
+      postLogoutRedirectUris: [],
+      scopes: ["openid"],
+      accessTokenAudience: "urn:x",
+    },
+    {
+      clientId: "bad",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: [],
+      postLogoutRedirectUris: [],
+      scopes: ["openid"],
+      accessTokenAudience: "urn:x",
+    },
+    {
+      clientId: "bad",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: ["relative"],
+      postLogoutRedirectUris: [],
+      scopes: ["profile"],
+      accessTokenAudience: "not a uri",
+    },
+  ])("rejects invalid OIDC client %#", async (payload) => {
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients",
+      payload,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_client");
   });
 });

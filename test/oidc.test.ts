@@ -50,17 +50,19 @@ describe("OIDC provider", () => {
     verifier = randomBytes(32).toString("base64url"),
     challenge = "",
     clientId = "mock-public-client",
+    scope = "openid profile",
   ): Promise<{ code: string; verifier: string }> {
     challenge ||= createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
       client_id: clientId,
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
-      scope: "openid profile",
+      scope,
       state: "test-state",
       nonce: "test-nonce",
       code_challenge: challenge,
       code_challenge_method: "S256",
+      ...(scope.includes("offline_access") ? { prompt: "consent" } : {}),
     });
     let jar = "";
     let response = await context.app.inject({
@@ -192,6 +194,62 @@ describe("OIDC provider", () => {
     expect((await exchange(flow.code, flow.verifier, true)).statusCode).toBe(
       200,
     );
+  });
+
+  it("uses a dynamically registered client's auth method, scopes, email, and audience", async () => {
+    await context.clientStore.create({
+      clientId: "dynamic-post-client",
+      clientType: "CONFIDENTIAL",
+      clientSecret: "post-secret",
+      tokenEndpointAuthMethod: "client_secret_post",
+      redirectUris: ["http://localhost:3000/callback"],
+      postLogoutRedirectUris: ["http://localhost:3000/signed-out"],
+      scopes: ["openid", "profile", "email", "offline_access"],
+      accessTokenAudience: "urn:dynamic-api",
+    });
+    const flow = await authorize(
+      undefined,
+      "",
+      "dynamic-post-client",
+      "openid profile email offline_access",
+    );
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/token",
+      headers: { host, "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: "dynamic-post-client",
+        client_secret: "post-secret",
+        redirect_uri: "http://localhost:3000/callback",
+        code: flow.code,
+        code_verifier: flow.verifier,
+      }).toString(),
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    const tokens = response.json<{
+      id_token: string;
+      access_token: string;
+      refresh_token: string;
+    }>();
+    expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
+    expect(decodeJwt(tokens.access_token).aud).toBe("urn:dynamic-api");
+    expect(tokens.refresh_token).toBeTypeOf("string");
+    await context.clientStore.delete("dynamic-post-client");
+    const rejected = await context.app.inject({
+      url:
+        "/authorize?" +
+        new URLSearchParams({
+          client_id: "dynamic-post-client",
+          redirect_uri: "http://localhost:3000/callback",
+          response_type: "code",
+          scope: "openid",
+          code_challenge: "a".repeat(43),
+          code_challenge_method: "S256",
+        }).toString(),
+      headers: { host },
+    });
+    expect(rejected.statusCode).toBe(400);
   });
 
   it("returns ACCESS_DENIED through the OIDC redirect flow", async () => {
