@@ -72,6 +72,24 @@ class BrowserFlow {
     });
   }
 
+  async submitLocation(
+    response: LightMyRequestResponse,
+    payload = "accountId=user-normal",
+  ) {
+    const location = new URL(String(response.headers.location), issuer);
+    this.#lastOpenedUrl = `${location.pathname}${location.search}`;
+    return this.submit(response, payload);
+  }
+
+  async submitEncodedLocation(
+    response: LightMyRequestResponse,
+    payload = "accountId=user-normal",
+  ) {
+    const location = new URL(String(response.headers.location), issuer);
+    this.#lastOpenedUrl = `${location.pathname.replace("/interaction/", "/%69nteraction/")}${location.search}`;
+    return this.submit(response, payload);
+  }
+
   async followToCallback(
     initialResponse: LightMyRequestResponse,
   ): Promise<URL> {
@@ -160,6 +178,40 @@ describe("custom interaction policy", () => {
       scenario: "NORMAL",
       lastCompleted: { scenario: "ACCESS_DENIED", triggeredCount: 1 },
     });
+  });
+
+  it("cannot bypass ACCESS_DENIED by posting directly to the interaction", async () => {
+    context.store.set({
+      scenario: "ACCESS_DENIED",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const browser = new BrowserFlow(context);
+    const denied = await browser.submitLocation(
+      await browser.start({ state: "direct-post-denied" }),
+    );
+    expect(denied.statusCode).toBe(303);
+    const callback = await browser.followToCallback(denied);
+    expect(callback.searchParams.get("error")).toBe("access_denied");
+    expect(callback.searchParams.get("state")).toBe("direct-post-denied");
+    expect(callback.searchParams.get("code")).toBeNull();
+  });
+
+  it("cannot bypass ACCESS_DENIED through an encoded interaction route", async () => {
+    context.store.set({
+      scenario: "ACCESS_DENIED",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const browser = new BrowserFlow(context);
+    const denied = await browser.submitEncodedLocation(
+      await browser.start({ state: "encoded-post-denied" }),
+    );
+    expect(denied.statusCode).toBe(303);
+    const callback = await browser.followToCallback(denied);
+    expect(callback.searchParams.get("error")).toBe("access_denied");
+    expect(callback.searchParams.get("state")).toBe("encoded-post-denied");
+    expect(callback.searchParams.get("code")).toBeNull();
   });
 
   it("applies ACCESS_DENIED even when an existing session can skip login", async () => {
@@ -255,5 +307,17 @@ describe("custom interaction policy", () => {
     const response = await browser.submit(picker, "unexpected=value");
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "invalid_interaction_body" });
+  });
+
+  it("sets protective headers on interaction responses", async () => {
+    const browser = new BrowserFlow(context);
+    const picker = await browser.openLocation(await browser.start());
+    expect(picker.headers["cache-control"]).toBe("no-store");
+    expect(picker.headers["content-security-policy"]).toBe(
+      "frame-ancestors 'none'",
+    );
+    expect(picker.headers["referrer-policy"]).toBe("no-referrer");
+    expect(picker.headers["x-content-type-options"]).toBe("nosniff");
+    expect(picker.headers["x-frame-options"]).toBe("DENY");
   });
 });

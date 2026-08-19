@@ -60,7 +60,9 @@ async function stop(child) {
   await closed;
 }
 
-const keyDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
+const stateDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
+const keyDirectory = join(stateDirectory, "keys");
+const clientConfigFile = join(stateDirectory, "clients.json");
 let child;
 try {
   const port = await availablePort();
@@ -69,11 +71,13 @@ try {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      CLIENT_CONFIG_FILE: clientConfigFile,
       HOST: host,
       KEY_DIRECTORY: keyDirectory,
       NODE_ENV: "production",
       OIDC_ISSUER: `http://${host}:${port}`,
       PORT: String(port),
+      TRUST_PROXY: "false",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -95,5 +99,5 @@ try {
   process.stdout.write("Compiled server startup smoke test passed.\n");
 } finally {
   if (child) await stop(child);
-  await rm(keyDirectory, { recursive: true, force: true });
+  await rm(stateDirectory, { recursive: true, force: true });
 }

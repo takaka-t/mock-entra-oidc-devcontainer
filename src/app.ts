@@ -6,11 +6,13 @@ import type { AppConfig } from "./config.js";
 import { OidcClientStore } from "./clients/store.js";
 import { registerRoutes } from "./admin/routes.js";
 import { createHttpFaultMiddleware } from "./faults/http-fault.js";
+import { decodeRoutingPath, rawPathname, routedPathname } from "./http-path.js";
 import { loadSigningKeys } from "./oidc/keys.js";
 import {
   applyProviderClient,
   createProvider,
   removeProviderClient,
+  validateProviderClient,
 } from "./oidc/provider.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 
@@ -21,18 +23,14 @@ export interface AppContext {
 }
 
 function managementPath(pathname: string): boolean {
-  return (
-    pathname === "/health" ||
-    pathname === "/__mock" ||
-    pathname === "/__mock/api/scenario" ||
-    pathname === "/__mock/api/reset" ||
-    pathname === "/__mock/api/clients" ||
-    pathname.startsWith("/__mock/api/clients/")
-  );
+  return pathname === "/health" || adminPath(pathname);
+}
+
+function adminPath(pathname: string): boolean {
+  return pathname === "/__mock" || pathname.startsWith("/__mock/");
 }
 
 function oidcPath(pathname: string, issuerPath: string): boolean {
-  if (managementPath(pathname)) return false;
   if (!issuerPath) return true;
   return pathname === issuerPath || pathname.startsWith(`${issuerPath}/`);
 }
@@ -41,26 +39,99 @@ function interactionPath(pathname: string, issuerPath: string): boolean {
   return pathname.startsWith(`${issuerPath}/interaction/`);
 }
 
-function firstHeader(value: string | string[] | undefined): string | undefined {
-  const first = Array.isArray(value) ? value[0] : value?.split(",", 1)[0];
-  return first?.trim() || undefined;
+function interactionRequestPath(
+  pathname: string,
+  routedPath: string,
+  issuerPath: string,
+  routedIssuerPath: string,
+): boolean {
+  return (
+    interactionPath(pathname, issuerPath) ||
+    interactionPath(routedPath, routedIssuerPath)
+  );
+}
+
+const forbiddenAuthorityCharacters = new Set(["@", "/", "\\", "?", "#", ","]);
+
+type OriginHeaderName = "host" | "x-forwarded-host" | "x-forwarded-proto";
+
+function singleHeaderValue(
+  request: IncomingMessage,
+  name: OriginHeaderName,
+): string | null | undefined {
+  let occurrences = 0;
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    if (request.rawHeaders[index]?.toLowerCase() !== name) continue;
+    occurrences++;
+    if (occurrences > 1) return null;
+  }
+  const value = request.headers[name];
+  return Array.isArray(value) ? null : value;
+}
+
+function authorityHeader(
+  value: string | null | undefined,
+): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const authority = value.trim();
+  if (!authority) return null;
+  if (
+    [...authority].some((character) => {
+      const codePoint = character.codePointAt(0);
+      return (
+        codePoint === undefined ||
+        codePoint <= 0x20 ||
+        codePoint === 0x7f ||
+        forbiddenAuthorityCharacters.has(character)
+      );
+    })
+  )
+    return null;
+  try {
+    const parsed = new URL(`http://${authority}`);
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    )
+      return null;
+  } catch {
+    return null;
+  }
+  return authority;
+}
+
+function protocolHeader(
+  value: string | null | undefined,
+): "http" | "https" | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const protocol = value.trim().toLowerCase();
+  return protocol === "http" || protocol === "https" ? protocol : null;
 }
 
 function requestOrigin(
   request: IncomingMessage,
   trustProxy: boolean,
 ): string | null {
-  const host =
-    (trustProxy
-      ? firstHeader(request.headers["x-forwarded-host"])
-      : undefined) ?? firstHeader(request.headers.host);
-  const forwardedProtocol = trustProxy
-    ? firstHeader(request.headers["x-forwarded-proto"])?.toLowerCase()
+  const directHost = authorityHeader(singleHeaderValue(request, "host"));
+  if (directHost === null) return null;
+  const forwardedHost = trustProxy
+    ? authorityHeader(singleHeaderValue(request, "x-forwarded-host"))
     : undefined;
+  if (forwardedHost === null) return null;
+  const host = forwardedHost ?? directHost;
+  const forwardedProtocol = trustProxy
+    ? protocolHeader(singleHeaderValue(request, "x-forwarded-proto"))
+    : undefined;
+  if (forwardedProtocol === null) return null;
   const protocol =
     forwardedProtocol ??
     ((request.socket as { encrypted?: boolean }).encrypted ? "https" : "http");
-  if (!host || !["http", "https"].includes(protocol)) return null;
+  if (!host) return null;
   try {
     return new URL(`${protocol}://${host}`).origin;
   } catch {
@@ -80,6 +151,14 @@ function sendOriginError(response: ServerResponse): void {
   );
 }
 
+function setSensitiveResponseHeaders(response: ServerResponse): void {
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("content-security-policy", "frame-ancestors 'none'");
+  response.setHeader("referrer-policy", "no-referrer");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader("x-frame-options", "DENY");
+}
+
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error("OIDC middleware failed");
 }
@@ -96,14 +175,28 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
     config.clientConfigFile,
     (client) => applyProviderClient(provider, client),
     (clientId) => removeProviderClient(provider, clientId),
+    (client) => validateProviderClient(provider, client),
   );
   await clientStore.initialize();
   const providerHandler = provider.callback();
+  const routedIssuerPath = decodeRoutingPath(config.issuerPath);
   await app.register(middie);
   await app.register(formbody);
   app.use((request, response, next) => {
-    const pathname = new URL(request.url ?? "/", "http://local").pathname;
-    if (!oidcPath(pathname, config.issuerPath)) return next();
+    const url = request.url ?? "/";
+    const pathname = rawPathname(url);
+    const routedPath = routedPathname(url);
+    const isAdmin = adminPath(routedPath);
+    const isOidc =
+      !managementPath(routedPath) && oidcPath(pathname, config.issuerPath);
+    const isInteraction = interactionRequestPath(
+      pathname,
+      routedPath,
+      config.issuerPath,
+      routedIssuerPath,
+    );
+    if (isAdmin || isInteraction) setSensitiveResponseHeaders(response);
+    if (!isAdmin && !isOidc) return next();
     if (requestOrigin(request, config.trustProxy) !== config.issuerOrigin) {
       sendOriginError(response);
       return;
@@ -112,12 +205,18 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
   });
   app.use(createHttpFaultMiddleware(store, app.log, config.issuerPath));
   app.use((req, res, next) => {
-    const pathname = new URL(req.url ?? "/", "http://local").pathname;
-    if (
-      !oidcPath(pathname, config.issuerPath) ||
-      interactionPath(pathname, config.issuerPath)
-    )
-      return next();
+    const url = req.url ?? "/";
+    const pathname = rawPathname(url);
+    const routedPath = routedPathname(url);
+    const isOidc =
+      !managementPath(routedPath) && oidcPath(pathname, config.issuerPath);
+    const isInteraction = interactionRequestPath(
+      pathname,
+      routedPath,
+      config.issuerPath,
+      routedIssuerPath,
+    );
+    if (!isOidc || isInteraction) return next();
     const originalUrl = req.url ?? "/";
     const mountedUrl = config.issuerPath
       ? originalUrl.slice(config.issuerPath.length)

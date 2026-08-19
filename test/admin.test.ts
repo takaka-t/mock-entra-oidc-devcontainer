@@ -1,6 +1,6 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Script } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
@@ -12,7 +12,7 @@ describe("admin API and UI", () => {
     context = await buildApp(
       loadConfig({
         NODE_ENV: "test",
-        OIDC_ISSUER: "http://mock-idp.test:9000",
+        OIDC_ISSUER: "http://localhost",
         KEY_DIRECTORY: await mkdtemp(join(tmpdir(), "mock-idp-")),
       }),
     );
@@ -43,7 +43,11 @@ describe("admin API and UI", () => {
     ).toBe("NORMAL");
     expect(
       (
-        await context.app.inject({ method: "POST", url: "/__mock/api/reset" })
+        await context.app.inject({
+          method: "POST",
+          url: "/__mock/api/reset",
+          payload: {},
+        })
       ).json().lastCompleted,
     ).toBeNull();
   });
@@ -60,7 +64,7 @@ describe("admin API and UI", () => {
           method: "POST",
           url: "/token",
           headers: {
-            host: "mock-idp.test:9000",
+            host: "localhost",
             "content-type": "application/x-www-form-urlencoded",
           },
           payload: "grant_type=authorization_code&code=invalid",
@@ -134,6 +138,7 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("setInterval");
     expect(response.body).toContain("OIDC Clients");
     expect(response.body).toContain("/__mock/api/clients");
+    expect(response.body).toContain("body:'{}'");
     expect(response.body).not.toContain("Allowed scopes");
     expect(response.body).not.toContain("clientScope");
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
@@ -195,6 +200,7 @@ describe("admin API and UI", () => {
     await context.app.inject({
       method: "POST",
       url: "/__mock/api/clients/reset",
+      payload: {},
     });
     expect(
       (await context.app.inject("/__mock/api/scenario")).json().scenario,
@@ -263,5 +269,145 @@ describe("admin API and UI", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_client");
+  });
+
+  it("rejects provider-incompatible client metadata without changing persisted restart state", async () => {
+    const clientFile = context.clientStore.filePath;
+    const beforeFile = await readFile(clientFile, "utf8");
+    const before = (await context.app.inject("/__mock/api/clients")).json();
+    const create = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients",
+      payload: {
+        clientId: "fragment-client",
+        clientType: "PUBLIC",
+        tokenEndpointAuthMethod: "none",
+        redirectUris: ["http://localhost/callback#fragment"],
+        postLogoutRedirectUris: [],
+        accessTokenAudience: "urn:fragment-client",
+      },
+    });
+    const update = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/clients/mock-public-client",
+      payload: {
+        clientType: "PUBLIC",
+        tokenEndpointAuthMethod: "none",
+        redirectUris: ["http://localhost:3000/callback"],
+        postLogoutRedirectUris: [],
+        accessTokenAudience: "urn:mock-api#fragment",
+      },
+    });
+    for (const response of [create, update]) {
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toBe("invalid_client");
+    }
+    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
+      before,
+    );
+    expect(await readFile(clientFile, "utf8")).toBe(beforeFile);
+
+    await context.app.close();
+    context = await buildApp(
+      loadConfig({
+        NODE_ENV: "test",
+        OIDC_ISSUER: "http://localhost",
+        KEY_DIRECTORY: dirname(clientFile),
+        CLIENT_CONFIG_FILE: clientFile,
+      }),
+    );
+    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
+      before,
+    );
+  });
+
+  it.each(["https://evil.test", "null"])(
+    "rejects Admin mutations from Origin %s",
+    async (origin) => {
+      const before = context.store.get();
+      const response = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        headers: { origin },
+        payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+      });
+      expect(response.statusCode).toBe(403);
+      expect(response.json().error).toBe("invalid_admin_origin");
+      expect(context.store.get()).toEqual(before);
+    },
+  );
+
+  it("allows same-origin and Origin-less JSON mutations", async () => {
+    const sameOrigin = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      headers: { origin: "http://localhost" },
+      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+    });
+    expect(sameOrigin.statusCode).toBe(200);
+    const commandLine = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/scenario",
+    });
+    expect(commandLine.statusCode).toBe(200);
+    expect(commandLine.json().scenario).toBe("NORMAL");
+  });
+
+  it("rejects non-JSON bodies and requires reset to receive exactly {}", async () => {
+    const crossSiteForm = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      headers: {
+        origin: "https://evil.test",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "scenario=TOKEN_500&mode=CONTINUOUS",
+    });
+    expect(crossSiteForm.statusCode).toBe(403);
+    expect(crossSiteForm.json().error).toBe("invalid_admin_origin");
+
+    const form = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      headers: {
+        origin: "http://localhost",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "scenario=TOKEN_500&mode=CONTINUOUS",
+    });
+    expect(form.statusCode).toBe(415);
+    expect(form.json().error).toBe("unsupported_media_type");
+
+    const invalidReset = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/reset",
+      payload: { unexpected: true },
+    });
+    expect(invalidReset.statusCode).toBe(400);
+    expect(invalidReset.json().error).toBe("invalid_reset_body");
+    expect(
+      (
+        await context.app.inject({
+          method: "POST",
+          url: "/__mock/api/reset",
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
+  it("sets protective headers on Admin pages and responses with secrets", async () => {
+    for (const response of [
+      await context.app.inject("/__mock"),
+      await context.app.inject("/__mock/api/clients"),
+    ]) {
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.headers["content-security-policy"]).toBe(
+        "frame-ancestors 'none'",
+      );
+      expect(response.headers["referrer-policy"]).toBe("no-referrer");
+      expect(response.headers["x-content-type-options"]).toBe("nosniff");
+      expect(response.headers["x-frame-options"]).toBe("DENY");
+    }
   });
 });

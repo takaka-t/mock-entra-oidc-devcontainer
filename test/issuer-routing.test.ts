@@ -189,6 +189,87 @@ describe("issuer routing and origin enforcement", () => {
     ).toBe(500);
   });
 
+  it.each([
+    `attacker@${host}`,
+    `${host}/path`,
+    `${host}\\path`,
+    `${host}?query`,
+    `${host}#fragment`,
+    `${host},attacker.test`,
+  ])("rejects malformed Host authority %s for Admin routes", async (value) => {
+    const response = await context.app.inject({
+      url: "/__mock",
+      headers: { host: value },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_request_origin");
+  });
+
+  it("only serves Admin routes through the issuer origin", async () => {
+    expect(
+      (
+        await context.app.inject({
+          url: "/__mock/api/clients",
+          headers: { host },
+        })
+      ).statusCode,
+    ).toBe(200);
+    const mismatch = await context.app.inject({
+      url: "/__mock/api/clients",
+      headers: { host: "unexpected.test:19000" },
+    });
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.json().error).toBe("invalid_request_origin");
+  });
+
+  it("enforces Admin protections for percent-encoded static route spellings", async () => {
+    const encodedClientsPath = "/%5f%5fmock/api/clients";
+    expect(
+      (
+        await context.app.inject({
+          url: encodedClientsPath,
+          headers: { host },
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const wrongHost = await context.app.inject({
+      url: encodedClientsPath,
+      headers: { host: "unexpected.test:19000" },
+    });
+    expect(wrongHost.statusCode).toBe(400);
+    expect(wrongHost.json().error).toBe("invalid_request_origin");
+
+    const before = context.store.get();
+    const crossSiteForm = await context.app.inject({
+      method: "PUT",
+      url: "/%5f%5fmock/api/scenario",
+      headers: {
+        host,
+        origin: "https://evil.test",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "scenario=TOKEN_500&mode=CONTINUOUS",
+    });
+    expect(crossSiteForm.statusCode).toBe(403);
+    expect(crossSiteForm.json().error).toBe("invalid_admin_origin");
+    expect(context.store.get()).toEqual(before);
+
+    const nonJson = await context.app.inject({
+      method: "PUT",
+      url: "/%5f%5fmock/api/scenario",
+      headers: {
+        host,
+        origin: `http://${host}`,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "scenario=TOKEN_500&mode=CONTINUOUS",
+    });
+    expect(nonJson.statusCode).toBe(415);
+    expect(nonJson.json().error).toBe("unsupported_media_type");
+    expect(context.store.get()).toEqual(before);
+  });
+
   it("does not mount path-based endpoints at the origin root", async () => {
     const response = await context.app.inject({
       url: "/authorize",
@@ -199,6 +280,14 @@ describe("issuer routing and origin enforcement", () => {
       (
         await context.app.inject({
           url: "/health",
+          headers: { host: "any-local-host.test" },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await context.app.inject({
+          url: "/he%61lth",
           headers: { host: "any-local-host.test" },
         })
       ).statusCode,
@@ -230,6 +319,42 @@ describe("trusted HTTPS proxy", () => {
       expect(response.json().issuer).toBe(
         `https://login.microsoftonline.test${issuerPath}`,
       );
+      expect(
+        (
+          await context.app.inject({
+            url: "/__mock",
+            headers: {
+              host: "internal-proxy:9000",
+              "x-forwarded-host": "login.microsoftonline.test",
+              "x-forwarded-proto": "https",
+            },
+          })
+        ).statusCode,
+      ).toBe(200);
+      for (const headers of [
+        {
+          host: "internal-proxy:9000",
+          "x-forwarded-host": "login.microsoftonline.test,attacker.test",
+          "x-forwarded-proto": "https",
+        },
+        {
+          host: "internal-proxy:9000",
+          "x-forwarded-host": "attacker@login.microsoftonline.test",
+          "x-forwarded-proto": "https",
+        },
+        {
+          host: "internal-proxy:9000",
+          "x-forwarded-host": "login.microsoftonline.test",
+          "x-forwarded-proto": "https,http",
+        },
+      ]) {
+        const rejected = await context.app.inject({
+          url: "/__mock",
+          headers,
+        });
+        expect(rejected.statusCode).toBe(400);
+        expect(rejected.json().error).toBe("invalid_request_origin");
+      }
     } finally {
       await context.app.close();
       await rm(keyDirectory, { recursive: true, force: true });

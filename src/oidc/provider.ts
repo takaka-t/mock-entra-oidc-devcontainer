@@ -134,10 +134,12 @@ export function createProvider(
             "mock_access_token_audience must be a string",
           );
         try {
-          new URL(value);
+          const resource = new URL(value);
+          if (resource.username || resource.password || value.includes("#"))
+            throw new Error("invalid resource URI");
         } catch {
           throw new errors.InvalidClientMetadata(
-            "mock_access_token_audience must be an absolute URI",
+            "mock_access_token_audience must be an absolute URI without credentials or a fragment",
           );
         }
       },
@@ -255,6 +257,13 @@ type ClientAdapter = {
   destroy(id: string): Promise<void>;
 };
 
+type ProviderClientModel = {
+  new (metadata: Record<string, unknown>): {
+    metadata(): Record<string, unknown>;
+  };
+  adapter: ClientAdapter;
+};
+
 function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
   return {
     client_id: client.clientId,
@@ -268,16 +277,28 @@ function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
   };
 }
 
+function providerClientModel(provider: Provider): ProviderClientModel {
+  return provider.Client as unknown as ProviderClientModel;
+}
+
+/**
+ * Runs oidc-provider's complete client metadata validation without changing
+ * adapter state. The store uses this before staging a configuration change so
+ * an input accepted by our API cannot fail only after it has been persisted.
+ */
+export function validateProviderClient(
+  provider: Provider,
+  client: OidcClientConfig,
+): void {
+  const Client = providerClientModel(provider);
+  new Client(clientMetadata(client));
+}
+
 export async function applyProviderClient(
   provider: Provider,
   client: OidcClientConfig,
 ): Promise<void> {
-  const Client = provider.Client as unknown as {
-    new (metadata: Record<string, unknown>): {
-      metadata(): Record<string, unknown>;
-    };
-    adapter: ClientAdapter;
-  };
+  const Client = providerClientModel(provider);
   const validated = new Client(clientMetadata(client));
   await Client.adapter.upsert(client.clientId, validated.metadata());
 }
@@ -286,6 +307,6 @@ export async function removeProviderClient(
   provider: Provider,
   clientId: string,
 ): Promise<void> {
-  const Client = provider.Client as unknown as { adapter: ClientAdapter };
+  const Client = providerClientModel(provider);
   await Client.adapter.destroy(clientId);
 }

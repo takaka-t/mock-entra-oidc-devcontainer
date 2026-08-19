@@ -198,9 +198,13 @@ curl -X POST http://mock-idp.test:9000/__mock/api/clients \
     "postLogoutRedirectUris":[],
     "accessTokenAudience":"urn:my-api"
   }'
+
+curl -X POST http://mock-idp.test:9000/__mock/api/clients/reset \
+  -H 'content-type: application/json' \
+  -d '{}'
 ```
 
-Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、Scenario Resetには影響しません。
+Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、Scenario Resetには影響しません。Clientを削除またはresetしても、発行済みの認可コードやRefresh Tokenは完全には失効しません。完全に初期化するにはプロセスを再起動してください。
 
 ## テストユーザー
 
@@ -230,7 +234,9 @@ curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
   -d '{"scenario":"TOKEN_TIMEOUT","mode":"CONTINUOUS","parameters":{"delayMs":100}}'
 
 curl -X DELETE "$MOCK_ORIGIN/__mock/api/scenario"
-curl -X POST "$MOCK_ORIGIN/__mock/api/reset"
+curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
+  -H 'content-type: application/json' \
+  -d '{}'
 ```
 
 `CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の要求にはFaultを返したうえで現在状態がNORMALになります。Timeoutは遅延開始時に消費され、クライアントが切断しても戻しません。

@@ -1,3 +1,5 @@
+import { decodeRoutingPath } from "./http-path.js";
+
 export interface AppConfig {
   issuer: string;
   issuerOrigin: string;
@@ -7,6 +9,17 @@ export interface AppConfig {
   trustProxy: boolean;
   keyDirectory: string;
   clientConfigFile: string;
+}
+
+const reservedIssuerNamespaces = ["/__mock", "/health"];
+
+function conflictsWithReservedNamespace(pathname: string): boolean {
+  const decodedPathname = decodeRoutingPath(pathname);
+  return reservedIssuerNamespaces.some(
+    (namespace) =>
+      decodedPathname === namespace ||
+      decodedPathname.startsWith(`${namespace}/`),
+  );
 }
 
 function issuerConfiguration(
@@ -35,6 +48,10 @@ function issuerConfiguration(
     );
   const issuerPath =
     url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  if (conflictsWithReservedNamespace(issuerPath))
+    throw new Error(
+      "OIDC_ISSUER path must not use the reserved /__mock or /health namespace",
+    );
   return {
     issuer: `${url.origin}${issuerPath}`,
     issuerOrigin: url.origin,

@@ -6,6 +6,26 @@ import {
   type UpdateOidcClientInput,
 } from "./types.js";
 
+const withoutFragment = (value: string): boolean => !value.includes("#");
+
+const printableAscii = z
+  .string()
+  .min(1)
+  .refine(
+    (value) =>
+      [...value].every((character) => {
+        const codePoint = character.codePointAt(0);
+        return (
+          codePoint !== undefined && codePoint >= 0x20 && codePoint <= 0x7e
+        );
+      }),
+    "must contain only printable ASCII characters",
+  );
+
+const clientId = printableAscii
+  .refine((value) => value.trim().length > 0, "must not be blank")
+  .transform((value) => value.trim());
+
 const absoluteUri = z
   .string()
   .trim()
@@ -17,7 +37,8 @@ const absoluteUri = z
     } catch {
       return false;
     }
-  }, "must be an absolute URI without credentials");
+  }, "must be an absolute URI without credentials")
+  .refine(withoutFragment, "must not include a fragment");
 
 const webUri = absoluteUri.refine((value) => {
   try {
@@ -32,7 +53,7 @@ const unique = <T>(values: T[]): T[] => [...new Set(values)];
 
 const commonShape = {
   clientType: z.enum(clientTypes),
-  clientSecret: z.string().min(1).optional(),
+  clientSecret: printableAscii.optional(),
   tokenEndpointAuthMethod: z.enum(tokenEndpointAuthMethods),
   redirectUris: z.array(webUri).min(1).transform(unique),
   postLogoutRedirectUris: z.array(webUri).transform(unique),
@@ -73,7 +94,7 @@ function refineClient(
 }
 
 export const createClientSchema = z
-  .object({ clientId: z.string().trim().min(1), ...commonShape })
+  .object({ clientId, ...commonShape })
   .strict()
   .superRefine(refineClient);
 export const updateClientSchema = z

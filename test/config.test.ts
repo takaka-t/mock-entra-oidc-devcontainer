@@ -78,6 +78,38 @@ describe("OIDC issuer configuration", () => {
       );
     },
   );
+
+  it.each([
+    "/__mock",
+    "/__mock/",
+    "/__mock/api",
+    "/health",
+    "/health/ready",
+    "/%5f%5fmock",
+    "/__m%6fck/api",
+    "/%5F%5Fmock/%ff",
+    "/%68ealth",
+    "/%68ealth%2fready",
+  ])("rejects reserved issuer path %s", (path) => {
+    expect(() => loadConfig({ OIDC_ISSUER: `${issuer}${path}` })).toThrow(
+      "OIDC_ISSUER path must not use the reserved /__mock or /health namespace",
+    );
+  });
+
+  it.each([
+    "/__mockery",
+    "/__mock-api",
+    "/healthcheck",
+    "/health-check",
+    "/__mock%65ry",
+    "/health%63heck",
+    "/tenant/__mock",
+    "/tenant/health",
+  ])("allows non-conflicting issuer path %s", (path) => {
+    expect(loadConfig({ OIDC_ISSUER: `${issuer}${path}` }).issuerPath).toBe(
+      path,
+    );
+  });
 });
 
 describe("TRUST_PROXY configuration", () => {
