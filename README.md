@@ -1,0 +1,1 @@
+# mock-entra-oidc-devcontainer
