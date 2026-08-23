@@ -18,6 +18,7 @@ services:
         aliases:
           - mock-idp.test
     command: sleep infinity
+    init: true
 
 volumes:
   node_modules:
