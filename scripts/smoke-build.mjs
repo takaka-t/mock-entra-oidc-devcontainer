@@ -1,103 +1,76 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { Buffer } from "node:buffer";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-import { setTimeout as delay } from "node:timers/promises";
+import { URL } from "node:url";
+import { buildApp } from "../dist/app.js";
+import {
+  loadConfig,
+  mockIssuer,
+  mockIssuerPath,
+  mockOrigin,
+} from "../dist/config.js";
 
-const host = "127.0.0.1";
-const startupTimeoutMs = 10_000;
-
-async function availablePort() {
-  const reservation = createServer();
-  reservation.unref();
-  reservation.listen(0, host);
-  await once(reservation, "listening");
-  const address = reservation.address();
-  if (!address || typeof address === "string")
-    throw new Error("Failed to reserve a TCP port for the startup smoke test");
-  await new Promise((resolve, reject) => {
-    reservation.close((error) => (error ? reject(error) : resolve()));
-  });
-  return address.port;
-}
-
-async function waitForHealth(url, child, output) {
-  const deadline = Date.now() + startupTimeoutMs;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null)
-      throw new Error(
-        `Compiled server exited before becoming healthy (code ${child.exitCode}, signal ${child.signalCode}).\n${output()}`,
-      );
-    try {
-      const response = await globalThis.fetch(url, {
-        signal: globalThis.AbortSignal.timeout(500),
-      });
-      const body = await response.json();
-      if (response.ok && body?.status === "ok") return;
-    } catch {
-      // The server may still be generating its signing keys or binding its port.
-    }
-    await delay(50);
-  }
-  throw new Error(
-    `Compiled server did not become healthy within ${startupTimeoutMs}ms.\n${output()}`,
-  );
-}
-
-async function stop(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const closed = once(child, "close");
-  child.kill("SIGTERM");
-  const graceful = await Promise.race([
-    closed.then(() => true),
-    delay(3_000).then(() => false),
-  ]);
-  if (graceful || child.exitCode !== null || child.signalCode !== null) return;
-  child.kill("SIGKILL");
-  await closed;
-}
-
+const listenHost = "127.0.0.1";
+const issuerHost = new URL(mockOrigin).host;
 const stateDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
-const keyDirectory = join(stateDirectory, "keys");
-const clientConfigFile = join(stateDirectory, "clients.json");
-let child;
-try {
-  const port = await availablePort();
-  let processOutput = "";
-  child = spawn(process.execPath, ["dist/server.js"], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      CLIENT_CONFIG_FILE: clientConfigFile,
-      HOST: host,
-      KEY_DIRECTORY: keyDirectory,
-      NODE_ENV: "production",
-      OIDC_ISSUER: `http://${host}:${port}`,
-      PORT: String(port),
-      TRUST_PROXY: "false",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const recordOutput = (chunk) => {
-    processOutput = `${processOutput}${chunk.toString()}`.slice(-20_000);
-  };
-  child.stdout?.on("data", recordOutput);
-  child.stderr?.on("data", recordOutput);
-  const origin = `http://${host}:${port}`;
-  await waitForHealth(`${origin}/health`, child, () => processOutput);
-  const discoveryResponse = await globalThis.fetch(
-    `${origin}/.well-known/openid-configuration`,
-  );
-  const discovery = await discoveryResponse.json();
-  if (!discoveryResponse.ok || discovery?.issuer !== origin)
-    throw new Error(
-      `Compiled server returned invalid discovery metadata.\n${processOutput}`,
+let context;
+
+function requestJson(url) {
+  return new Promise((resolve, reject) => {
+    const outgoing = request(
+      url,
+      { headers: { host: issuerHost } },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          try {
+            resolve({
+              statusCode: response.statusCode,
+              body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
     );
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+try {
+  context = await buildApp({
+    ...loadConfig(),
+    host: listenHost,
+    keyDirectory: join(stateDirectory, "keys"),
+    clientConfigFile: join(stateDirectory, "clients.json"),
+  });
+  await context.app.listen({ host: listenHost, port: 0 });
+  const address = context.app.server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Compiled server did not expose a TCP address");
+  const localOrigin = `http://${listenHost}:${address.port}`;
+
+  const healthResponse = await requestJson(`${localOrigin}/health`);
+  if (healthResponse.statusCode !== 200 || healthResponse.body?.status !== "ok")
+    throw new Error("Compiled server returned an invalid health response");
+
+  const discoveryResponse = await requestJson(
+    `${localOrigin}${mockIssuerPath}/.well-known/openid-configuration`,
+  );
+  if (
+    discoveryResponse.statusCode !== 200 ||
+    discoveryResponse.body?.issuer !== mockIssuer
+  )
+    throw new Error("Compiled server returned invalid discovery metadata");
+
   process.stdout.write("Compiled server startup smoke test passed.\n");
 } finally {
-  if (child) await stop(child);
+  await context?.app.close();
   await rm(stateDirectory, { recursive: true, force: true });
 }

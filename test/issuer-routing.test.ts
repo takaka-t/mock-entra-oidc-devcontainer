@@ -6,11 +6,17 @@ import { join } from "node:path";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import {
+  mockIssuer,
+  mockIssuerPath,
+  mockOrigin,
+  mockTenantId,
+} from "../src/config.js";
+import { testConfig } from "./test-config.js";
 
-const host = "login.microsoftonline.test:19000";
-const issuerPath = "/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0";
-const issuer = `http://${host}${issuerPath}`;
+const host = new URL(mockOrigin).host;
+const issuerPath = mockIssuerPath;
+const issuer = mockIssuer;
 
 function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
@@ -38,10 +44,9 @@ describe("issuer routing and origin enforcement", () => {
   beforeAll(async () => {
     keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-path-"));
     context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: issuer,
-        KEY_DIRECTORY: keyDirectory,
+      testConfig({
+        keyDirectory,
+        clientConfigFile: `${keyDirectory}/clients.json`,
       }),
     );
   });
@@ -162,6 +167,7 @@ describe("issuer routing and origin enforcement", () => {
       expect(verified.payload.nbf).toBeLessThanOrEqual(Date.now() / 1000);
       expect(verified.payload.exp).toBeGreaterThan(Date.now() / 1000);
       expect(verified.payload.mail).toBe("admin@example.com");
+      expect(verified.payload.tid).toBe(mockTenantId);
     }
   });
 
@@ -340,6 +346,14 @@ describe("issuer routing and origin enforcement", () => {
     expect(
       (
         await context.app.inject({
+          url: "/.well-known/openid-configuration",
+          headers: { host },
+        })
+      ).statusCode,
+    ).toBe(404);
+    expect(
+      (
+        await context.app.inject({
           url: "/health",
           headers: { host: "any-local-host.test" },
         })
@@ -357,14 +371,14 @@ describe("issuer routing and origin enforcement", () => {
 });
 
 describe("trusted HTTPS proxy", () => {
-  it("uses forwarded origin only when TRUST_PROXY is enabled", async () => {
+  it("uses forwarded origin only when proxy trust is enabled", async () => {
     const keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-proxy-"));
     const context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: `https://login.microsoftonline.test${issuerPath}`,
-        TRUST_PROXY: "true",
-        KEY_DIRECTORY: keyDirectory,
+      testConfig({
+        trustProxy: true,
+        keyDirectory,
+        clientConfigFile: `${keyDirectory}/clients.json`,
+        issuer: `https://login.microsoftonline.test${issuerPath}`,
       }),
     );
     try {

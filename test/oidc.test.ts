@@ -11,7 +11,7 @@ import {
 } from "jose";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
@@ -37,10 +37,9 @@ describe("OIDC provider", () => {
   let context: AppContext;
   beforeAll(async () => {
     context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: `http://${host}`,
-        KEY_DIRECTORY: await mkdtemp(join(tmpdir(), "mock-idp-")),
+      testConfig({
+        issuer: `http://${host}`,
+        keyDirectory: await mkdtemp(join(tmpdir(), "mock-idp-")),
       }),
     );
   });

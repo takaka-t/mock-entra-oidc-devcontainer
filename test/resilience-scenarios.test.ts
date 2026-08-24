@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
@@ -37,11 +37,10 @@ describe("official Entra resilience scenarios", () => {
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-resilience-"));
     context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: issuer,
-        KEY_DIRECTORY: join(stateDirectory, "keys"),
-        CLIENT_CONFIG_FILE: join(stateDirectory, "clients.json"),
+      testConfig({
+        issuer,
+        keyDirectory: join(stateDirectory, "keys"),
+        clientConfigFile: join(stateDirectory, "clients.json"),
       }),
     );
   });
@@ -348,11 +347,10 @@ describe("official Entra resilience scenarios", () => {
     const restartDirectory = await mkdtemp(
       join(tmpdir(), "mock-idp-rollover-restart-"),
     );
-    const restartConfig = loadConfig({
-      NODE_ENV: "test",
-      OIDC_ISSUER: issuer,
-      KEY_DIRECTORY: join(restartDirectory, "keys"),
-      CLIENT_CONFIG_FILE: join(restartDirectory, "clients.json"),
+    const restartConfig = testConfig({
+      issuer,
+      keyDirectory: join(restartDirectory, "keys"),
+      clientConfigFile: join(restartDirectory, "clients.json"),
     });
     let original: AppContext | undefined;
     let restarted: AppContext | undefined;

@@ -13,7 +13,23 @@ const uiMetadata = JSON.stringify(scenarioUiMetadata).replaceAll(
   "\\u003c",
 );
 const uiDefaults = JSON.stringify(scenarioUiDefaults);
-export const adminHtml = `<!doctype html>
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character]!,
+  );
+}
+
+export function renderAdminHtml(tenantId: string, issuer: string): string {
+  return `<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mock OIDC Provider</title><style>
 :root{font-family:ui-sans-serif,system-ui;color:#16202a;background:#eef2f6}body{margin:0;padding:2rem}.wrap{max-width:900px;margin:auto}
@@ -22,6 +38,7 @@ h1{margin:0 0 1rem}.card{background:white;border-radius:12px;padding:1.25rem;mar
 .label{font-size:.78rem;color:#64748b}.value{font-size:1.15rem;font-weight:700;margin-top:.25rem}label{display:block;margin:.8rem 0 .3rem}
 select,input,textarea,button{font:inherit;padding:.65rem;border:1px solid #bdc7d3;border-radius:6px}select,input,textarea{width:100%;box-sizing:border-box}textarea{min-height:5rem}button{cursor:pointer;font-weight:650}.primary{background:#1261a0;color:white}.danger{background:#b42318;color:white}.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem}.hidden{display:none}.error,.warning{color:#b42318;white-space:pre-wrap}.client{border-top:1px solid #d9e0e7;padding:1rem 0}.client:first-child{border-top:0}.client code{overflow-wrap:anywhere}
 </style></head><body><main class="wrap"><h1>Mock OIDC Provider</h1>
+<section class="card"><div class="grid"><div><div class="label">Tenant ID</div><div class="value"><code>${escapeHtml(tenantId)}</code></div></div><div><div class="label">Issuer</div><div class="value"><code>${escapeHtml(issuer)}</code></div></div></div></section>
 <section id="state" class="card state"><div class="grid">
 <div><div class="label">現在のScenario</div><div id="current" class="value">読み込み中…</div></div><div><div class="label">実行モード</div><div id="currentMode" class="value">—</div></div>
 <div><div class="label">初期失敗回数</div><div id="initial" class="value">—</div></div><div><div class="label">残り失敗回数</div><div id="remaining" class="value">—</div></div>
@@ -68,3 +85,4 @@ $('newClient').onclick=()=>openClient(null);$('cancelClient').onclick=()=>{$('cl
 $('clientForm').onsubmit=async event=>{event.preventDefault();const type=$('clientType').value,payload={clientType:type,...(type==='CONFIDENTIAL'?{clientSecret:$('clientSecret').value,tokenEndpointAuthMethod:$('authMethod').value}:{tokenEndpointAuthMethod:'none'}),redirectUris:lines($('redirectUris').value),postLogoutRedirectUris:lines($('logoutUris').value),accessTokenAudience:$('audience').value};try{const url=editingClientId?'/__mock/api/clients/'+encodeURIComponent(editingClientId):'/__mock/api/clients';await request(url,{method:editingClientId?'PUT':'POST',headers:{'content-type':'application/json'},body:JSON.stringify(editingClientId?payload:{clientId:$('clientId').value,...payload})});$('clientEditor').classList.add('hidden');await loadClients()}catch(error){$('editorError').textContent=message(error)}};
 $('resetClients').onclick=async()=>{if(!confirm('すべてのOIDC Clientを初期状態に戻しますか？'))return;try{renderClients(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent=''}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
 </script></body></html>`;
+}

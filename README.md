@@ -6,10 +6,11 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 
 ## 起動
 
-既存のdevcontainerとNode.js 24を前提とします。Compose標準構成では、Mock IdPのURLとissuerを次の値に固定しています。
+既存のdevcontainerとNode.js 24を前提とします。Mock IdPのtenant IDとissuerは次の値に固定しています。
 
 ```text
-http://mock-idp.test:9000
+Tenant ID: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+Issuer: http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0
 ```
 
 service名は既存の`app`のままです。OIDCで公開するhostnameはservice名から分離し、Docker network aliasの`mock-idp.test`を使用します。
@@ -36,13 +37,15 @@ docker network create mock-idp-network
 
 hostsファイルはアプリケーションから自動変更しません。
 
-devcontainerを初めて作成したときやvolumeを作り直したときは、`node_modules`用named volumeへ依存関係を導入してください。
+## devcontainer起動後のセットアップ
+
+devcontainerを初めて起動したとき、または`node_modules`用named volumeを作り直したときは、依存関係を導入してください。
 
 ```bash
 npm ci
 ```
 
-Composeでは`OIDC_ISSUER=http://mock-idp.test:9000`と`PORT=9000`を設定し、コンテナport 9000をホストの`127.0.0.1:9000`に公開します。devcontainer内で次を実行してください。
+依存関係の導入後、devcontainer内で次を実行してください。Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。
 
 ```bash
 npm run dev
@@ -51,13 +54,13 @@ npm run dev
 主なURLは次のとおりです。
 
 - Admin UI: `http://mock-idp.test:9000/__mock`
-- Discovery: `http://mock-idp.test:9000/.well-known/openid-configuration`
-- Authorization Endpoint: `http://mock-idp.test:9000/authorize`
-- Token Endpoint: `http://mock-idp.test:9000/token`
-- JWKS: `http://mock-idp.test:9000/jwks`
+- Discovery: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
+- Authorization Endpoint: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize`
+- Token Endpoint: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token`
+- JWKS: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks`
 - Health: `http://mock-idp.test:9000/health`
 
-OIDCクライアントにもissuerとして`http://mock-idp.test:9000`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成されます。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
+OIDCクライアントにはauthority/issuerとして`http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成され、JWTの`tid`には固定tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
 
 production buildを確認する場合は次を実行します。
 
@@ -124,56 +127,37 @@ HTTPはローカル開発専用です。このMock IdPと未認証のAdmin API�
 
 ## Issuer URL
 
-Compose標準構成のissuerは`http://mock-idp.test:9000`です。ブラウザの`/authorize`、サーバーサイドWebアプリの`/token`、Discovery、JWKS、JWTの`iss`、OIDCクライアント設定で同じURLを使用します。
+issuerは`http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`です。ブラウザの`/authorize`、サーバーサイドWebアプリの`/token`、Discovery、JWKS、JWTの`iss`、OIDCクライアント設定で同じURLを使用します。tenant、host、portは実行時に変更できません。
 
-アプリ本体の既存互換性として、Composeを使わない直接起動では`OIDC_ISSUER`に別の絶対HTTP(S) URLやpath付きURLを指定できます。末尾の`/`は正規化され、credentials、query、fragmentを含むURLは指定できません。通常のローカル開発ではComposeの固定値を使用してください。
-
-```bash
-# direct npm起動で既存のpath付きissuer機能を利用する例
-OIDC_ISSUER=http://login.microsoftonline.test:9000/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0 npm run dev
-```
-
-path付きissuerではOIDC endpointも同じpath配下になります。
+OIDC endpointはissuerと同じtenant path配下にあります。
 
 ```text
-http://login.microsoftonline.test:9000/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0/.well-known/openid-configuration
-http://login.microsoftonline.test:9000/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0/authorize
-http://login.microsoftonline.test:9000/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0/token
-http://login.microsoftonline.test:9000/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/v2.0/jwks
+http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration
+http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize
+http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token
+http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks
 ```
 
 Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下の`/__mock`、`/__mock/api/*`、`/health`です。
 
-reverse proxyを使用するときだけ`TRUST_PROXY=true`を設定し、信頼できるproxyから正しい`X-Forwarded-Proto`と`X-Forwarded-Host`を渡してください。HTTPS化、ローカルCA、証明書の構築は今回の標準構成の対象外です。
+reverse proxy、HTTPS化、ローカルCA、証明書の構築は今回の標準構成の対象外です。
 
 ## OIDC設定
 
-| 項目                           | 既定値                             |
-| ------------------------------ | ---------------------------------- |
-| Issuer                         | `http://mock-idp.test:9000`        |
-| Listen address                 | `0.0.0.0:9000`                     |
-| Public client                  | `mock-public-client`（secretなし） |
-| Confidential client            | `mock-confidential-client`         |
-| Confidential secret            | `mock-client-secret-change-me`     |
-| Redirect URI                   | `http://localhost:3000/callback`   |
-| Access token audience/resource | `urn:mock-api`                     |
+| 項目                           | 既定値                                                                |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Tenant ID                      | `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee`                                |
+| Issuer                         | `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0` |
+| Listen address                 | `0.0.0.0:9000`                                                        |
+| Public client                  | `mock-public-client`（secretなし）                                    |
+| Confidential client            | `mock-confidential-client`                                            |
+| Confidential secret            | `mock-client-secret-change-me`                                        |
+| Redirect URI                   | `http://localhost:3000/callback`                                      |
+| Access token audience/resource | `urn:mock-api`                                                        |
 
 これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC Clients」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
 
 全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
-
-環境変数:
-
-| 変数                 | 説明                                             |
-| -------------------- | ------------------------------------------------ |
-| `OIDC_ISSUER`        | Composeでは`http://mock-idp.test:9000`に固定     |
-| `PORT`               | Composeではコンテナ内listen portを`9000`に固定   |
-| `HOST`               | listen address                                   |
-| `TRUST_PROXY`        | 信頼できるreverse proxy配下だけで`true`にする    |
-| `KEY_DIRECTORY`      | 署名鍵の保存先                                   |
-| `CLIENT_CONFIG_FILE` | Client設定ファイル。既定値は`.data/clients.json` |
-
-従来の`PUBLIC_CLIENT_ID`、`CONFIDENTIAL_CLIENT_ID`、`CONFIDENTIAL_CLIENT_SECRET`、`REDIRECT_URIS`、`ACCESS_TOKEN_AUDIENCE`は廃止されました。既定値以外を利用していた場合は、起動後にAdmin UIまたはClient Admin APIからクライアントを登録してください。
 
 ### OIDCクライアント管理
 
@@ -302,7 +286,7 @@ AADSTS50196のloop検出は専用Scenarioを重複して設けず、既存の`TO
 
 ## 鍵と状態
 
-通常鍵と異常署名鍵は初回起動時に`KEY_DIRECTORY`へ生成し、秘密鍵ファイルは0600で保存します。既定の`.data/`はGit対象外です。JWKSには通常鍵の公開部分だけを掲載します。鍵ディレクトリを削除すると再生成されます。
+通常鍵と異常署名鍵は初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには通常鍵の公開部分だけを掲載します。鍵ディレクトリを削除すると再生成されます。
 
 OIDC artifactとScenario Storeは単一プロセスのインメモリ実装です。再起動で認可コード、session、scenario履歴は失われます。
 

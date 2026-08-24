@@ -8,9 +8,6 @@ services:
     volumes:
       - ../../:/workspace:cached
       - node_modules:/workspace/node_modules
-    environment:
-      OIDC_ISSUER: http://mock-idp.test:9000
-      PORT: 9000
     ports:
       - "127.0.0.1:9000:9000"
     networks:

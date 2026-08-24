@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { LightMyRequestResponse } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
@@ -156,13 +156,7 @@ describe("custom interaction policy", () => {
 
   beforeAll(async () => {
     keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-interaction-"));
-    context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: issuer,
-        KEY_DIRECTORY: keyDirectory,
-      }),
-    );
+    context = await buildApp(testConfig({ issuer, keyDirectory }));
   });
 
   beforeEach(() => context.store.reset());

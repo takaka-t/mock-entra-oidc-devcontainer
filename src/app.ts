@@ -147,7 +147,7 @@ function sendOriginError(response: ServerResponse): void {
   response.end(
     JSON.stringify({
       error: "invalid_request_origin",
-      error_description: "Request origin does not match OIDC_ISSUER",
+      error_description: "Request origin does not match the configured issuer",
     }),
   );
 }
@@ -166,7 +166,7 @@ function asError(error: unknown): Error {
 
 export async function buildApp(config: AppConfig): Promise<AppContext> {
   const app = Fastify({
-    logger: process.env.NODE_ENV !== "test",
+    logger: config.logger,
     trustProxy: config.trustProxy,
   });
   const rolloverState = new SigningKeyRolloverState();

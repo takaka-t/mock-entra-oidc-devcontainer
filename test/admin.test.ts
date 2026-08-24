@@ -4,16 +4,16 @@ import { dirname, join } from "node:path";
 import { Script } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { loadConfig } from "../src/config.js";
+import { mockTenantId } from "../src/config.js";
+import { testConfig } from "./test-config.js";
 
 describe("admin API and UI", () => {
   let context: AppContext;
   beforeEach(async () => {
     context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: "http://localhost",
-        KEY_DIRECTORY: await mkdtemp(join(tmpdir(), "mock-idp-")),
+      testConfig({
+        issuer: "http://localhost",
+        keyDirectory: await mkdtemp(join(tmpdir(), "mock-idp-")),
       }),
     );
   });
@@ -172,6 +172,8 @@ describe("admin API and UI", () => {
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
     expect(response.body).toContain("Mock OIDC Provider");
+    expect(response.body).toContain(mockTenantId);
+    expect(response.body).toContain("http://localhost");
     expect(response.body).toContain('<html lang="ja">');
     expect(response.body).toContain("現在のScenario");
     expect(response.body).toContain("残り失敗回数");
@@ -393,11 +395,10 @@ describe("admin API and UI", () => {
 
     await context.app.close();
     context = await buildApp(
-      loadConfig({
-        NODE_ENV: "test",
-        OIDC_ISSUER: "http://localhost",
-        KEY_DIRECTORY: dirname(clientFile),
-        CLIENT_CONFIG_FILE: clientFile,
+      testConfig({
+        issuer: "http://localhost",
+        keyDirectory: dirname(clientFile),
+        clientConfigFile: clientFile,
       }),
     );
     expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(

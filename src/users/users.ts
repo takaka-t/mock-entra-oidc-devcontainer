@@ -1,3 +1,5 @@
+import { mockTenantId } from "../config.js";
+
 export interface MockUser {
   sub: string;
   oid: string;
@@ -8,13 +10,11 @@ export interface MockUser {
   groups: string[];
 }
 
-const tenantId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-
 export const users: readonly MockUser[] = [
   {
     sub: "user-admin",
     oid: "11111111-1111-1111-1111-111111111111",
-    tid: tenantId,
+    tid: mockTenantId,
     name: "Admin User",
     preferred_username: "admin@example.com",
     mail: "admin@example.com",
@@ -23,7 +23,7 @@ export const users: readonly MockUser[] = [
   {
     sub: "user-normal",
     oid: "22222222-2222-2222-2222-222222222222",
-    tid: tenantId,
+    tid: mockTenantId,
     name: "Normal User",
     preferred_username: "user@example.com",
     mail: "user@example.com",
@@ -32,7 +32,7 @@ export const users: readonly MockUser[] = [
   {
     sub: "user-unauthorized",
     oid: "33333333-3333-3333-3333-333333333333",
-    tid: tenantId,
+    tid: mockTenantId,
     name: "Unauthorized User",
     preferred_username: "unauthorized@example.com",
     mail: "unauthorized@example.com",

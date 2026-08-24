@@ -16,7 +16,7 @@ import { routedPathname } from "../http-path.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import { parseScenarioInput } from "../scenario/validation.js";
 import { users } from "../users/users.js";
-import { adminHtml } from "./ui.js";
+import { renderAdminHtml } from "./ui.js";
 
 const interactionBodySchema = z
   .object({ accountId: z.string().min(1) })
@@ -158,7 +158,7 @@ export async function registerRoutes(
     if (!sameOrigin(request.headers.origin, config.issuerOrigin)) {
       await reply.code(403).send({
         error: "invalid_admin_origin",
-        message: "Origin does not match OIDC_ISSUER",
+        message: "Origin does not match the configured issuer",
       });
       return;
     }
@@ -175,7 +175,9 @@ export async function registerRoutes(
 
   app.get("/health", async () => ({ status: "ok" }));
   app.get("/__mock", async (_request, reply) =>
-    reply.type("text/html; charset=utf-8").send(adminHtml),
+    reply
+      .type("text/html; charset=utf-8")
+      .send(renderAdminHtml(config.tenantId, config.issuer)),
   );
   app.get("/__mock/api/scenario", async () => store.get());
   app.put("/__mock/api/scenario", async (request, reply) => {
