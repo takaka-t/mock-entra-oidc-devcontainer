@@ -1,23 +1,53 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Script } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { mockTenantId } from "../src/config.js";
+import { mockTenantId, type AppConfig } from "../src/config.js";
+import { scenarioNames } from "../src/scenario/types.js";
 import { testConfig } from "./test-config.js";
+
+describe("test configuration safety", () => {
+  it.each([
+    {
+      name: "key directory",
+      keyDirectory: ".data/test-keys",
+      clientConfigFile: join(tmpdir(), "safe-test-clients.json"),
+    },
+    {
+      name: "client configuration",
+      keyDirectory: join(tmpdir(), "safe-test-keys"),
+      clientConfigFile: ".data/test-clients.json",
+    },
+  ])("rejects a $name below the repository .data directory", (paths) => {
+    expect(() => testConfig(paths)).toThrow(
+      "must not resolve inside the repository .data directory",
+    );
+  });
+});
 
 describe("admin API and UI", () => {
   let context: AppContext;
+  let appConfig: AppConfig;
+  let stateDirectory: string;
+
   beforeEach(async () => {
-    context = await buildApp(
-      testConfig({
-        issuer: "http://localhost",
-        keyDirectory: await mkdtemp(join(tmpdir(), "mock-idp-")),
-      }),
-    );
+    stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-admin-"));
+    appConfig = testConfig({
+      issuer: "http://localhost",
+      keyDirectory: join(stateDirectory, "keys"),
+      clientConfigFile: join(stateDirectory, "clients.json"),
+    });
+    context = await buildApp(appConfig);
   });
-  afterEach(async () => context.app.close());
+  afterEach(async () => {
+    try {
+      await context.app.close();
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
+  });
 
   it("sets, reads, clears, and resets scenarios", async () => {
     const set = await context.app.inject({
@@ -86,6 +116,65 @@ describe("admin API and UI", () => {
     });
   });
 
+  it("resets the active count and published signing key through the Reset API", async () => {
+    const initialKeys = (
+      await context.app.inject({ url: "/jwks", headers: { host: "localhost" } })
+    ).json<{ keys: Array<{ kid?: string }> }>().keys;
+    expect(initialKeys).toHaveLength(1);
+
+    await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "SIGNING_KEY_ROLLOVER", mode: "CONTINUOUS" },
+    });
+    expect(
+      (
+        await context.app.inject({
+          url: "/jwks",
+          headers: { host: "localhost" },
+        })
+      ).json<{ keys: unknown[] }>().keys,
+    ).toHaveLength(2);
+
+    await context.app.inject({ method: "DELETE", url: "/__mock/api/scenario" });
+    expect(
+      (
+        await context.app.inject({
+          url: "/jwks",
+          headers: { host: "localhost" },
+        })
+      ).json<{ keys: unknown[] }>().keys,
+    ).toHaveLength(2);
+    await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: {
+        scenario: "AUTH_500",
+        mode: "LIMITED",
+        failureCount: 2,
+      },
+    });
+
+    const reset = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/reset",
+      payload: {},
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toMatchObject({
+      scenario: "NORMAL",
+      status: "NORMAL",
+      initialFailureCount: null,
+      remainingFailures: null,
+      triggeredCount: 0,
+      lastCompleted: null,
+    });
+    const resetKeys = (
+      await context.app.inject({ url: "/jwks", headers: { host: "localhost" } })
+    ).json<{ keys: Array<{ kid?: string }> }>().keys;
+    expect(resetKeys.map(({ kid }) => kid)).toEqual([initialKeys[0]?.kid]);
+  });
+
   it.each([
     { scenario: "TOKEN_500", mode: "LIMITED" },
     { scenario: "TOKEN_500", mode: "LIMITED", failureCount: 0 },
@@ -125,7 +214,10 @@ describe("admin API and UI", () => {
     {
       scenario: "DISCOVERY_INVALID",
       mode: "CONTINUOUS",
-      parameters: { retryAfterSeconds: 60 },
+    },
+    {
+      scenario: "UNKNOWN_GROUPS",
+      mode: "CONTINUOUS",
     },
   ])("rejects invalid input %#", async (payload) => {
     expect(
@@ -139,34 +231,60 @@ describe("admin API and UI", () => {
     ).toBe(400);
   });
 
-  it("normalizes TOKEN_429 and preserves optional TOKEN_500 Retry-After", async () => {
-    const throttled = await context.app.inject({
-      method: "PUT",
-      url: "/__mock/api/scenario",
-      payload: { scenario: "TOKEN_429", mode: "CONTINUOUS" },
-    });
-    expect(throttled.statusCode).toBe(200);
-    expect(throttled.json().parameters).toEqual({ retryAfterSeconds: 60 });
+  it("normalizes every 429 and preserves optional Retry-After for every 500", async () => {
+    for (const scenario of [
+      "AUTH_429",
+      "TOKEN_429",
+      "JWKS_429",
+      "DISCOVERY_429",
+    ] as const) {
+      const defaulted = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: { scenario, mode: "CONTINUOUS" },
+      });
+      expect(defaulted.statusCode).toBe(200);
+      expect(defaulted.json().parameters).toEqual({ retryAfterSeconds: 60 });
 
-    const serverError = await context.app.inject({
-      method: "PUT",
-      url: "/__mock/api/scenario",
-      payload: {
-        scenario: "TOKEN_500",
-        mode: "CONTINUOUS",
-        parameters: { retryAfterSeconds: 15 },
-      },
-    });
-    expect(serverError.statusCode).toBe(200);
-    expect(serverError.json().parameters).toEqual({ retryAfterSeconds: 15 });
+      const configured = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: {
+          scenario,
+          mode: "CONTINUOUS",
+          parameters: { retryAfterSeconds: 15 },
+        },
+      });
+      expect(configured.statusCode).toBe(200);
+      expect(configured.json().parameters).toEqual({ retryAfterSeconds: 15 });
+    }
 
-    const serverErrorWithoutHeader = await context.app.inject({
-      method: "PUT",
-      url: "/__mock/api/scenario",
-      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
-    });
-    expect(serverErrorWithoutHeader.statusCode).toBe(200);
-    expect(serverErrorWithoutHeader.json().parameters).toEqual({});
+    for (const scenario of [
+      "AUTH_500",
+      "TOKEN_500",
+      "JWKS_500",
+      "DISCOVERY_500",
+    ] as const) {
+      const configured = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: {
+          scenario,
+          mode: "CONTINUOUS",
+          parameters: { retryAfterSeconds: 15 },
+        },
+      });
+      expect(configured.statusCode).toBe(200);
+      expect(configured.json().parameters).toEqual({ retryAfterSeconds: 15 });
+
+      const omitted = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: { scenario, mode: "CONTINUOUS" },
+      });
+      expect(omitted.statusCode).toBe(200);
+      expect(omitted.json().parameters).toEqual({});
+    }
   });
 
   it("serves the admin UI", async () => {
@@ -239,16 +357,11 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('id="retryAfterOptional"');
     expect(response.body).toContain("retryAfterRequired");
     expect(response.body).toContain("retryAfterOptional");
-    for (const scenario of [
-      "TOKEN_429",
-      "AUTH_INTERACTION_REQUIRED",
-      "AUTH_TEMPORARILY_UNAVAILABLE",
-      "AUTH_SERVER_ERROR",
-      "DISCOVERY_INVALID",
-      "JWKS_INVALID",
-      "SIGNING_KEY_ROLLOVER",
-    ])
+    expect(scenarioNames).toHaveLength(28);
+    for (const scenario of scenarioNames)
       expect(response.body).toContain(`value="${scenario}"`);
+    expect(response.body).not.toContain('value="UNKNOWN_GROUPS"');
+    expect(response.body).not.toContain('value="DISCOVERY_INVALID"');
     expect(response.body).toContain('<p id="rolloverNote" class="warning">');
     expect(response.body).toContain("新しい署名鍵はJWKSで公開され続けます");
     expect(response.body).toContain('class="grid state-grid"');
@@ -433,13 +546,7 @@ describe("admin API and UI", () => {
     expect(await readFile(clientFile, "utf8")).toBe(beforeFile);
 
     await context.app.close();
-    context = await buildApp(
-      testConfig({
-        issuer: "http://localhost",
-        keyDirectory: dirname(clientFile),
-        clientConfigFile: clientFile,
-      }),
-    );
+    context = await buildApp(appConfig);
     expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
       before,
     );

@@ -188,7 +188,7 @@ curl -X POST http://mock-idp.test:9000/__mock/api/clients/reset \
   -d '{}'
 ```
 
-Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。Clientを削除またはresetしても、発行済みの認可コードやRefresh Tokenは完全には失効しません。完全に初期化するにはプロセスを再起動してください。
+Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。Client設定は`.data/clients.json`へ永続化しますが、認可コード、Session、Grant、Access Token、Refresh TokenのProvider内部状態はProviderインスタンス単位のメモリだけに保持します。Clientを削除またはresetしても発行済みartifactは完全には失効せず、Providerを含むappの再構築またはプロセス再起動で破棄されます。
 
 ## テストユーザー
 
@@ -227,17 +227,20 @@ curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
   -d '{}'
 ```
 
-`CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の要求にはFaultを返したうえで現在状態がNORMALになります。Timeoutは遅延開始時に消費され、クライアントが切断しても戻しません。
+`CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の対象要求にもFaultを返し、その後の現在状態はNORMALになります。Timeoutも遅延開始時にcountを消費し、クライアントが切断しても戻しません。
 
 | シナリオ                       | 対象                      | 動作                                                  |
 | ------------------------------ | ------------------------- | ----------------------------------------------------- |
 | `NORMAL`                       | なし                      | Faultを適用しない                                     |
-| `ACCESS_DENIED`                | Authorization             | 標準OIDC `access_denied`をredirect URIへ返す          |
-| `AUTH_INTERACTION_REQUIRED`    | Authorization             | `interaction_required`をredirect URIへ返す            |
-| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization             | `temporarily_unavailable`をredirect URIへ返す         |
-| `AUTH_SERVER_ERROR`            | Authorization             | `server_error`をredirect URIへ返す                    |
+| `ACCESS_DENIED`                | Authorization OAuth       | `access_denied`を検証済みredirect URIへ返す           |
+| `AUTH_LOGIN_REQUIRED`          | Authorization OAuth       | `login_required`を検証済みredirect URIへ返す          |
+| `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す    |
+| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す         |
+| `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                    |
+| `AUTH_429`                     | `GET` Authorization       | HTTP 429と`Retry-After`を直接返す                     |
+| `AUTH_500`                     | `GET` Authorization       | HTTP 500と任意の`Retry-After`を直接返す               |
+| `AUTH_TIMEOUT`                 | `GET` Authorization       | 指定時間遅延してから通常処理を続行                    |
 | `NO_GROUPS`                    | ID/access token claim生成 | `groups`だけを除外                                    |
-| `UNKNOWN_GROUPS`               | ID/access token claim生成 | `groups`を`unknown-group-id`へ変更                    |
 | `WRONG_AUDIENCE`               | ID/access token           | 正常鍵で署名し、`aud`だけを変更                       |
 | `WRONG_ISSUER`                 | ID/access token           | 正常鍵で署名し、`iss`だけを変更                       |
 | `EXPIRED_TOKEN`                | ID/access token           | 正常鍵で署名し、整合した過去の`iat`/`nbf`/`exp`を設定 |
@@ -250,28 +253,46 @@ curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                   |
 | `TOKEN_TIMEOUT`                | `POST` Token              | 指定時間遅延してから通常処理を続行                    |
 | `JWKS_INVALID`                 | `GET` JWKS                | HTTP 200で不正なJWKSを返す                            |
-| `JWKS_500`                     | `GET` JWKS                | HTTP 500を返す                                        |
+| `JWKS_429`                     | `GET` JWKS                | HTTP 429と`Retry-After`を返す                         |
+| `JWKS_500`                     | `GET` JWKS                | HTTP 500と任意の`Retry-After`を返す                   |
 | `JWKS_TIMEOUT`                 | `GET` JWKS                | 指定時間遅延してから通常処理を続行                    |
-| `DISCOVERY_INVALID`            | `GET` Discovery           | HTTP 200で不正なDiscovery metadataを返す              |
-| `DISCOVERY_500`                | `GET` Discovery           | HTTP 500を返す                                        |
+| `DISCOVERY_429`                | `GET` Discovery           | HTTP 429と`Retry-After`を返す                         |
+| `DISCOVERY_500`                | `GET` Discovery           | HTTP 500と任意の`Retry-After`を返す                   |
 | `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
 
-### シナリオの使い分け
+### OAuth redirect errorとHTTP fault
 
-- Authorization系は、認可リダイレクトで返るOAuthエラーをアプリケーションが適切に表示・再試行・対話認証へ切り替えられるか確認するためのものです。
-- claim/JWT系は、トークンのclaim検証、`iss`・`aud`・有効期間・署名の検証が確実に行われるか確認します。`INVALID_SIGNATURE`はJWKS非公開の別鍵、`UNKNOWN_KID`は正常鍵と未公開`kid`を使います。
-- Token/JWKS/DiscoveryのHTTP障害・遅延系は、対象endpointに到達した要求だけへ適用されます。クライアントのタイムアウト、バックオフ、再試行、last-known-goodの利用を確認してください。
-- `SIGNING_KEY_ROLLOVER`は新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開します。有効化後の新しい鍵は、シナリオ完了、NORMALへ戻した後、別のシナリオへの切り替え後も公開され続けます。シナリオをリセットすると初期鍵だけの状態へ戻ります。
+AuthorizationのOAuth errorとHTTP faultは別の障害です。
 
-Timeoutの`delayMs`は1〜300,000msで、未指定時は30,000msです。`retryAfterSeconds`は1以上のsafe integerです。`TOKEN_429`では未指定時に60秒を使用し、`TOKEN_500`では指定した場合だけ`Retry-After`を返します。Mock自身は待機や再試行を行いません。Token Faultの対象は`POST`、JWKS/Discovery Faultの対象は`GET`だけです。`OPTIONS`と`HEAD`はLimited Countを消費しません。
+- `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`はAuthorization requestをProviderが検証した後、OAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`と`form_post`はProviderの標準処理に従います。
+- `AUTH_429`, `AUTH_500`はAuthorization endpoint自体のHTTP障害です。redirectせず、`GET /authorize`からHTTP statusとJSON本文を直接返します。`AUTH_TIMEOUT`はendpointで待機した後、通常のAuthorization処理を続けます。
+- したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はブラウザとAuthorization endpoint間のHTTP失敗です。
 
-Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)では、429では`Retry-After`が終わる前にTokenを再取得せず、5xxでは`Retry-After`があれば同様に従い、なければ指数バックオフすることが推奨されています。[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、`TOKEN_429`の既定値は60秒です。
+HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含む安定したOAuth形式JSONですが、Authorization HTTP faultはOAuth redirect responseではありません。
 
-`TOKEN_429`の本文はMockの安定したOAuth形式として`temporarily_unavailable`を返します。Microsoft公式資料が429で明示する契約はHTTP statusと`Retry-After`であり、本シナリオは特定のAADSTS番号を返しません。
+### Parametersと回復試験
 
-[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は、検証済みredirect URIへ`state`とともに返します。`interaction_required`や`prompt=none`で返る`login_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive認証へ切り替えてください。`temporarily_unavailable`と`server_error`は即時に繰り返さず、バックオフして再試行します。
+- `AUTH_429`, `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`の`retryAfterSeconds`は1以上のsafe integerで、未指定時は60秒です。
+- `AUTH_500`, `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`でも`retryAfterSeconds`を任意指定できます。指定した場合だけ`Retry-After`を返します。
+- `AUTH_TIMEOUT`, `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT`の`delayMs`は1〜300,000msで、未指定時は30,000msです。
+- Authorization/JWKS/Discovery Faultは`GET`、Token Faultは`POST`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`、`HEAD`はLIMITED countを消費しません。
+- Mock自身は待機や再試行を行いません。429では`Retry-After`が終わるまで再取得せず、5xxではheaderがあれば従い、なければ指数バックオフするクライアント動作を試験してください。Timeoutでも即時再試行を避けてください。
 
-AADSTS50196のloop検出は専用シナリオを重複して設けず、既存の`TOKEN_400`で再現できます。
+Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、429の既定値は60秒です。特定のAADSTS番号には依存しません。
+
+`prompt=none`で`login_required`または`interaction_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive authenticationへ切り替えてください。[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は検証済みredirect URIだけへ返します。
+
+### Provider標準機能との責務分離
+
+通常の入力で再現できるOAuth protocol validationはScenarioとして重複実装しません。次のケースは`oidc-provider`自身のAuthorization Code lifecycle、PKCE、client authentication、redirect URI検証を利用します。
+
+- 正常なAuthorization Code FlowとPKCE
+- 不正・期限切れ・再利用済みAuthorization Codeによる`invalid_grant`
+- 不一致の`code_verifier`による`invalid_grant`
+- 不正なconfidential client secretによる`invalid_client`
+- Token交換時の`redirect_uri`不一致による`invalid_grant`
+
+このため、`AUTH_CODE_INVALID`, `AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。`state`と`nonce`もクライアント側検証を上書きするScenarioにはしません。任意のToken endpoint errorが必要な場合は`TOKEN_400`をescape hatchとして使用できます。AADSTS50196のloop検出も、例えば次のように再現できます。
 
 ```json
 {
@@ -285,7 +306,9 @@ AADSTS50196のloop検出は専用シナリオを重複して設けず、既存�
 }
 ```
 
-`DISCOVERY_INVALID`、`JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正metadata受信時のlast-known-good継続を試験するためのシナリオです。Microsoft GraphはこのProviderの対象外なので、Graph APIの429は扱いません。
+`JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正なkey metadata受信時のlast-known-good継続を試験するためのシナリオです。`SIGNING_KEY_ROLLOVER`で公開した新しい鍵は、シナリオ完了、NORMALへの変更、別Scenarioへの切り替え後もJWKSに残り、Reset時だけ初期鍵へ戻ります。
+
+`UNKNOWN_GROUPS`は認可データのケースでありOIDC障害ではないため削除しました。必要なgroupsはテストユーザーで表現してください。`DISCOVERY_INVALID`も削除し、Discoveryの障害は429、500、Timeoutで表現します。`JWKS_INVALID`はkey metadata検証用として維持します。Microsoft GraphはProviderの対象外なのでGraph APIの429は扱いません。
 
 新しいシナリオを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
 

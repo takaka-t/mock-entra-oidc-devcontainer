@@ -6,6 +6,12 @@ export const authorizationFaultDefinitions = [
     errorDescription: "Access denied by mock scenario",
   },
   {
+    scenario: "AUTH_LOGIN_REQUIRED",
+    promptName: "mock_login_required",
+    error: "login_required",
+    errorDescription: "Login required by mock scenario",
+  },
+  {
     scenario: "AUTH_INTERACTION_REQUIRED",
     promptName: "mock_interaction_required",
     error: "interaction_required",

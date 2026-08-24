@@ -13,6 +13,7 @@ import type { FaultDecision } from "../scenario/types.js";
 import { findUser, type MockUser } from "../users/users.js";
 import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
+import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
 
 function userClaims(
   user: MockUser,
@@ -28,8 +29,6 @@ function userClaims(
     groups: [...user.groups],
   };
   if (decision?.scenario === "NO_GROUPS") delete claims.groups;
-  if (decision?.scenario === "UNKNOWN_GROUPS")
-    claims.groups = ["unknown-group-id"];
   return claims;
 }
 
@@ -81,6 +80,7 @@ export function createProvider(
           definition.errorDescription,
           definition.error,
           (ctx) => {
+            if (ctx.method !== "GET") return false;
             if (store.get().scenario !== definition.scenario) return false;
             const decision = store.consume(
               "authorization",
@@ -115,6 +115,7 @@ export function createProvider(
   );
 
   const configuration: Configuration = {
+    adapter: createInMemoryAdapterFactory(),
     jwks: { keys: [keys.normal.privateJwk] },
     claims: {
       openid: [

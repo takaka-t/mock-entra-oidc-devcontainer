@@ -10,7 +10,10 @@ import {
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { FaultEndpoint } from "../scenario/types.js";
 
-type HttpFaultEndpoint = Extract<FaultEndpoint, "token" | "jwks" | "discovery">;
+type HttpFaultEndpoint = Extract<
+  FaultEndpoint,
+  "authorization-http" | "token" | "jwks" | "discovery"
+>;
 
 const endpointEntries = Object.entries(httpFaultEndpoints) as Array<
   [HttpFaultEndpoint, (typeof httpFaultEndpoints)[HttpFaultEndpoint]]
@@ -18,6 +21,15 @@ const endpointEntries = Object.entries(httpFaultEndpoints) as Array<
 
 function externalPath(pathname: string, issuerPath: string): string {
   return `${issuerPath}${pathname}`;
+}
+
+function matchesExternalPath(
+  pathname: string,
+  routePathname: string,
+  issuerPath: string,
+): boolean {
+  const canonicalPath = externalPath(routePathname, issuerPath);
+  return pathname === canonicalPath || pathname === `${canonicalPath}/`;
 }
 
 function endpointFor(
@@ -29,15 +41,15 @@ function endpointFor(
   return (
     endpointEntries.find(
       ([, route]) =>
-        externalPath(route.pathname, issuerPath) === pathname &&
+        matchesExternalPath(pathname, route.pathname, issuerPath) &&
         route.method === normalizedMethod,
     )?.[0] ?? null
   );
 }
 
 function isKnownPath(pathname: string, issuerPath: string): boolean {
-  return endpointEntries.some(
-    ([, route]) => externalPath(route.pathname, issuerPath) === pathname,
+  return endpointEntries.some(([, route]) =>
+    matchesExternalPath(pathname, route.pathname, issuerPath),
   );
 }
 
@@ -97,6 +109,43 @@ function safelyNext(next: (error?: Error) => void, error?: unknown): void {
   );
 }
 
+function delayThenContinue(
+  req: IncomingMessage,
+  res: ServerResponse,
+  next: (error?: Error) => void,
+  delayMs: number,
+): void {
+  let settled = false;
+
+  const removeListeners = (): void => {
+    req.off("aborted", cancel);
+    res.off("close", cancel);
+  };
+  const cancel = (): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    removeListeners();
+  };
+  const resume = (): void => {
+    if (settled) return;
+    settled = true;
+    removeListeners();
+    if (responseUnavailable(req, res)) return;
+    try {
+      safelyNext(next);
+    } catch (error) {
+      safelyNext(next, error);
+    }
+  };
+
+  const timer = setTimeout(resume, delayMs);
+  timer.unref?.();
+  req.once("aborted", cancel);
+  res.once("close", cancel);
+  if (responseUnavailable(req, res)) cancel();
+}
+
 export function createHttpFaultMiddleware(
   store: InMemoryScenarioStore,
   logger: FastifyBaseLogger,
@@ -150,15 +199,12 @@ export function createHttpFaultMiddleware(
 
       const effect = scenarios[decision.scenario].effect;
       if (effect === "http-timeout") {
-        const timer = setTimeout(() => {
-          if (responseUnavailable(req, res)) return;
-          try {
-            safelyNext(next);
-          } catch (error) {
-            safelyNext(next, error);
-          }
-        }, decision.parameters.delayMs ?? defaultDelayMs);
-        timer.unref?.();
+        delayThenContinue(
+          req,
+          res,
+          next,
+          decision.parameters.delayMs ?? defaultDelayMs,
+        );
         return;
       }
 
@@ -200,10 +246,6 @@ export function createHttpFaultMiddleware(
               error_description: `Injected ${decision.scenario} fault`,
             }),
           );
-          return;
-        case "discovery-invalid":
-          res.statusCode = 200;
-          res.end(JSON.stringify({}));
           return;
         case "jwks-invalid":
           res.statusCode = 200;

@@ -16,6 +16,7 @@ import { testConfig } from "./test-config.js";
 
 const host = new URL(mockOrigin).host;
 const issuerPath = mockIssuerPath;
+const encodedIssuerPath = issuerPath.replace("/a", "/%61");
 const issuer = mockIssuer;
 
 function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
@@ -52,8 +53,11 @@ describe("issuer routing and origin enforcement", () => {
   });
 
   afterAll(async () => {
-    await context.app.close();
-    await rm(keyDirectory, { recursive: true, force: true });
+    try {
+      await context.app.close();
+    } finally {
+      await rm(keyDirectory, { recursive: true, force: true });
+    }
   });
 
   it("completes discovery through token verification below an issuer path", async () => {
@@ -214,18 +218,40 @@ describe("issuer routing and origin enforcement", () => {
     expect(throttled.headers["retry-after"]).toBe("60");
 
     context.store.set({
-      scenario: "DISCOVERY_INVALID",
+      scenario: "DISCOVERY_429",
       mode: "LIMITED",
       failureCount: 1,
     });
-    expect(
-      (
-        await context.app.inject({
-          url: `${issuerPath}/.well-known/openid-configuration`,
-          headers: { host },
-        })
-      ).json(),
-    ).toEqual({});
+    const discoveryThrottled = await context.app.inject({
+      url: `${issuerPath}/.well-known/openid-configuration`,
+      headers: { host },
+    });
+    expect(discoveryThrottled.statusCode).toBe(429);
+    expect(discoveryThrottled.headers["retry-after"]).toBe("60");
+
+    const verifier = randomBytes(32).toString("base64url");
+    context.store.set({
+      scenario: "AUTH_500",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+    const authorizationFailed = await context.app.inject({
+      url:
+        `${issuerPath}/authorize?` +
+        new URLSearchParams({
+          client_id: "mock-public-client",
+          redirect_uri: "http://localhost:3000/callback",
+          response_type: "code",
+          scope: "openid",
+          code_challenge: createHash("sha256")
+            .update(verifier)
+            .digest("base64url"),
+          code_challenge_method: "S256",
+        }).toString(),
+      headers: { host },
+    });
+    expect(authorizationFailed.statusCode).toBe(500);
+    expect(authorizationFailed.headers.location).toBeUndefined();
 
     context.store.set({
       scenario: "JWKS_INVALID",
@@ -288,6 +314,26 @@ describe("issuer routing and origin enforcement", () => {
     expect(mismatch.statusCode).toBe(400);
     expect(mismatch.json().error).toBe("invalid_request_origin");
   });
+
+  it.each(["GET", "POST"] as const)(
+    "rejects %s encoded issuer interactions from a mismatched Host",
+    async (method) => {
+      const response = await context.app.inject({
+        method,
+        url: `${encodedIssuerPath}/interaction/not-a-real-interaction`,
+        headers: {
+          host: "unexpected.test:19000",
+          ...(method === "POST"
+            ? { "content-type": "application/x-www-form-urlencoded" }
+            : {}),
+        },
+        ...(method === "POST" ? { payload: "accountId=user-admin" } : {}),
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toBe("invalid_request_origin");
+    },
+  );
 
   it("enforces Admin protections for percent-encoded static route spellings", async () => {
     const encodedClientsPath = "/%5f%5fmock/api/clients";
@@ -430,9 +476,23 @@ describe("trusted HTTPS proxy", () => {
         expect(rejected.statusCode).toBe(400);
         expect(rejected.json().error).toBe("invalid_request_origin");
       }
+
+      const encodedInteraction = await context.app.inject({
+        url: `${encodedIssuerPath}/interaction/not-a-real-interaction`,
+        headers: {
+          host: "internal-proxy:9000",
+          "x-forwarded-host": "attacker.test",
+          "x-forwarded-proto": "https",
+        },
+      });
+      expect(encodedInteraction.statusCode).toBe(400);
+      expect(encodedInteraction.json().error).toBe("invalid_request_origin");
     } finally {
-      await context.app.close();
-      await rm(keyDirectory, { recursive: true, force: true });
+      try {
+        await context.app.close();
+      } finally {
+        await rm(keyDirectory, { recursive: true, force: true });
+      }
     }
   });
 });

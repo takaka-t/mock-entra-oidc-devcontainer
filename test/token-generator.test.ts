@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,7 +10,7 @@ import {
   jwtVerify,
   SignJWT,
 } from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mutateToken } from "../src/faults/token-generator.js";
 import { loadSigningKeys, type SigningKeys } from "../src/oidc/keys.js";
 import type { FaultDecision } from "../src/scenario/types.js";
@@ -19,7 +19,6 @@ const tokenKinds = [
   {
     name: "ID token",
     audience: "mock-public-client",
-    typ: "JWT",
     claims: { nonce: "test-nonce" },
   },
   {
@@ -43,13 +42,13 @@ function decision(scenario: FaultDecision["scenario"]): FaultDecision {
 
 describe("token fault generator", () => {
   let keys: SigningKeys;
+  let keyDirectory: string;
   let normalKid: string;
   let normalPublicKey: CryptoKey;
 
   beforeAll(async () => {
-    keys = await loadSigningKeys(
-      await mkdtemp(join(tmpdir(), "mock-idp-token-generator-")),
-    );
+    keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-token-generator-"));
+    keys = await loadSigningKeys(keyDirectory);
     if (typeof keys.normal.publicJwk.kid !== "string")
       throw new Error("normal signing key must have a kid");
     normalKid = keys.normal.publicJwk.kid;
@@ -57,6 +56,10 @@ describe("token fault generator", () => {
       keys.normal.publicJwk,
       "RS256",
     )) as CryptoKey;
+  });
+
+  afterAll(async () => {
+    await rm(keyDirectory, { recursive: true, force: true });
   });
 
   async function makeToken(kind: (typeof tokenKinds)[number]) {
@@ -76,7 +79,7 @@ describe("token fault generator", () => {
       .setProtectedHeader({
         alg: "RS256",
         kid: normalKid,
-        typ: kind.typ,
+        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
       })
       .sign(keys.normal.privateKey);
   }
@@ -92,10 +95,10 @@ describe("token fault generator", () => {
         decision("INVALID_SIGNATURE"),
         keys,
       );
-      expect(decodeProtectedHeader(invalidSignature)).toMatchObject({
+      expect(decodeProtectedHeader(invalidSignature)).toEqual({
         alg: "RS256",
         kid: normalKid,
-        typ: kind.typ,
+        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
       });
       await expect(jwtVerify(invalidSignature, jwks)).rejects.toMatchObject({
         code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
@@ -106,10 +109,10 @@ describe("token fault generator", () => {
         decision("UNKNOWN_KID"),
         keys,
       );
-      expect(decodeProtectedHeader(unknownKid)).toMatchObject({
+      expect(decodeProtectedHeader(unknownKid)).toEqual({
         alg: "RS256",
         kid: "unknown-kid",
-        typ: kind.typ,
+        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
       });
       await expect(jwtVerify(unknownKid, jwks)).rejects.toMatchObject({
         code: "ERR_JWKS_NO_MATCHING_KEY",
@@ -130,10 +133,10 @@ describe("token fault generator", () => {
         keys,
       );
 
-      expect(decodeProtectedHeader(rollover)).toMatchObject({
+      expect(decodeProtectedHeader(rollover)).toEqual({
         alg: "RS256",
         kid: "mock-rollover-key",
-        typ: kind.typ,
+        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
       });
       await expect(
         jwtVerify(
@@ -152,6 +155,20 @@ describe("token fault generator", () => {
       expect(decodeJwt(rollover)).toEqual(decodeJwt(source));
     },
   );
+
+  it.each([
+    "WRONG_AUDIENCE",
+    "WRONG_ISSUER",
+    "EXPIRED_TOKEN",
+    "FUTURE_NBF",
+  ] as const)("preserves protected headers for %s", async (scenario) => {
+    const source = await makeToken(tokenKinds[0]);
+    const mutated = await mutateToken(source, decision(scenario), keys);
+
+    expect(decodeProtectedHeader(mutated)).toEqual(
+      decodeProtectedHeader(source),
+    );
+  });
 
   it.each(tokenKinds)(
     "creates a future nbf before exp and preserves other $name claims",

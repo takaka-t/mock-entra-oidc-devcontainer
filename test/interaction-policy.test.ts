@@ -11,6 +11,7 @@ import { testConfig } from "./test-config.js";
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
 const authorizationFaultCases = [
+  ["AUTH_LOGIN_REQUIRED", "login_required"],
   ["AUTH_INTERACTION_REQUIRED", "interaction_required"],
   ["AUTH_TEMPORARILY_UNAVAILABLE", "temporarily_unavailable"],
   ["AUTH_SERVER_ERROR", "server_error"],
@@ -152,18 +153,27 @@ class BrowserFlow {
 
 describe("custom interaction policy", () => {
   let context: AppContext;
-  let keyDirectory: string;
+  let stateDirectory: string;
 
   beforeAll(async () => {
-    keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-interaction-"));
-    context = await buildApp(testConfig({ issuer, keyDirectory }));
+    stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-interaction-"));
+    context = await buildApp(
+      testConfig({
+        issuer,
+        keyDirectory: join(stateDirectory, "keys"),
+        clientConfigFile: join(stateDirectory, "clients.json"),
+      }),
+    );
   });
 
   beforeEach(() => context.store.reset());
 
   afterAll(async () => {
-    await context.app.close();
-    await rm(keyDirectory, { recursive: true, force: true });
+    try {
+      await context.app.close();
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
   });
 
   it("applies ACCESS_DENIED to a new session", async () => {
@@ -312,9 +322,9 @@ describe("custom interaction policy", () => {
     },
   );
 
-  it("preserves response_mode=form_post for an authorization fault", async () => {
+  it("preserves response_mode=form_post for AUTH_LOGIN_REQUIRED", async () => {
     context.store.set({
-      scenario: "AUTH_INTERACTION_REQUIRED",
+      scenario: "AUTH_LOGIN_REQUIRED",
       mode: "LIMITED",
       failureCount: 1,
     });
@@ -326,7 +336,7 @@ describe("custom interaction policy", () => {
 
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.body).toContain(
-      '<input type="hidden" name="error" value="interaction_required"/>',
+      '<input type="hidden" name="error" value="login_required"/>',
     );
     expect(response.body).toContain(
       '<input type="hidden" name="state" value="form-post-state"/>',
@@ -336,7 +346,7 @@ describe("custom interaction policy", () => {
 
   it("does not send an authorization fault to an unregistered redirect URI", async () => {
     context.store.set({
-      scenario: "AUTH_SERVER_ERROR",
+      scenario: "AUTH_LOGIN_REQUIRED",
       mode: "LIMITED",
       failureCount: 1,
     });
@@ -358,7 +368,7 @@ describe("custom interaction policy", () => {
     expect(response.statusCode).toBe(400);
     expect(response.headers.location).toBeUndefined();
     expect(context.store.get()).toMatchObject({
-      scenario: "AUTH_SERVER_ERROR",
+      scenario: "AUTH_LOGIN_REQUIRED",
       remainingFailures: 1,
       triggeredCount: 0,
     });
@@ -374,6 +384,123 @@ describe("custom interaction policy", () => {
     expect(callback.searchParams.get("error")).toBe("login_required");
     expect(callback.searchParams.get("state")).toBe("fresh-silent-login");
     expect(callback.searchParams.get("code")).toBeNull();
+  });
+
+  it("injects AUTH_LOGIN_REQUIRED when an existing session could authenticate silently", async () => {
+    const browser = new BrowserFlow(context);
+    expect((await browser.complete()).searchParams.get("code")).toBeTruthy();
+    context.store.set({
+      scenario: "AUTH_LOGIN_REQUIRED",
+      mode: "LIMITED",
+      failureCount: 1,
+    });
+
+    const response = await browser.start({
+      prompt: "none",
+      state: "existing-silent-login",
+    });
+    const callback = new URL(String(response.headers.location));
+
+    expect(callback.searchParams.get("error")).toBe("login_required");
+    expect(callback.searchParams.get("state")).toBe("existing-silent-login");
+    expect(callback.searchParams.get("code")).toBeNull();
+    expect(context.store.get()).toMatchObject({
+      scenario: "NORMAL",
+      lastCompleted: {
+        scenario: "AUTH_LOGIN_REQUIRED",
+        triggeredCount: 1,
+      },
+    });
+  });
+
+  it("returns two LIMITED AUTH_LOGIN_REQUIRED errors before silent authentication recovers", async () => {
+    const browser = new BrowserFlow(context);
+    expect((await browser.complete()).searchParams.get("code")).toBeTruthy();
+    context.store.set({
+      scenario: "AUTH_LOGIN_REQUIRED",
+      mode: "LIMITED",
+      failureCount: 2,
+    });
+
+    for (const [state, remainingFailures] of [
+      ["limited-login-one", 1],
+      ["limited-login-two", 0],
+    ] as const) {
+      const response = await browser.start({ prompt: "none", state });
+      const callback = new URL(String(response.headers.location));
+      expect(callback.searchParams.get("error")).toBe("login_required");
+      expect(callback.searchParams.get("state")).toBe(state);
+      if (remainingFailures === 0)
+        expect(context.store.get().scenario).toBe("NORMAL");
+      else
+        expect(context.store.get().remainingFailures).toBe(remainingFailures);
+    }
+
+    const recovered = new URL(
+      String(
+        (
+          await browser.start({
+            prompt: "none",
+            state: "limited-login-recovered",
+          })
+        ).headers.location,
+      ),
+    );
+    expect(recovered.searchParams.get("error")).toBeNull();
+    expect(recovered.searchParams.get("code")).toBeTruthy();
+    expect(recovered.searchParams.get("state")).toBe("limited-login-recovered");
+  });
+
+  it("keeps CONTINUOUS AUTH_LOGIN_REQUIRED active across requests", async () => {
+    context.store.set({
+      scenario: "AUTH_LOGIN_REQUIRED",
+      mode: "CONTINUOUS",
+    });
+    const browser = new BrowserFlow(context);
+
+    for (const state of ["continuous-login-one", "continuous-login-two"]) {
+      const response = await browser.start({ prompt: "none", state });
+      const callback = new URL(String(response.headers.location));
+      expect(callback.searchParams.get("error")).toBe("login_required");
+      expect(callback.searchParams.get("state")).toBe(state);
+    }
+    expect(context.store.get()).toMatchObject({
+      scenario: "AUTH_LOGIN_REQUIRED",
+      status: "ACTIVE",
+      triggeredCount: 2,
+    });
+  });
+
+  it.each([
+    "ACCESS_DENIED",
+    "AUTH_LOGIN_REQUIRED",
+    "AUTH_INTERACTION_REQUIRED",
+    "AUTH_TEMPORARILY_UNAVAILABLE",
+    "AUTH_SERVER_ERROR",
+  ] as const)("does not consume %s for HEAD /authorize", async (scenario) => {
+    context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+    const verifier = randomBytes(32).toString("base64url");
+    const query = new URLSearchParams({
+      client_id: "mock-public-client",
+      redirect_uri: "http://localhost:3000/callback",
+      response_type: "code",
+      scope: "openid",
+      state: "head-must-not-consume",
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+      code_challenge_method: "S256",
+    });
+
+    await context.app.inject({
+      method: "HEAD",
+      url: `/authorize?${query}`,
+      headers: { host },
+    });
+
+    expect(context.store.get()).toMatchObject({
+      scenario,
+      remainingFailures: 1,
+      triggeredCount: 0,
+    });
   });
 
   it("allows exactly one concurrent authorization to consume LIMITED 1", async () => {

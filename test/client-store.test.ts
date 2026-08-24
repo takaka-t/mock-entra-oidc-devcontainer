@@ -1,7 +1,14 @@
-import { mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 import {
   ClientConflictError,
@@ -59,8 +66,17 @@ function providerCallbacks() {
 }
 
 describe("OIDC client store", () => {
+  let directory: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
   it("seeds, persists with 0600, reloads, and resets defaults", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const remove = vi.fn(async () => undefined);
@@ -83,7 +99,6 @@ describe("OIDC client store", () => {
   });
 
   it("reports conflicts and missing clients", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const store = new OidcClientStore(
       join(directory, "clients.json"),
       async () => {},
@@ -104,7 +119,6 @@ describe("OIDC client store", () => {
   });
 
   it("fails startup for malformed persisted data", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     await writeFile(file, "not-json");
     const store = new OidcClientStore(
@@ -117,7 +131,6 @@ describe("OIDC client store", () => {
   });
 
   it("migrates legacy scopes out of persisted clients", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     await writeFile(
       file,
@@ -138,7 +151,6 @@ describe("OIDC client store", () => {
   });
 
   it("rejects unknown persisted client fields during legacy migration", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     await writeFile(
       file,
@@ -180,7 +192,6 @@ describe("OIDC client store", () => {
       },
     },
   ])("rejects a $name without changing state", async ({ client }) => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const remove = vi.fn(async () => undefined);
@@ -201,7 +212,6 @@ describe("OIDC client store", () => {
   });
 
   it("rejects fragments when updating an existing client", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const store = new OidcClientStore(file, apply, async () => undefined);
@@ -230,7 +240,6 @@ describe("OIDC client store", () => {
     { field: "clientId", value: "bad\u007fclient" },
     { field: "clientId", value: "クライアント" },
   ])("rejects a non-printable ASCII $field", async ({ value }) => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const store = new OidcClientStore(
       join(directory, "clients.json"),
       async () => undefined,
@@ -245,7 +254,6 @@ describe("OIDC client store", () => {
   it.each(["bad\tsecret", "bad\u007fsecret", "秘密"])(
     "rejects a non-printable ASCII client secret %#",
     async (clientSecret) => {
-      const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
       const store = new OidcClientStore(
         join(directory, "clients.json"),
         async () => undefined,
@@ -265,7 +273,6 @@ describe("OIDC client store", () => {
   );
 
   it("preserves client ID trimming while rejecting a blank ID", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const store = new OidcClientStore(
       join(directory, "clients.json"),
       async () => undefined,
@@ -282,7 +289,6 @@ describe("OIDC client store", () => {
   });
 
   it("preflights defaults before writing or applying them", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const validate = vi.fn((client: OidcClientConfig) => {
@@ -307,7 +313,6 @@ describe("OIDC client store", () => {
   });
 
   it("wraps provider preflight failures and leaves canonical state unchanged", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const rejectClientId = publicClient.clientId;
@@ -338,7 +343,6 @@ describe("OIDC client store", () => {
   });
 
   it("rolls back a partially applied create and removes its staged file", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const provider = providerCallbacks();
     const store = new OidcClientStore(file, provider.apply, provider.remove);
@@ -360,7 +364,6 @@ describe("OIDC client store", () => {
   });
 
   it("restores the previous provider client when an update fails", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const provider = providerCallbacks();
     const store = new OidcClientStore(file, provider.apply, provider.remove);
@@ -387,7 +390,6 @@ describe("OIDC client store", () => {
   });
 
   it("restores a provider client when removal fails", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const provider = providerCallbacks();
     const store = new OidcClientStore(file, provider.apply, provider.remove);
@@ -410,7 +412,6 @@ describe("OIDC client store", () => {
   });
 
   it("restores the full provider snapshot when reset fails partway", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "mock-clients-"));
     const file = join(directory, "clients.json");
     const provider = providerCallbacks();
     const store = new OidcClientStore(file, provider.apply, provider.remove);

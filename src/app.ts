@@ -203,7 +203,7 @@ export async function buildApp(config: AppConfig): Promise<AppContext> {
       routedIssuerPath,
     );
     if (isAdmin || isInteraction) setSensitiveResponseHeaders(response);
-    if (!isAdmin && !isOidc) return next();
+    if (!isAdmin && !isOidc && !isInteraction) return next();
     if (requestOrigin(request, config.trustProxy) !== config.issuerOrigin) {
       sendOriginError(response);
       return;

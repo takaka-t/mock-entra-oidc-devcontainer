@@ -49,7 +49,6 @@ export async function mutateToken(
     ...oldHeader,
     alg: "RS256",
     kid,
-    typ: oldHeader.typ ?? "JWT",
   };
   return new SignJWT(payload)
     .setProtectedHeader(header)

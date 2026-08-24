@@ -16,7 +16,6 @@ export interface ScenarioDefinition {
     | "http-400"
     | "http-429"
     | "http-500"
-    | "discovery-invalid"
     | "jwks-invalid"
     | "http-timeout";
 }
@@ -27,6 +26,11 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     endpoint: "authorization",
     parameterKind: "none",
     effect: "authorization-denied",
+  },
+  AUTH_LOGIN_REQUIRED: {
+    endpoint: "authorization",
+    parameterKind: "none",
+    effect: "authorization-error",
   },
   AUTH_INTERACTION_REQUIRED: {
     endpoint: "authorization",
@@ -43,12 +47,22 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "none",
     effect: "authorization-error",
   },
-  NO_GROUPS: {
-    endpoint: "claims",
-    parameterKind: "none",
-    effect: "claims-mutation",
+  AUTH_429: {
+    endpoint: "authorization-http",
+    parameterKind: "retryAfterRequired",
+    effect: "http-429",
   },
-  UNKNOWN_GROUPS: {
+  AUTH_500: {
+    endpoint: "authorization-http",
+    parameterKind: "retryAfterOptional",
+    effect: "http-500",
+  },
+  AUTH_TIMEOUT: {
+    endpoint: "authorization-http",
+    parameterKind: "timeout",
+    effect: "http-timeout",
+  },
+  NO_GROUPS: {
     endpoint: "claims",
     parameterKind: "none",
     effect: "claims-mutation",
@@ -113,9 +127,14 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "none",
     effect: "jwks-invalid",
   },
+  JWKS_429: {
+    endpoint: "jwks",
+    parameterKind: "retryAfterRequired",
+    effect: "http-429",
+  },
   JWKS_500: {
     endpoint: "jwks",
-    parameterKind: "none",
+    parameterKind: "retryAfterOptional",
     effect: "http-500",
   },
   JWKS_TIMEOUT: {
@@ -123,14 +142,14 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "timeout",
     effect: "http-timeout",
   },
-  DISCOVERY_INVALID: {
+  DISCOVERY_429: {
     endpoint: "discovery",
-    parameterKind: "none",
-    effect: "discovery-invalid",
+    parameterKind: "retryAfterRequired",
+    effect: "http-429",
   },
   DISCOVERY_500: {
     endpoint: "discovery",
-    parameterKind: "none",
+    parameterKind: "retryAfterOptional",
     effect: "http-500",
   },
   DISCOVERY_TIMEOUT: {
@@ -172,6 +191,7 @@ export const scenarioUiDefaults = {
 } as const;
 
 export const httpFaultEndpoints = {
+  "authorization-http": { method: "GET", pathname: "/authorize" },
   token: { method: "POST", pathname: "/token" },
   jwks: { method: "GET", pathname: "/jwks" },
   discovery: {
@@ -179,6 +199,6 @@ export const httpFaultEndpoints = {
     pathname: "/.well-known/openid-configuration",
   },
 } as const satisfies Record<
-  Extract<FaultEndpoint, "token" | "jwks" | "discovery">,
+  Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">,
   { method: "GET" | "POST"; pathname: string }
 >;

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import type { OutgoingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,15 +35,24 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
 
 describe("OIDC provider", () => {
   let context: AppContext;
+  let stateDirectory: string;
   beforeAll(async () => {
+    stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-oidc-"));
     context = await buildApp(
       testConfig({
         issuer: `http://${host}`,
-        keyDirectory: await mkdtemp(join(tmpdir(), "mock-idp-")),
+        keyDirectory: join(stateDirectory, "keys"),
+        clientConfigFile: join(stateDirectory, "clients.json"),
       }),
     );
   });
-  afterAll(async () => context.app.close());
+  afterAll(async () => {
+    try {
+      await context.app.close();
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
+  });
 
   async function authorize(
     verifier = randomBytes(32).toString("base64url"),
@@ -114,14 +123,17 @@ describe("OIDC provider", () => {
   async function exchange(
     code: string,
     verifier?: string,
-    confidential = false,
+    options: {
+      clientId?: string;
+      clientSecret?: string;
+      redirectUri?: string;
+    } = {},
   ) {
+    const clientId = options.clientId ?? "mock-public-client";
     const body = new URLSearchParams({
       grant_type: "authorization_code",
-      client_id: confidential
-        ? "mock-confidential-client"
-        : "mock-public-client",
-      redirect_uri: "http://localhost:3000/callback",
+      client_id: clientId,
+      redirect_uri: options.redirectUri ?? "http://localhost:3000/callback",
       code,
       ...(verifier ? { code_verifier: verifier } : {}),
     });
@@ -131,9 +143,9 @@ describe("OIDC provider", () => {
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
-        ...(confidential
+        ...(options.clientSecret !== undefined
           ? {
-              authorization: `Basic ${Buffer.from("mock-confidential-client:mock-client-secret-change-me").toString("base64")}`,
+              authorization: `Basic ${Buffer.from(`${clientId}:${options.clientSecret}`).toString("base64")}`,
             }
           : {}),
       },
@@ -157,6 +169,8 @@ describe("OIDC provider", () => {
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
     const tokens = response.json<{ id_token: string; access_token: string }>();
+    expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
+    expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
     const jwks = (
       await context.app.inject({ url: "/jwks", headers: { host } })
     ).json();
@@ -192,9 +206,78 @@ describe("OIDC provider", () => {
 
   it("supports the confidential client with client_secret_basic and PKCE", async () => {
     const flow = await authorize(undefined, "", "mock-confidential-client");
-    expect((await exchange(flow.code, flow.verifier, true)).statusCode).toBe(
-      200,
+    expect(
+      (
+        await exchange(flow.code, flow.verifier, {
+          clientId: "mock-confidential-client",
+          clientSecret: "mock-client-secret-change-me",
+        })
+      ).statusCode,
+    ).toBe(200);
+  });
+
+  it("rejects an unknown authorization code with invalid_grant", async () => {
+    const response = await exchange(
+      "unknown-authorization-code",
+      randomBytes(32).toString("base64url"),
     );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("rejects an expired authorization code with invalid_grant", async () => {
+    const flow = await authorize();
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 601_000 });
+    try {
+      const response = await exchange(flow.code, flow.verifier);
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "invalid_grant" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects reuse of a consumed authorization code with invalid_grant", async () => {
+    const flow = await authorize();
+    const first = await exchange(flow.code, flow.verifier);
+    expect(first.statusCode, first.body).toBe(200);
+
+    const reused = await exchange(flow.code, flow.verifier);
+    expect(reused.statusCode).toBe(400);
+    expect(reused.json()).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("rejects a token redirect_uri mismatch with invalid_grant", async () => {
+    const flow = await authorize();
+    const response = await exchange(flow.code, flow.verifier, {
+      redirectUri: "http://localhost:3000/other-callback",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: "invalid_grant" });
+  });
+
+  it("rejects a wrong confidential client secret without consuming the code", async () => {
+    const flow = await authorize(undefined, "", "mock-confidential-client");
+    const rejected = await exchange(flow.code, flow.verifier, {
+      clientId: "mock-confidential-client",
+      clientSecret: "wrong-client-secret",
+    });
+
+    expect(rejected.statusCode).toBe(401);
+    expect(rejected.json()).toMatchObject({ error: "invalid_client" });
+    expect(rejected.headers["www-authenticate"]).toMatch(/^Basic /);
+    expect(rejected.headers["www-authenticate"]).toContain(
+      'error="invalid_client"',
+    );
+
+    const accepted = await exchange(flow.code, flow.verifier, {
+      clientId: "mock-confidential-client",
+      clientSecret: "mock-client-secret-change-me",
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
   });
 
   it("issues a refresh token to a public client requesting offline_access", async () => {
@@ -313,16 +396,18 @@ describe("OIDC provider", () => {
 
   it("rejects missing, mismatched, and malformed PKCE data", async () => {
     let flow = await authorize();
-    expect((await exchange(flow.code)).statusCode).toBe(400);
+    const missing = await exchange(flow.code);
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json()).toMatchObject({ error: "invalid_grant" });
+
     flow = await authorize();
-    expect(
-      (
-        await exchange(
-          flow.code,
-          "different-verifier-that-is-long-enough-123456789",
-        )
-      ).statusCode,
-    ).toBe(400);
+    const mismatched = await exchange(
+      flow.code,
+      "different-verifier-that-is-long-enough-123456789",
+    );
+    expect(mismatched.statusCode).toBe(400);
+    expect(mismatched.json()).toMatchObject({ error: "invalid_grant" });
+
     const query = new URLSearchParams({
       client_id: "mock-public-client",
       redirect_uri: "http://localhost:3000/callback",
@@ -416,7 +501,6 @@ describe("OIDC provider", () => {
   it("mutates each claim/JWT scenario", async () => {
     for (const scenario of [
       "NO_GROUPS",
-      "UNKNOWN_GROUPS",
       "WRONG_AUDIENCE",
       "WRONG_ISSUER",
       "EXPIRED_TOKEN",
@@ -439,6 +523,8 @@ describe("OIDC provider", () => {
       }>();
       const payload = decodeJwt(tokens.id_token);
       const accessPayload = decodeJwt(tokens.access_token);
+      expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
+      expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
       const jwks = (
         await context.app.inject({ url: "/jwks", headers: { host } })
       ).json();
@@ -458,11 +544,7 @@ describe("OIDC provider", () => {
         expect(payload.groups).toBeUndefined();
         expect(accessPayload.groups).toBeUndefined();
       }
-      if (scenario === "UNKNOWN_GROUPS") {
-        expect(payload.groups).toEqual(["unknown-group-id"]);
-        expect(accessPayload.groups).toEqual(["unknown-group-id"]);
-      }
-      if (scenario === "NO_GROUPS" || scenario === "UNKNOWN_GROUPS") {
+      if (scenario === "NO_GROUPS") {
         for (const tokenCase of tokenCases)
           await expect(
             jwtVerify(tokenCase.token, createLocalJWKSet(jwks), {

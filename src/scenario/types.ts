@@ -1,11 +1,14 @@
 export const scenarioNames = [
   "NORMAL",
   "ACCESS_DENIED",
+  "AUTH_LOGIN_REQUIRED",
   "AUTH_INTERACTION_REQUIRED",
   "AUTH_TEMPORARILY_UNAVAILABLE",
   "AUTH_SERVER_ERROR",
+  "AUTH_429",
+  "AUTH_500",
+  "AUTH_TIMEOUT",
   "NO_GROUPS",
-  "UNKNOWN_GROUPS",
   "WRONG_AUDIENCE",
   "WRONG_ISSUER",
   "EXPIRED_TOKEN",
@@ -18,9 +21,10 @@ export const scenarioNames = [
   "TOKEN_500",
   "TOKEN_TIMEOUT",
   "JWKS_INVALID",
+  "JWKS_429",
   "JWKS_500",
   "JWKS_TIMEOUT",
-  "DISCOVERY_INVALID",
+  "DISCOVERY_429",
   "DISCOVERY_500",
   "DISCOVERY_TIMEOUT",
 ] as const;
@@ -29,7 +33,13 @@ export type ScenarioName = (typeof scenarioNames)[number];
 export type FaultScenarioName = Exclude<ScenarioName, "NORMAL">;
 export type ScenarioMode = "CONTINUOUS" | "LIMITED";
 export type FaultEndpoint =
-  "authorization" | "claims" | "token-jwt" | "token" | "jwks" | "discovery";
+  | "authorization"
+  | "authorization-http"
+  | "claims"
+  | "token-jwt"
+  | "token"
+  | "jwks"
+  | "discovery";
 
 export interface ScenarioParameters {
   delayMs?: number;
@@ -74,10 +84,17 @@ export interface NormalScenarioInput {
 }
 
 type TimeoutScenarioName =
-  "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
+  "AUTH_TIMEOUT" | "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
+type RetryAfterRequiredScenarioName =
+  "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429";
+type RetryAfterOptionalScenarioName =
+  "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
 type ParameterlessScenarioName = Exclude<
   FaultScenarioName,
-  TimeoutScenarioName | "TOKEN_400" | "TOKEN_429" | "TOKEN_500"
+  | TimeoutScenarioName
+  | "TOKEN_400"
+  | RetryAfterRequiredScenarioName
+  | RetryAfterOptionalScenarioName
 >;
 
 interface NoScenarioParameters {
@@ -122,7 +139,7 @@ type ScenarioSpecificInput =
       parameters?: Token400ScenarioParameters;
     }
   | {
-      scenario: "TOKEN_429" | "TOKEN_500";
+      scenario: RetryAfterRequiredScenarioName | RetryAfterOptionalScenarioName;
       parameters?: RetryAfterScenarioParameters;
     };
 
