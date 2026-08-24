@@ -172,10 +172,16 @@ describe("admin API and UI", () => {
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
     expect(response.body).toContain("Mock OIDC Provider");
+    expect(response.body).toContain("アプリ接続情報");
+    expect(response.body).toContain("Authority URL");
+    expect(response.body).toContain("Tenant ID");
     expect(response.body).toContain(mockTenantId);
     expect(response.body).toContain("http://localhost");
     expect(response.body).toContain('<html lang="ja">');
-    expect(response.body).toContain("現在のScenario");
+    expect(response.body).toContain("現在のシナリオ");
+    expect(response.body).toContain("シナリオの状態");
+    expect(response.body).toContain("実行状況");
+    expect(response.body).toContain("設定した失敗回数");
     expect(response.body).toContain("残り失敗回数");
     expect(response.body).toContain("Retry-After（秒、任意）");
     expect(response.body).toContain(
@@ -184,7 +190,10 @@ describe("admin API and UI", () => {
     for (const text of [
       "適用",
       "NORMALに戻す",
-      "Scenarioを初期状態に戻す",
+      "シナリオを初期状態に戻す",
+      "各シナリオの詳細は README の「シナリオ API」を参照してください。",
+      "シナリオを停止します（履歴は残ります）",
+      "履歴と鍵の状態を初期化します",
       "OIDC Clientを登録",
       "OIDC Clientを編集",
       "保存",
@@ -198,10 +207,32 @@ describe("admin API and UI", () => {
       "Never expose this unauthenticated Admin API to the internet.",
     );
     expect(response.body).toContain('id="scenario"');
+    expect(response.body).toContain('id="authorityUrl"');
+    expect(response.body).toContain('id="tenantId"');
+    expect(response.body).toContain('id="copyAuthority"');
+    expect(response.body).toContain('id="copyTenantId"');
+    expect(response.body).toContain('aria-label="Authority URLをコピー"');
+    expect(response.body).toContain('title="Authority URLをコピー"');
+    expect(response.body).toContain('aria-label="Tenant IDをコピー"');
+    expect(response.body).toContain('title="Tenant IDをコピー"');
+    expect(response.body).toContain('id="connectionMessage"');
+    expect(response.body).toContain("copyConnectionValue");
+    expect(response.body).toContain("navigator.clipboard");
+    expect(response.body).toContain("copyFallback");
+    expect(response.body).not.toContain('<div class="label">Issuer</div>');
     expect(response.body).toContain('id="mode"');
     expect(response.body).toContain('id="normal"');
     expect(response.body).toContain('id="refresh"');
     expect(response.body).toContain('id="reset"');
+    expect(response.body).toContain('aria-label="状態を再読み込み"');
+    expect(response.body).toContain('title="状態を再読み込み"');
+    const stateHtml = /<section id="state"[\s\S]*?<\/section>/.exec(
+      response.body,
+    )?.[0];
+    if (!stateHtml) throw new Error("State panel was not found");
+    expect(stateHtml).toContain('id="refresh"');
+    expect(stateHtml).toContain('id="history"');
+    expect(response.body.match(/id="refresh"/g)).toHaveLength(1);
     expect(response.body).toContain('max="300000"');
     expect(response.body).toContain('id="retryAfterRequired"');
     expect(response.body).toContain('value="60" required');
@@ -220,8 +251,16 @@ describe("admin API and UI", () => {
       expect(response.body).toContain(`value="${scenario}"`);
     expect(response.body).toContain('<p id="rolloverNote" class="warning">');
     expect(response.body).toContain("新しい署名鍵はJWKSで公開され続けます");
+    expect(response.body).toContain('class="grid state-grid"');
+    expect(response.body).toContain('class="state-current"');
+    expect(response.body).toContain('class="state-details"');
+    expect(response.body).toContain('class="history"');
+    expect(response.body).toContain("overflow-wrap:anywhere");
+    expect(response.body).not.toContain(
+      '<section class="card"><div class="label">直近で完了したシナリオ</div>',
+    );
     expect(response.body).toContain("/__mock/api/scenario");
-    expect(response.body).toContain("setInterval");
+    expect(response.body).not.toContain("setInterval");
     expect(response.body).toContain("OIDC Client");
     expect(response.body).toContain("/__mock/api/clients");
     expect(response.body).toContain("body:'{}'");

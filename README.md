@@ -188,7 +188,7 @@ curl -X POST http://mock-idp.test:9000/__mock/api/clients/reset \
   -d '{}'
 ```
 
-Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、Scenario Resetには影響しません。Clientを削除またはresetしても、発行済みの認可コードやRefresh Tokenは完全には失効しません。完全に初期化するにはプロセスを再起動してください。
+Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。Clientを削除またはresetしても、発行済みの認可コードやRefresh Tokenは完全には失効しません。完全に初期化するにはプロセスを再起動してください。
 
 ## テストユーザー
 
@@ -200,7 +200,7 @@ Client IDは作成後に変更できません。変更する場合は削除し�
 
 ID tokenとJWT access tokenには`sub`, `oid`, `tid`, `name`, `preferred_username`, `mail`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`が含まれます。
 
-## Scenario API
+## シナリオ API
 
 以下では、issuerがpath付きの場合もAdmin APIのbase URLにはoriginだけを指定します。
 
@@ -229,7 +229,7 @@ curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 
 `CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の要求にはFaultを返したうえで現在状態がNORMALになります。Timeoutは遅延開始時に消費され、クライアントが切断しても戻しません。
 
-| Scenario                       | 対象                      | 動作                                                  |
+| シナリオ                       | 対象                      | 動作                                                  |
 | ------------------------------ | ------------------------- | ----------------------------------------------------- |
 | `NORMAL`                       | なし                      | Faultを適用しない                                     |
 | `ACCESS_DENIED`                | Authorization             | 標準OIDC `access_denied`をredirect URIへ返す          |
@@ -256,17 +256,22 @@ curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `DISCOVERY_500`                | `GET` Discovery           | HTTP 500を返す                                        |
 | `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
 
-JWTシナリオはID tokenとJWT access tokenの双方へ適用されます。`INVALID_SIGNATURE`はJWKS非公開の別鍵、`UNKNOWN_KID`は正常鍵と未公開kidを使います。`SIGNING_KEY_ROLLOVER`を有効化すると、新しい鍵はScenario完了、Return to Normal、別Scenarioへの切り替え後もJWKSに公開され続けます。Scenario Resetで初期鍵だけの状態へ戻ります。
+### シナリオの使い分け
+
+- Authorization系は、認可リダイレクトで返るOAuthエラーをアプリケーションが適切に表示・再試行・対話認証へ切り替えられるか確認するためのものです。
+- claim/JWT系は、トークンのclaim検証、`iss`・`aud`・有効期間・署名の検証が確実に行われるか確認します。`INVALID_SIGNATURE`はJWKS非公開の別鍵、`UNKNOWN_KID`は正常鍵と未公開`kid`を使います。
+- Token/JWKS/DiscoveryのHTTP障害・遅延系は、対象endpointに到達した要求だけへ適用されます。クライアントのタイムアウト、バックオフ、再試行、last-known-goodの利用を確認してください。
+- `SIGNING_KEY_ROLLOVER`は新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開します。有効化後の新しい鍵は、シナリオ完了、NORMALへ戻した後、別のシナリオへの切り替え後も公開され続けます。シナリオをリセットすると初期鍵だけの状態へ戻ります。
 
 Timeoutの`delayMs`は1〜300,000msで、未指定時は30,000msです。`retryAfterSeconds`は1以上のsafe integerです。`TOKEN_429`では未指定時に60秒を使用し、`TOKEN_500`では指定した場合だけ`Retry-After`を返します。Mock自身は待機や再試行を行いません。Token Faultの対象は`POST`、JWKS/Discovery Faultの対象は`GET`だけです。`OPTIONS`と`HEAD`はLimited Countを消費しません。
 
 Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)では、429では`Retry-After`が終わる前にTokenを再取得せず、5xxでは`Retry-After`があれば同様に従い、なければ指数バックオフすることが推奨されています。[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、`TOKEN_429`の既定値は60秒です。
 
-`TOKEN_429`の本文はMockの安定したOAuth形式として`temporarily_unavailable`を返します。Microsoft公式資料が429で明示する契約はHTTP statusと`Retry-After`であり、本Scenarioは特定のAADSTS番号を返しません。
+`TOKEN_429`の本文はMockの安定したOAuth形式として`temporarily_unavailable`を返します。Microsoft公式資料が429で明示する契約はHTTP statusと`Retry-After`であり、本シナリオは特定のAADSTS番号を返しません。
 
 [Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は、検証済みredirect URIへ`state`とともに返します。`interaction_required`や`prompt=none`で返る`login_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive認証へ切り替えてください。`temporarily_unavailable`と`server_error`は即時に繰り返さず、バックオフして再試行します。
 
-AADSTS50196のloop検出は専用Scenarioを重複して設けず、既存の`TOKEN_400`で再現できます。
+AADSTS50196のloop検出は専用シナリオを重複して設けず、既存の`TOKEN_400`で再現できます。
 
 ```json
 {
@@ -280,15 +285,15 @@ AADSTS50196のloop検出は専用Scenarioを重複して設けず、既存の`TO
 }
 ```
 
-`DISCOVERY_INVALID`、`JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正metadata受信時のlast-known-good継続を試験するためのScenarioです。Microsoft GraphはこのProviderの対象外なので、Graph APIの429は扱いません。
+`DISCOVERY_INVALID`、`JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正metadata受信時のlast-known-good継続を試験するためのシナリオです。Microsoft GraphはこのProviderの対象外なので、Graph APIの429は扱いません。
 
-新しいScenarioを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
+新しいシナリオを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
 
 ## 鍵と状態
 
 通常鍵と異常署名鍵は初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには通常鍵の公開部分だけを掲載します。鍵ディレクトリを削除すると再生成されます。
 
-OIDC artifactとScenario Storeは単一プロセスのインメモリ実装です。再起動で認可コード、session、scenario履歴は失われます。
+OIDC artifactとシナリオストアは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴は失われます。
 
 ## 開発コマンド
 
