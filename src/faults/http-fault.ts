@@ -179,7 +179,7 @@ export function createHttpFaultMiddleware(
         return;
       }
 
-      const decision = store.consume(endpoint, ticket);
+      const decision = store.consumeForRequest(endpoint, ticket);
       if (!decision) {
         safelyNext(next);
         return;

@@ -22,7 +22,7 @@ import {
   rmdir,
   writeFile,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 
 process.umask(0o077);
@@ -231,43 +231,29 @@ async function inspectDirectory(directory, expectedNames) {
   return "complete";
 }
 
+// Docker always creates a named volume's mount point directory at container
+// start, so .data/tls-private is "empty-directory" from the very first run
+// while the bind-mounted .data/tls may not exist yet ("empty"). Both mean
+// "nothing installed yet", so they must not be treated as an inconsistency.
+function normalizeUninitializedState(state) {
+  return state === "empty" || state === "empty-directory"
+    ? "uninitialized"
+    : state;
+}
+
 async function inspectBundleDirectories(publicDirectory, privateDirectory) {
   const [publicState, privateState] = await Promise.all([
     inspectDirectory(publicDirectory, expectedPublicFileNames),
     inspectDirectory(privateDirectory, expectedPrivateFileNames),
   ]);
-  if (publicState === privateState) return publicState;
+  if (
+    normalizeUninitializedState(publicState) ===
+    normalizeUninitializedState(privateState)
+  )
+    return normalizeUninitializedState(publicState);
   throw new Error(
     `TLS setup is inconsistent: ${publicDirectory} is ${publicState} but ${privateDirectory} is ${privateState}. No files were changed; resolve manually before regenerating.`,
   );
-}
-
-async function findRecoveryArtifacts(publicDirectory, privateDirectory) {
-  const roots = [publicDirectory, privateDirectory];
-  const parents = new Map();
-  for (const root of roots) {
-    const parentDirectory = dirname(root);
-    const names = parents.get(parentDirectory) ?? [];
-    names.push(basename(root));
-    parents.set(parentDirectory, names);
-  }
-
-  const artifacts = [];
-  for (const [parentDirectory, names] of parents) {
-    const entries = await readdir(parentDirectory).catch((error) => {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    });
-    for (const name of names) {
-      const backupPrefix = `${name}.backup-`;
-      const stagingPrefix = `.${name}-setup-`;
-      for (const entry of entries) {
-        if (entry.startsWith(backupPrefix) || entry.startsWith(stagingPrefix))
-          artifacts.push(join(parentDirectory, entry));
-      }
-    }
-  }
-  return [...new Set(artifacts)].sort();
 }
 
 function assertCondition(condition, message) {
@@ -644,52 +630,135 @@ async function prepareBundle(
   await validateBundle(publicStagingDirectory, privateStagingDirectory);
 }
 
-async function installBundle(stagingDirectory, outputDirectory, outputExists) {
-  if (!outputExists) {
-    await rename(stagingDirectory, outputDirectory);
-    return;
-  }
-
-  const backupDirectory = `${outputDirectory}.backup-${process.pid}-${randomUUID()}`;
-  await rename(outputDirectory, backupDirectory);
+/**
+ * Renames one staged file over its final path, keeping the previous file (if
+ * any) as a same-directory backup that the caller can restore on failure or
+ * discard on success.
+ *
+ * Staging directories are created *inside* publicDirectory/privateDirectory
+ * (see generateAndInstall) rather than as siblings, and only individual
+ * files are renamed here rather than whole directories. Either directory may
+ * be a Docker named volume's mount point (as .data/tls-private is): renaming
+ * that directory itself fails with EBUSY, and renaming into it from a
+ * sibling staging directory on a different mount fails with EXDEV. Renaming
+ * a file within the same directory it already lives in avoids both.
+ */
+async function installStagedFile(stagingPath, finalPath) {
+  const existing = await pathState(finalPath);
+  const backupPath = existing
+    ? `${finalPath}.backup-${process.pid}-${randomUUID()}`
+    : undefined;
+  if (backupPath) await rename(finalPath, backupPath);
   try {
-    await rename(stagingDirectory, outputDirectory);
+    await rename(stagingPath, finalPath);
   } catch (error) {
-    await rename(backupDirectory, outputDirectory);
+    if (backupPath) await rename(backupPath, finalPath);
     throw error;
   }
+  return backupPath;
+}
+
+async function revertInstalledFile(finalPath, backupPath) {
+  await rm(finalPath, { force: true });
+  if (backupPath) await rename(backupPath, finalPath);
+}
+
+async function discardBackupFile(backupPath) {
+  if (!backupPath) return;
   try {
-    await rm(backupDirectory, { recursive: true, force: true });
+    await rm(backupPath, { force: true });
   } catch (error) {
     writeStandardError(
-      `TLS setup succeeded, but the backup could not be removed (${backupDirectory}): ${error.message}\n`,
+      `TLS setup succeeded, but the backup could not be removed (${backupPath}): ${error.message}\n`,
     );
   }
+}
+
+/**
+ * Installs every file of one staged bundle (public or private) as a unit:
+ * if any file fails to install after earlier files in the same bundle
+ * succeeded, those are rolled back so the directory never ends up holding a
+ * mix of old and new files.
+ */
+async function installBundleFiles(stagingDirectory, directory, fileNames) {
+  const installed = [];
+  try {
+    for (const fileName of fileNames) {
+      const backupPath = await installStagedFile(
+        join(stagingDirectory, fileName),
+        join(directory, fileName),
+      );
+      installed.push({ fileName, backupPath });
+    }
+  } catch (error) {
+    for (const { fileName, backupPath } of installed.reverse())
+      await revertInstalledFile(join(directory, fileName), backupPath);
+    throw error;
+  }
+  return installed;
+}
+
+/**
+ * Installs the public and private staged bundles as one unit: if installing
+ * the private bundle fails after the public bundle succeeded, the public
+ * bundle is rolled back so the two directories never end up holding a
+ * mismatched cert/key pair on disk.
+ */
+async function installBundlePair(
+  publicStagingDirectory,
+  publicDirectory,
+  privateStagingDirectory,
+  privateDirectory,
+) {
+  const publicInstalled = await installBundleFiles(
+    publicStagingDirectory,
+    publicDirectory,
+    expectedPublicFileNames,
+  );
+  let privateInstalled;
+  try {
+    privateInstalled = await installBundleFiles(
+      privateStagingDirectory,
+      privateDirectory,
+      expectedPrivateFileNames,
+    );
+  } catch (error) {
+    for (const { fileName, backupPath } of publicInstalled.reverse())
+      await revertInstalledFile(join(publicDirectory, fileName), backupPath);
+    throw error;
+  }
+  for (const { backupPath } of [...publicInstalled, ...privateInstalled])
+    await discardBackupFile(backupPath);
 }
 
 async function generateAndInstall(
   publicDirectory,
   privateDirectory,
-  outputExists,
   includeNewCa,
 ) {
-  const publicParentDirectory = dirname(publicDirectory);
-  const privateParentDirectory = dirname(privateDirectory);
   await Promise.all([
-    mkdir(publicParentDirectory, { recursive: true }),
-    mkdir(privateParentDirectory, { recursive: true }),
+    mkdir(publicDirectory, { recursive: true }),
+    mkdir(privateDirectory, { recursive: true }),
+  ]);
+  // The umask set at startup makes mkdir create both directories as 0700
+  // regardless of the mode requested, so the public directory's intended
+  // world-readable mode has to be restored explicitly here. This runs on
+  // every install (not just first creation) so the mode self-heals even if
+  // it was somehow left wrong by an earlier run.
+  await Promise.all([
+    chmod(publicDirectory, 0o755),
+    chmod(privateDirectory, 0o700),
   ]);
   const publicStagingDirectory = await mkdtemp(
-    join(publicParentDirectory, `.${basename(publicDirectory)}-setup-`),
+    join(publicDirectory, ".tls-setup-"),
   );
   const privateStagingDirectory = await mkdtemp(
-    join(privateParentDirectory, `.${basename(privateDirectory)}-setup-`),
+    join(privateDirectory, ".tls-setup-"),
   );
   const scratchDirectory = await mkdtemp(
-    join(publicParentDirectory, ".tls-setup-scratch-"),
+    join(publicStagingDirectory, ".scratch-"),
   );
   try {
-    await chmod(privateStagingDirectory, 0o700);
     await prepareBundle(
       publicStagingDirectory,
       privateStagingDirectory,
@@ -698,17 +767,16 @@ async function generateAndInstall(
       includeNewCa ? undefined : privateDirectory,
       includeNewCa,
     );
-    await installBundle(publicStagingDirectory, publicDirectory, outputExists);
-    await installBundle(
+    await installBundlePair(
+      publicStagingDirectory,
+      publicDirectory,
       privateStagingDirectory,
       privateDirectory,
-      outputExists,
     );
   } finally {
     await Promise.all([
       rm(publicStagingDirectory, { recursive: true, force: true }),
       rm(privateStagingDirectory, { recursive: true, force: true }),
-      rm(scratchDirectory, { recursive: true, force: true }),
     ]);
   }
 }
@@ -721,7 +789,7 @@ async function acquireSetupLock(publicDirectory, privateDirectory) {
   } catch (error) {
     if (error.code === "EEXIST")
       throw new Error(
-        `TLS setup lock already exists at ${lockDirectory}. Another setup may be running, or a previous process may have stopped unexpectedly. Verify that no setup process is running and inspect ${publicDirectory}, ${privateDirectory}, plus sibling backup/staging artifacts before removing the stale lock manually. Do not remove only the lock and rerun if the output directories are missing. No TLS files were changed.`,
+        `TLS setup lock already exists at ${lockDirectory}. Another setup may be running, or a previous process may have stopped unexpectedly. Verify that no setup process is running and inspect ${publicDirectory} and ${privateDirectory} for leftover backup/staging files before removing the stale lock manually. Do not remove only the lock and rerun if the output directories are missing. No TLS files were changed.`,
       );
     throw error;
   }
@@ -739,23 +807,8 @@ async function performSetup(options) {
     throw new Error(`TLS setup failed: ${error.message}`);
   }
 
-  if (state === "empty" || state === "empty-directory") {
-    const recoveryArtifacts = await findRecoveryArtifacts(
-      publicDirectory,
-      privateDirectory,
-    );
-    if (recoveryArtifacts.length > 0)
-      throw new Error(
-        `TLS setup recovery artifacts exist: ${recoveryArtifacts.join(
-          ", ",
-        )}. Refusing to generate a new CA. Inspect the artifacts and restore a valid backup to ${publicDirectory} and ${privateDirectory}, or remove artifacts only after confirming that no established CA would be lost. No files were changed.`,
-      );
-    await generateAndInstall(
-      publicDirectory,
-      privateDirectory,
-      state === "empty-directory",
-      true,
-    );
+  if (state === "uninitialized") {
+    await generateAndInstall(publicDirectory, privateDirectory, true);
     const { caCertificate } = await validateBundle(
       publicDirectory,
       privateDirectory,
@@ -781,7 +834,7 @@ async function performSetup(options) {
 
   if (options.rotateCa) {
     const oldFingerprint = certificates.caCertificate.fingerprint256;
-    await generateAndInstall(publicDirectory, privateDirectory, true, true);
+    await generateAndInstall(publicDirectory, privateDirectory, true);
     const { caCertificate } = await validateBundle(
       publicDirectory,
       privateDirectory,
@@ -812,7 +865,7 @@ async function performSetup(options) {
     return;
   }
 
-  await generateAndInstall(publicDirectory, privateDirectory, true, false);
+  await generateAndInstall(publicDirectory, privateDirectory, false);
   const { caCertificate } = await validateBundle(
     publicDirectory,
     privateDirectory,

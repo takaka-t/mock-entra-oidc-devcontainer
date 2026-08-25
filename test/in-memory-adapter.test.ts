@@ -99,6 +99,23 @@ describe("scoped in-memory OIDC adapter", () => {
     });
   });
 
+  it("exempts Client records from capacity eviction", async () => {
+    const factory = createInMemoryAdapterFactory();
+    const clients = factory("Client");
+    const sessions = factory("Session");
+    await clients.upsert("client", { client_id: "client" });
+    for (let index = 0; index < 1_000; index++)
+      await sessions.upsert(`session-${index}`, { uid: `uid-${index}` }, 60);
+
+    expect(await clients.find("client")).toMatchObject({
+      client_id: "client",
+    });
+    expect(await sessions.find("session-0")).toBeUndefined();
+    expect(await sessions.find("session-999")).toMatchObject({
+      uid: "uid-999",
+    });
+  });
+
   it("isolates all records between separately created factories", async () => {
     const first = createInMemoryAdapterFactory();
     const second = createInMemoryAdapterFactory();

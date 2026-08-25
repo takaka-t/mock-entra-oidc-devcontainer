@@ -414,7 +414,7 @@ describe("HTTP fault middleware", () => {
         triggeredCount: 0,
       });
       expect(
-        store.consume("authorization", store.getRequestTicket(req)),
+        store.consumeForRequest("authorization", store.getRequestTicket(req)),
       ).toMatchObject({ scenario, endpoint: "authorization" });
     },
   );

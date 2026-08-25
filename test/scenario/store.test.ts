@@ -185,7 +185,7 @@ describe("InMemoryScenarioStore", () => {
     const ticket = store.startRequest({});
     store.set({ scenario: "TOKEN_500", mode: "LIMITED", failureCount: 1 });
 
-    expect(store.consume("token", ticket)).toBeNull();
+    expect(store.consumeForRequest("token", ticket)).toBeNull();
     expect(store.get()).toMatchObject({
       scenario: "TOKEN_500",
       remainingFailures: 1,
@@ -196,7 +196,7 @@ describe("InMemoryScenarioStore", () => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: "WRONG_ISSUER", mode: "CONTINUOUS" });
 
-    expect(store.consume("token-jwt", undefined)).toBeNull();
+    expect(store.consumeForRequest("token-jwt", undefined)).toBeNull();
     expect(store.get().triggeredCount).toBe(0);
   });
 
@@ -208,7 +208,7 @@ describe("InMemoryScenarioStore", () => {
     expect(store.startRequest(request)).toBe(ticket);
 
     store.set({ scenario: "TOKEN_400", mode: "CONTINUOUS" });
-    expect(store.consume("token", ticket)).toBeNull();
+    expect(store.consumeForRequest("token", ticket)).toBeNull();
     expect(store.get()).toMatchObject({
       scenario: "TOKEN_400",
       triggeredCount: 0,
@@ -220,9 +220,11 @@ describe("InMemoryScenarioStore", () => {
     store.set({ scenario: "WRONG_ISSUER", mode: "CONTINUOUS" });
     const ticket = store.startRequest({});
 
-    expect(store.consume("token", ticket)).toBeNull();
-    expect(store.consume("token-jwt", ticket)?.scenario).toBe("WRONG_ISSUER");
-    expect(store.consume("token-jwt", ticket)).toBeNull();
+    expect(store.consumeForRequest("token", ticket)).toBeNull();
+    expect(store.consumeForRequest("token-jwt", ticket)?.scenario).toBe(
+      "WRONG_ISSUER",
+    );
+    expect(store.consumeForRequest("token-jwt", ticket)).toBeNull();
     expect(store.get().triggeredCount).toBe(1);
   });
 

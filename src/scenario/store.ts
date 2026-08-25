@@ -93,12 +93,29 @@ export class InMemoryScenarioStore {
     return this.#requestTickets.get(request);
   }
 
-  consume(
+  /** Consumes a fault without binding to a specific in-flight request. */
+  consume(endpoint: FaultEndpoint): FaultDecision | null {
+    return this.#consume(endpoint, false, undefined);
+  }
+
+  /**
+   * Consumes a fault only if the ticket's activation is still current and has
+   * not already been consumed by this request. Passing `undefined` (e.g. a
+   * request that never called `startRequest`) fails closed.
+   */
+  consumeForRequest(
     endpoint: FaultEndpoint,
-    ticket?: ScenarioRequestTicket,
+    ticket: ScenarioRequestTicket | undefined,
+  ): FaultDecision | null {
+    return this.#consume(endpoint, true, ticket);
+  }
+
+  #consume(
+    endpoint: FaultEndpoint,
+    requestBound: boolean,
+    ticket: ScenarioRequestTicket | undefined,
   ): FaultDecision | null {
     const current = this.#current;
-    const requestBound = arguments.length >= 2;
     if (
       (requestBound &&
         (ticket === undefined ||
@@ -111,8 +128,10 @@ export class InMemoryScenarioStore {
     )
       return null;
     const before = current.remainingFailures;
-    if (current.mode === "LIMITED" && (before === null || before <= 0))
-      return null;
+    // A LIMITED scenario always has a positive remainingFailures: `set()`
+    // requires a positive failureCount, and consume() resets to NORMAL the
+    // instant it would reach zero, so it can never be observed here.
+    if (current.mode === "LIMITED" && before === null) return null;
     const after = current.mode === "LIMITED" ? (before as number) - 1 : null;
     const triggered = current.triggeredCount + 1;
     const decision: FaultDecision = {

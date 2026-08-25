@@ -76,11 +76,22 @@ export function createInMemoryAdapterFactory(): InMemoryAdapterFactory {
     for (const [key, entry] of entries) if (expired(entry)) remove(key);
   };
 
+  // Client records are durable configuration (persisted separately in
+  // clients.json and re-applied at startup), not ephemeral OIDC artifacts, so
+  // they are exempt from LRU eviction even under heavy token/session churn.
+  const isClientKey = (key: string): boolean => key.startsWith("Client:");
+
   const enforceCapacity = (): void => {
     while (entries.size > MAX_ENTRIES) {
-      const oldestKey = entries.keys().next().value;
-      if (oldestKey === undefined) return;
-      remove(oldestKey);
+      let oldestEvictableKey: string | undefined;
+      for (const key of entries.keys()) {
+        if (!isClientKey(key)) {
+          oldestEvictableKey = key;
+          break;
+        }
+      }
+      if (oldestEvictableKey === undefined) return;
+      remove(oldestEvictableKey);
     }
   };
 

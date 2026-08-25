@@ -53,7 +53,7 @@ export function createProvider(
     if (claimDecisions.has(ctx.req)) return claimDecisions.get(ctx.req) ?? null;
     const decision =
       ctx.path === "/token"
-        ? store.consume("claims", store.getRequestTicket(ctx.req))
+        ? store.consumeForRequest("claims", store.getRequestTicket(ctx.req))
         : null;
     claimDecisions.set(ctx.req, decision);
     if (decision)
@@ -82,7 +82,7 @@ export function createProvider(
           (ctx) => {
             if (ctx.method !== "GET") return false;
             if (store.get().scenario !== definition.scenario) return false;
-            const decision = store.consume(
+            const decision = store.consumeForRequest(
               "authorization",
               store.getRequestTicket(ctx.req),
             );
@@ -247,7 +247,7 @@ export function createProvider(
     }
     if (ctx.path !== "/token" || ctx.status !== 200) return;
     const ticket = store.getRequestTicket(ctx.req);
-    const decision = store.consume("token-jwt", ticket);
+    const decision = store.consumeForRequest("token-jwt", ticket);
     if (!decision) return;
     logger.warn(
       {
@@ -260,7 +260,23 @@ export function createProvider(
       },
       "[MOCK-IDP] token fault injected",
     );
-    ctx.body = await mutateTokenResponse(ctx.body, decision, keys);
+    try {
+      ctx.body = await mutateTokenResponse(ctx.body, decision, keys);
+    } catch (error) {
+      logger.warn(
+        {
+          scenario: decision.scenario,
+          endpoint: decision.endpoint,
+          err: error,
+        },
+        "[MOCK-IDP] token fault mutation failed",
+      );
+      ctx.status = 500;
+      ctx.body = {
+        error: "server_error",
+        error_description: `Injected ${decision.scenario} fault could not be applied to this token`,
+      };
+    }
   });
   return provider;
 }

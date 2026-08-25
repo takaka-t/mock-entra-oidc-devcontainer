@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { X509Certificate } from "node:crypto";
+import { statfsSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -86,10 +87,7 @@ async function readBundle(
       ),
       ...expectedPrivateFiles.map(
         async (fileName) =>
-          [
-            fileName,
-            await readFile(join(privateDirectory, fileName)),
-          ] as const,
+          [fileName, await readFile(join(privateDirectory, fileName))] as const,
       ),
     ]),
   );
@@ -166,6 +164,7 @@ async function expectValidBundle(outputDirectory: string): Promise<void> {
   expect(verification.stdout).toContain("server.crt: OK");
 
   if (process.platform !== "win32") {
+    expect((await stat(outputDirectory)).mode & 0o777).toBe(0o755);
     expect((await stat(privateDirectory)).mode & 0o777).toBe(0o700);
     expect(
       (await stat(join(privateDirectory, "ca.key.pem"))).mode & 0o777,
@@ -500,7 +499,7 @@ describe("TLS setup script", () => {
 
     const normalMessage = await rejectedMessage(runSetup(outputDirectory));
     expect(normalMessage).toContain("setup lock already exists");
-    expect(normalMessage).toContain("sibling backup/staging artifacts");
+    expect(normalMessage).toContain("leftover backup/staging files");
     expect(normalMessage).toContain("removing the stale lock manually");
     expect(await readBundle(outputDirectory)).toEqual(before);
 
@@ -512,23 +511,89 @@ describe("TLS setup script", () => {
     expect(await stat(lockDirectory)).toBeDefined();
   });
 
-  it("refuses to generate a new CA while interrupted-install artifacts exist", async () => {
+  it("refuses to generate a new CA while an interrupted-install artifact sits inside the output directory", async () => {
     const rootDirectory = await temporaryDirectory();
     const outputDirectory = join(rootDirectory, "tls");
-    const backupDirectory = `${outputDirectory}.backup-123-recovery`;
-    await mkdir(backupDirectory);
-    await writeFile(join(backupDirectory, "marker"), "preserve me\n");
+    const staleStagingDirectory = join(outputDirectory, ".tls-setup-recovery");
+    await mkdir(staleStagingDirectory, { recursive: true });
+    await writeFile(join(staleStagingDirectory, "marker"), "preserve me\n");
 
     const message = await rejectedMessage(runSetup(outputDirectory));
 
-    expect(message).toContain("recovery artifacts exist");
-    expect(message).toContain("Refusing to generate a new CA");
-    expect(message).toContain(backupDirectory);
-    expect(await readFile(join(backupDirectory, "marker"), "utf8")).toBe(
+    expect(message).toContain("partial or contains unexpected files");
+    expect(message).toContain(outputDirectory);
+    expect(await readFile(join(staleStagingDirectory, "marker"), "utf8")).toBe(
       "preserve me\n",
     );
-    await expect(stat(outputDirectory)).rejects.toMatchObject({
+    await expect(
+      stat(privateDirectoryFor(outputDirectory)),
+    ).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("installs correctly when the public and private directories are on different filesystems", async () => {
+    // Docker mounts .data/tls-private as a named volume separate from the
+    // bind-mounted .data/tls, so installing must not rename a directory
+    // across that filesystem boundary (EXDEV) or rename the mount point
+    // itself (EBUSY). /dev/shm is a real second filesystem in most Linux
+    // environments; skip where it isn't available or isn't actually
+    // distinct from the default temp directory.
+    let shmType: number;
+    let tmpType: number;
+    try {
+      shmType = statfsSync("/dev/shm").type;
+      tmpType = statfsSync(tmpdir()).type;
+    } catch {
+      return;
+    }
+    if (shmType === tmpType) return;
+
+    const rootDirectory = await temporaryDirectory();
+    const outputDirectory = join(rootDirectory, "tls");
+    const privateDirectory = await mkdtemp(
+      join("/dev/shm", "mock-entra-tls-private-"),
+    );
+    try {
+      const created = await run(process.execPath, [
+        setupScript,
+        "--output-dir",
+        outputDirectory,
+        "--private-dir",
+        privateDirectory,
+      ]);
+      expect(created.stdout).toContain("Created local TLS CA");
+      expect((await readdir(outputDirectory)).sort()).toEqual(
+        expectedPublicFiles,
+      );
+      expect((await readdir(privateDirectory)).sort()).toEqual(
+        expectedPrivateFiles,
+      );
+      if (process.platform !== "win32") {
+        expect((await stat(outputDirectory)).mode & 0o777).toBe(0o755);
+        expect((await stat(privateDirectory)).mode & 0o777).toBe(0o700);
+      }
+
+      const repeated = await run(process.execPath, [
+        setupScript,
+        "--output-dir",
+        outputDirectory,
+        "--private-dir",
+        privateDirectory,
+      ]);
+      expect(repeated.stdout).toContain("no changes were made");
+
+      const rotated = await run(process.execPath, [
+        setupScript,
+        "--output-dir",
+        outputDirectory,
+        "--private-dir",
+        privateDirectory,
+        "--rotate-ca",
+      ]);
+      expect(rotated.stdout).toContain("Rotated the local TLS CA");
+    } finally {
+      await rm(privateDirectory, { recursive: true, force: true });
+    }
   });
 });

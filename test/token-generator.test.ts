@@ -197,6 +197,24 @@ describe("token fault generator", () => {
     },
   );
 
+  it("rejects FUTURE_NBF for a token that is already about to expire", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const almostExpired = await new SignJWT({
+      iss: "https://mock-idp.test:9000",
+      aud: "mock-public-client",
+      sub: "user-admin",
+      iat: now,
+      nbf: now,
+      exp: now + 1,
+    })
+      .setProtectedHeader({ alg: "RS256", kid: normalKid })
+      .sign(keys.normal.privateKey);
+
+    await expect(
+      mutateToken(almostExpired, decision("FUTURE_NBF"), keys),
+    ).rejects.toThrow("FUTURE_NBF requires a token that expires in the future");
+  });
+
   it.each(tokenKinds)(
     "creates an expired but consistently ordered $name",
     async (kind) => {
