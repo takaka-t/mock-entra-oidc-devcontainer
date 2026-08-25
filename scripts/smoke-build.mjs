@@ -21,6 +21,7 @@ const issuerUrl = new URL(mockOrigin);
 const issuerHost = issuerUrl.host;
 const stateDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
 const tlsDirectory = join(stateDirectory, "tls");
+const tlsPrivateDirectory = join(stateDirectory, "tls-private");
 const setupTlsScript = fileURLToPath(
   new URL("./setup-tls.mjs", import.meta.url),
 );
@@ -64,6 +65,8 @@ try {
     setupTlsScript,
     "--output-dir",
     tlsDirectory,
+    "--private-dir",
+    tlsPrivateDirectory,
   ]);
   const config = {
     ...loadConfig(),
@@ -72,7 +75,7 @@ try {
     clientConfigFile: join(stateDirectory, "clients.json"),
     tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
     tlsCertificateFile: join(tlsDirectory, "server.crt"),
-    tlsPrivateKeyFile: join(tlsDirectory, "server.key.pem"),
+    tlsPrivateKeyFile: join(tlsPrivateDirectory, "server.key.pem"),
   };
   const httpsOptions = await loadTlsServerOptions(config);
   ca = await readFile(config.tlsCaCertificateFile);

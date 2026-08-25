@@ -39,25 +39,27 @@ hostsファイルはアプリケーションから自動変更しません。
 
 ## devcontainer起動後のセットアップ
 
-devcontainerを初めて起動したとき、または`node_modules`用named volumeを作り直したときは、依存関係を導入してください。
+devcontainerを初めて起動したとき、または`node_modules`・`tls-private`用named volumeを作り直したときは、依存関係を導入してください。
 
 ```bash
 npm ci
 npm run setup:tls
 ```
 
-`setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を`.data/tls`へ生成します。生成されるファイルは次の4つです。
+`setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を生成します。公開証明書と秘密鍵は別々のディレクトリへ書き込まれ、生成されるファイルは次の4つです。
 
-| ファイル                   | 用途                                     |
-| -------------------------- | ---------------------------------------- |
-| `.data/tls/ca.crt`         | 接続元へ登録する公開CA証明書             |
-| `.data/tls/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない       |
-| `.data/tls/server.crt`     | Mock IdPが提示するサーバー証明書         |
-| `.data/tls/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
+| ファイル                           | 用途                         |
+| ---------------------------------- | ---------------------------- |
+| `.data/tls/ca.crt`                 | 接続元へ登録する公開CA証明書 |
+| `.data/tls/server.crt`             | Mock IdPが提示するサーバー証明書 |
+| `.data/tls-private/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない |
+| `.data/tls-private/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
 
-`.data/tls`は0700、秘密鍵は0600、公開証明書は0644で作成されます。`.data/`はGit対象外ですが、`ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。
+`.data/tls`（公開証明書）はリポジトリのbind mountにそのまま含まれ、ホストからも参照できます。一方`.data/tls-private`（秘密鍵）は`node_modules`と同様に専用のnamed volume（`tls-private`）としてマウントされます。これはWindows Docker DesktopのBind Mountが常にPOSIXのpermissionを正しく保持できるとは限らず、秘密鍵の0700/0600チェックが失敗しうるためです。named volumeであれば実体はLinux VM側の通常のファイルシステムになるため、この問題を回避できます。`.data/tls-private`はホストのファイルシステムからは直接見えません。公開証明書（`ca.crt`/`server.crt`）は機密情報ではないため、bind mount側での正確なpermission一致は要求しません。
 
-bind mountがPOSIXのpermissionを保持できない環境では、`setup:tls`は安全のため失敗します。0700/0600/0644を保持できるfilesystemまたはmountを使用し、具体的な設定方法は利用環境の公式ドキュメントを参照してください。permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
+`.data/tls-private`は0700、秘密鍵は0600で作成され、これらは常に検証されます。`.data/`はGit対象外ですが、`ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
+
+出力先はそれぞれ独立したオプションで変更できます（`node scripts/setup-tls.mjs --output-dir <公開証明書用directory> --private-dir <秘密鍵用directory>`）。片方だけ指定した場合、もう片方はデフォルト（`.data/tls`または`.data/tls-private`）のままです。
 
 依存関係とTLSファイルの準備後、devcontainer内で次を実行してください。Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。起動に必要な`ca.crt`、`server.crt`、`server.key.pem`がない、または内容が不正な場合は起動に失敗します。`ca.key.pem`はサーバー起動には読み込まず、証明書更新時だけ使用します。
 
@@ -80,7 +82,7 @@ HTTPS化はMSALによるcustom authority受け入れの十分条件とは限り�
 
 ### 接続元でローカルCAを信頼する
 
-Mock IdPコンテナ自身のOS trust storeへCAを登録する必要はありません。Mock IdPは起動時の証明書検証に`.data/tls/ca.crt`を読み込みます。CAの信頼設定が必要なのは、HTTPSクライアントが動作する接続元です。
+Mock IdPコンテナ自身のOS trust storeへCAを登録する必要はありません。Mock IdPは起動時の証明書検証に`.data/tls/ca.crt`と`.data/tls-private/server.key.pem`等を読み込みます。CAの信頼設定が必要なのは、HTTPSクライアントが動作する接続元です。
 
 - ホスト上のブラウザやアプリケーションでは、ホストOS、ブラウザ、runtimeの該当するtrust storeへ設定します。
 - 別Composeのアプリケーションでは、接続元コンテナのOS、runtime、SDKへ設定します。
@@ -95,11 +97,11 @@ curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
 
 #### 証明書の更新とCAローテーション
 
-`npm run setup:tls`の通常再実行は、有効な4ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上なら何も変更しません。30日未満または期限切れでは、まだ有効な同じCAを使ってサーバー証明書だけを更新するため、CAの再登録は不要です。更新された証明書を反映するにはMock IdPを再起動してください。CAの残存期間が397日以下の場合は、有効期限内のローテーションを案内して失敗します。期限切れCA、不完全または不正なファイル一式も自動上書きせず、コマンドが失敗します。
+`npm run setup:tls`の通常再実行は、`.data/tls`と`.data/tls-private`それぞれに有効な2ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上なら何も変更しません。30日未満または期限切れでは、まだ有効な同じCAを使ってサーバー証明書だけを更新するため、CAの再登録は不要です。更新された証明書を反映するにはMock IdPを再起動してください。CAの残存期間が397日以下の場合は、有効期限内のローテーションを案内して失敗します。期限切れCA、不完全または不正なファイル一式、`.data/tls`と`.data/tls-private`の状態が食い違っている場合も自動上書きせず、コマンドが失敗します。
 
-CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。Mock IdPを停止し、`.data/tls`全体を明示的に別名へ退避した後、`npm run setup:tls -- --rotate-ca`で新規CAを生成してください。その後、旧CAの登録解除と新CAの登録をすべての接続元で行います。
+CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。Mock IdPを停止し、`.data/tls`と`.data/tls-private`をそれぞれ明示的に別名へ退避した後、`npm run setup:tls -- --rotate-ca`で新規CAを生成してください。その後、旧CAの登録解除と新CAの登録をすべての接続元で行います。
 
-セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`や、`.data/tls.backup-*`、`.data/.tls-setup-*`が残る場合があります。まず別の`setup:tls`プロセスが動いていないことを確認し、正規の`.data/tls`とこれらの復旧用directoryを確認してください。正規directoryがない場合は、確立済みCAを含むbackupを`.data/tls`へ戻して内容を検証します。ロックだけを削除して再実行しないでください。復旧候補がある間、scriptは新しいCAの生成を拒否します。
+セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`や、`.data/tls.backup-*`、`.data/.tls-setup-*`、`.data/tls-private.backup-*`、`.data/.tls-private-setup-*`が残る場合があります。まず別の`setup:tls`プロセスが動いていないことを確認し、正規の`.data/tls`・`.data/tls-private`とこれらの復旧用directoryを確認してください。正規directoryがない場合は、確立済みCAを含むbackupをそれぞれ元のパスへ戻して内容を検証します。ロックだけを削除して再実行しないでください。復旧候補がある間、scriptは新しいCAの生成を拒否します。
 
 CA自体を更新するときは、サーバーを停止し、旧CAをすべての接続元のtrust storeから解除してから次を実行します。
 

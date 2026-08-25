@@ -34,6 +34,6 @@ export function loadConfig(): AppConfig {
     clientConfigFile: ".data/clients.json",
     tlsCaCertificateFile: ".data/tls/ca.crt",
     tlsCertificateFile: ".data/tls/server.crt",
-    tlsPrivateKeyFile: ".data/tls/server.key.pem",
+    tlsPrivateKeyFile: ".data/tls-private/server.key.pem",
   };
 }

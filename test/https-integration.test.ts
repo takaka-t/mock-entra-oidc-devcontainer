@@ -106,10 +106,13 @@ describe("direct HTTPS hosting", () => {
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-https-"));
     const tlsDirectory = join(stateDirectory, "tls");
+    const tlsPrivateDirectory = join(stateDirectory, "tls-private");
     await execFileAsync(process.execPath, [
       setupTlsScript,
       "--output-dir",
       tlsDirectory,
+      "--private-dir",
+      tlsPrivateDirectory,
     ]);
     const config = {
       ...loadConfig(),
@@ -118,7 +121,7 @@ describe("direct HTTPS hosting", () => {
       clientConfigFile: join(stateDirectory, "clients.json"),
       tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
       tlsCertificateFile: join(tlsDirectory, "server.crt"),
-      tlsPrivateKeyFile: join(tlsDirectory, "server.key.pem"),
+      tlsPrivateKeyFile: join(tlsPrivateDirectory, "server.key.pem"),
       logger: false,
     };
     ca = await readFile(config.tlsCaCertificateFile);

@@ -22,9 +22,14 @@ const executeFile = promisify(execFile);
 const setupScript = fileURLToPath(
   new URL("../scripts/setup-tls.mjs", import.meta.url),
 );
-const expectedFiles = ["ca.crt", "ca.key.pem", "server.crt", "server.key.pem"];
+const expectedPublicFiles = ["ca.crt", "server.crt"];
+const expectedPrivateFiles = ["ca.key.pem", "server.key.pem"];
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 const temporaryDirectories: string[] = [];
+
+function privateDirectoryFor(outputDirectory: string): string {
+  return `${outputDirectory}-private`;
+}
 
 async function temporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "mock-entra-tls-setup-"));
@@ -52,6 +57,8 @@ async function runSetup(
     setupScript,
     "--output-dir",
     outputDirectory,
+    "--private-dir",
+    privateDirectoryFor(outputDirectory),
     ...additionalArguments,
   ]);
 }
@@ -70,13 +77,21 @@ async function rejectedMessage(operation: Promise<unknown>): Promise<string> {
 async function readBundle(
   outputDirectory: string,
 ): Promise<Map<string, Buffer>> {
+  const privateDirectory = privateDirectoryFor(outputDirectory);
   return new Map(
-    await Promise.all(
-      expectedFiles.map(
+    await Promise.all([
+      ...expectedPublicFiles.map(
         async (fileName) =>
           [fileName, await readFile(join(outputDirectory, fileName))] as const,
       ),
-    ),
+      ...expectedPrivateFiles.map(
+        async (fileName) =>
+          [
+            fileName,
+            await readFile(join(privateDirectory, fileName)),
+          ] as const,
+      ),
+    ]),
   );
 }
 
@@ -88,7 +103,11 @@ function validityDays(certificate: X509Certificate): number {
 }
 
 async function expectValidBundle(outputDirectory: string): Promise<void> {
-  expect((await readdir(outputDirectory)).sort()).toEqual(expectedFiles);
+  const privateDirectory = privateDirectoryFor(outputDirectory);
+  expect((await readdir(outputDirectory)).sort()).toEqual(expectedPublicFiles);
+  expect((await readdir(privateDirectory)).sort()).toEqual(
+    expectedPrivateFiles,
+  );
 
   const caCertificate = new X509Certificate(
     await readFile(join(outputDirectory, "ca.crt")),
@@ -147,18 +166,12 @@ async function expectValidBundle(outputDirectory: string): Promise<void> {
   expect(verification.stdout).toContain("server.crt: OK");
 
   if (process.platform !== "win32") {
-    expect((await stat(outputDirectory)).mode & 0o777).toBe(0o700);
-    expect((await stat(join(outputDirectory, "ca.crt"))).mode & 0o777).toBe(
-      0o644,
-    );
-    expect((await stat(join(outputDirectory, "server.crt"))).mode & 0o777).toBe(
-      0o644,
-    );
-    expect((await stat(join(outputDirectory, "ca.key.pem"))).mode & 0o777).toBe(
-      0o600,
-    );
+    expect((await stat(privateDirectory)).mode & 0o777).toBe(0o700);
     expect(
-      (await stat(join(outputDirectory, "server.key.pem"))).mode & 0o777,
+      (await stat(join(privateDirectory, "ca.key.pem"))).mode & 0o777,
+    ).toBe(0o600);
+    expect(
+      (await stat(join(privateDirectory, "server.key.pem"))).mode & 0o777,
     ).toBe(0o600);
   }
 }
@@ -168,6 +181,7 @@ async function replaceServerCertificate(
   outputDirectory: string,
   days: number,
 ): Promise<void> {
+  const privateDirectory = privateDirectoryFor(outputDirectory);
   const workingDirectory = join(rootDirectory, `replacement-server-${days}`);
   await mkdir(workingDirectory);
   const extensionFile = join(workingDirectory, "server-extensions.cnf");
@@ -208,7 +222,7 @@ async function replaceServerCertificate(
     "-CA",
     join(outputDirectory, "ca.crt"),
     "-CAkey",
-    join(outputDirectory, "ca.key.pem"),
+    join(privateDirectory, "ca.key.pem"),
     "-set_serial",
     "0x1234",
     "-out",
@@ -226,12 +240,12 @@ async function replaceServerCertificate(
     ),
     copyFile(
       join(workingDirectory, "server.key.pem"),
-      join(outputDirectory, "server.key.pem"),
+      join(privateDirectory, "server.key.pem"),
     ),
   ]);
   await Promise.all([
     chmod(join(outputDirectory, "server.crt"), 0o644),
-    chmod(join(outputDirectory, "server.key.pem"), 0o600),
+    chmod(join(privateDirectory, "server.key.pem"), 0o600),
   ]);
 }
 
@@ -239,6 +253,7 @@ async function replaceWithExpiringCa(
   rootDirectory: string,
   outputDirectory: string,
 ): Promise<void> {
+  const privateDirectory = privateDirectoryFor(outputDirectory);
   const workingDirectory = join(rootDirectory, "replacement-ca");
   await mkdir(workingDirectory);
   const caConfiguration = join(workingDirectory, "ca.cnf");
@@ -284,12 +299,12 @@ async function replaceWithExpiringCa(
     copyFile(join(workingDirectory, "ca.crt"), join(outputDirectory, "ca.crt")),
     copyFile(
       join(workingDirectory, "ca.key.pem"),
-      join(outputDirectory, "ca.key.pem"),
+      join(privateDirectory, "ca.key.pem"),
     ),
   ]);
   await Promise.all([
     chmod(join(outputDirectory, "ca.crt"), 0o644),
-    chmod(join(outputDirectory, "ca.key.pem"), 0o600),
+    chmod(join(privateDirectory, "ca.key.pem"), 0o600),
   ]);
   await replaceServerCertificate(rootDirectory, outputDirectory, 397);
 }
@@ -303,7 +318,7 @@ afterEach(async () => {
 });
 
 describe("TLS setup script", () => {
-  it("creates the four-file bundle in the default directory and is idempotent", async () => {
+  it("creates the public/private bundle in the default directories and is idempotent", async () => {
     const workingDirectory = await temporaryDirectory();
     const outputDirectory = join(workingDirectory, ".data", "tls");
 
@@ -417,7 +432,7 @@ describe("TLS setup script", () => {
     expect(newCaCertificate.fingerprint256).not.toBe(
       oldCaCertificate.fingerprint256,
     );
-    for (const fileName of expectedFiles)
+    for (const fileName of [...expectedPublicFiles, ...expectedPrivateFiles])
       expect(after.get(fileName)).not.toEqual(before.get(fileName));
     await expectValidBundle(outputDirectory);
   });
@@ -456,6 +471,23 @@ describe("TLS setup script", () => {
     );
     expect(rotationMessage).toContain("TLS setup is invalid");
     expect(await readBundle(outputDirectory)).toEqual(invalidBundle);
+  });
+
+  it("fails without changing an inconsistent public/private state", async () => {
+    const rootDirectory = await temporaryDirectory();
+    const outputDirectory = join(rootDirectory, "tls");
+    const privateDirectory = privateDirectoryFor(outputDirectory);
+    await runSetup(outputDirectory);
+    await rm(privateDirectory, { recursive: true, force: true });
+    const remainingPublicFiles = await readdir(outputDirectory);
+
+    const message = await rejectedMessage(runSetup(outputDirectory));
+
+    expect(message).toContain("inconsistent");
+    expect(await readdir(outputDirectory)).toEqual(remainingPublicFiles);
+    await expect(stat(privateDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("fails without changes when the sibling setup lock already exists", async () => {

@@ -8,6 +8,7 @@ services:
     volumes:
       - ../../:/workspace:cached
       - node_modules:/workspace/node_modules
+      - tls-private:/workspace/.data/tls-private
     ports:
       - "127.0.0.1:9000:9000"
     networks:
@@ -19,6 +20,7 @@ services:
 
 volumes:
   node_modules:
+  tls-private:
 
 networks:
   mock-idp-network:
