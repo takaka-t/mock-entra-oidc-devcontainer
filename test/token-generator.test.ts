@@ -65,7 +65,7 @@ describe("token fault generator", () => {
   async function makeToken(kind: (typeof tokenKinds)[number]) {
     const now = Math.floor(Date.now() / 1000);
     return new SignJWT({
-      iss: "http://mock-idp.test:9000",
+      iss: "https://mock-idp.test:9000",
       aud: kind.audience,
       sub: "user-admin",
       iat: now,

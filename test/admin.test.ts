@@ -39,7 +39,7 @@ describe("admin API and UI", () => {
       keyDirectory: join(stateDirectory, "keys"),
       clientConfigFile: join(stateDirectory, "clients.json"),
     });
-    context = await buildApp(appConfig);
+    context = await buildApp(appConfig, { https: false });
   });
   afterEach(async () => {
     try {
@@ -546,7 +546,7 @@ describe("admin API and UI", () => {
     expect(await readFile(clientFile, "utf8")).toBe(beforeFile);
 
     await context.app.close();
-    context = await buildApp(appConfig);
+    context = await buildApp(appConfig, { https: false });
     expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
       before,
     );

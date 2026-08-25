@@ -21,10 +21,13 @@ describe("fixed OIDC configuration", () => {
       trustProxy: false,
       keyDirectory: ".data/keys",
       clientConfigFile: ".data/clients.json",
+      tlsCaCertificateFile: ".data/tls/ca.crt",
+      tlsCertificateFile: ".data/tls/server.crt",
+      tlsPrivateKeyFile: ".data/tls/server.key.pem",
     });
     expect(mockTenantId).toBe("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     expect(mockIssuer).toBe(
-      "http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0",
+      "https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0",
     );
   });
 });

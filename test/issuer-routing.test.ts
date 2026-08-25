@@ -6,18 +6,13 @@ import { join } from "node:path";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import {
-  mockIssuer,
-  mockIssuerPath,
-  mockOrigin,
-  mockTenantId,
-} from "../src/config.js";
+import { mockIssuerPath, mockOrigin, mockTenantId } from "../src/config.js";
 import { testConfig } from "./test-config.js";
 
 const host = new URL(mockOrigin).host;
 const issuerPath = mockIssuerPath;
 const encodedIssuerPath = issuerPath.replace("/a", "/%61");
-const issuer = mockIssuer;
+const issuer = `http://${host}${issuerPath}`;
 
 function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
@@ -46,9 +41,11 @@ describe("issuer routing and origin enforcement", () => {
     keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-path-"));
     context = await buildApp(
       testConfig({
+        issuer,
         keyDirectory,
         clientConfigFile: `${keyDirectory}/clients.json`,
       }),
+      { https: false },
     );
   });
 
@@ -426,6 +423,7 @@ describe("trusted HTTPS proxy", () => {
         clientConfigFile: `${keyDirectory}/clients.json`,
         issuer: `https://login.microsoftonline.test${issuerPath}`,
       }),
+      { https: false },
     );
     try {
       const response = await context.app.inject({

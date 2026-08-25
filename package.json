@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "setup:tls": "node scripts/setup-tls.mjs",
     "clean": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "build:check": "npm run build && node --check dist/server.js && node scripts/smoke-build.mjs",

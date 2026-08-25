@@ -44,6 +44,7 @@ describe("OIDC provider", () => {
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
       }),
+      { https: false },
     );
   });
   afterAll(async () => {

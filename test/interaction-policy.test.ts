@@ -163,6 +163,7 @@ describe("custom interaction policy", () => {
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
       }),
+      { https: false },
     );
   });
 

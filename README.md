@@ -10,7 +10,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 
 ```text
 Tenant ID: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
-Issuer: http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0
+Issuer: https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0
 ```
 
 service名は既存の`app`のままです。OIDCで公開するhostnameはservice名から分離し、Docker network aliasの`mock-idp.test`を使用します。
@@ -43,9 +43,23 @@ devcontainerを初めて起動したとき、または`node_modules`用named vol
 
 ```bash
 npm ci
+npm run setup:tls
 ```
 
-依存関係の導入後、devcontainer内で次を実行してください。Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。
+`setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を`.data/tls`へ生成します。生成されるファイルは次の4つです。
+
+| ファイル                   | 用途                                     |
+| -------------------------- | ---------------------------------------- |
+| `.data/tls/ca.crt`         | 接続元へ登録する公開CA証明書             |
+| `.data/tls/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない       |
+| `.data/tls/server.crt`     | Mock IdPが提示するサーバー証明書         |
+| `.data/tls/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
+
+`.data/tls`は0700、秘密鍵は0600、公開証明書は0644で作成されます。`.data/`はGit対象外ですが、`ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。
+
+bind mountがPOSIXのpermissionを保持できない環境では、`setup:tls`は安全のため失敗します。0700/0600/0644を保持できるfilesystemまたはmountを使用し、具体的な設定方法は利用環境の公式ドキュメントを参照してください。permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
+
+依存関係とTLSファイルの準備後、devcontainer内で次を実行してください。Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。起動に必要な`ca.crt`、`server.crt`、`server.key.pem`がない、または内容が不正な場合は起動に失敗します。`ca.key.pem`はサーバー起動には読み込まず、証明書更新時だけ使用します。
 
 ```bash
 npm run dev
@@ -53,14 +67,47 @@ npm run dev
 
 主なURLは次のとおりです。
 
-- Admin UI: `http://mock-idp.test:9000/__mock`
-- Discovery: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
-- Authorization Endpoint: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize`
-- Token Endpoint: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token`
-- JWKS: `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks`
-- Health: `http://mock-idp.test:9000/health`
+- Admin UI: `https://mock-idp.test:9000/__mock`
+- Discovery: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
+- Authorization Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize`
+- Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token`
+- JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks`
+- Health: `https://mock-idp.test:9000/health`
 
-OIDCクライアントにはauthority/issuerとして`http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成され、JWTの`tid`には固定tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
+OIDCクライアントにはauthority/issuerとして`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成され、JWTの`tid`には固定tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
+
+HTTPS化はMSALによるcustom authority受け入れの十分条件とは限りません。MSAL.js（Browser / Node）では、使用するversionの設定方法に従って`knownAuthorities`へ`mock-idp.test:9000`を追加し、`protocolMode`を`OIDC`にしてください。MSAL Node v5では`protocolMode`の設定先が`auth`から`system`へ移動しているため、[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
+
+### 接続元でローカルCAを信頼する
+
+Mock IdPコンテナ自身のOS trust storeへCAを登録する必要はありません。Mock IdPは起動時の証明書検証に`.data/tls/ca.crt`を読み込みます。CAの信頼設定が必要なのは、HTTPSクライアントが動作する接続元です。
+
+- ホスト上のブラウザやアプリケーションでは、ホストOS、ブラウザ、runtimeの該当するtrust storeへ設定します。
+- 別Composeのアプリケーションでは、接続元コンテナのOS、runtime、SDKへ設定します。
+
+登録・解除方法はOS、ブラウザ、runtime、SDK、base image、組織のセキュリティポリシーによって異なるため、それぞれの公式ドキュメントを参照してください。登録または配布するのは公開CAの`.data/tls/ca.crt`だけです。`ca.key.pem`と`server.key.pem`は接続元へ渡さないでください。このCAは開発端末とテスト用コンテナだけで信頼し、不要になったら解除してください。
+
+devcontainer内では次のように疎通を確認できます。`-k`または`--insecure`は使用しません。
+
+```bash
+curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
+```
+
+#### 証明書の更新とCAローテーション
+
+`npm run setup:tls`の通常再実行は、有効な4ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上なら何も変更しません。30日未満または期限切れでは、まだ有効な同じCAを使ってサーバー証明書だけを更新するため、CAの再登録は不要です。更新された証明書を反映するにはMock IdPを再起動してください。CAの残存期間が397日以下の場合は、有効期限内のローテーションを案内して失敗します。期限切れCA、不完全または不正なファイル一式も自動上書きせず、コマンドが失敗します。
+
+CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。Mock IdPを停止し、`.data/tls`全体を明示的に別名へ退避した後、`npm run setup:tls -- --rotate-ca`で新規CAを生成してください。その後、旧CAの登録解除と新CAの登録をすべての接続元で行います。
+
+セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`や、`.data/tls.backup-*`、`.data/.tls-setup-*`が残る場合があります。まず別の`setup:tls`プロセスが動いていないことを確認し、正規の`.data/tls`とこれらの復旧用directoryを確認してください。正規directoryがない場合は、確立済みCAを含むbackupを`.data/tls`へ戻して内容を検証します。ロックだけを削除して再実行しないでください。復旧候補がある間、scriptは新しいCAの生成を拒否します。
+
+CA自体を更新するときは、サーバーを停止し、旧CAをすべての接続元のtrust storeから解除してから次を実行します。
+
+```bash
+npm run setup:tls -- --rotate-ca
+```
+
+新しい`ca.crt`をすべての接続元へ再登録し、Mock IdPと接続元プロセスを再起動してください。CAが変わるため、古い証明書を組み込んだコンテナイメージも再buildが必要です。
 
 production buildを確認する場合は次を実行します。
 
@@ -76,7 +123,7 @@ npm start
 ```text
 Host Browser
     |
-    | http://mock-idp.test:9000
+    | https://mock-idp.test:9000
     v
 hosts: mock-idp.test -> 127.0.0.1
     |
@@ -105,10 +152,12 @@ networks:
 
 別コンテナからはDocker DNSがnetwork aliasを解決します。コンテナ内のhosts設定や`localhost`への置き換えは不要です。
 
+接続元コンテナも公開CAを信頼する必要があります。`.data/tls/ca.crt`をread-only mountする、接続元imageへ組み込むなどの方法で公開CAだけを渡し、接続元のOS、runtime、SDKが提供する方法で信頼を設定してください。具体的な方法はbase imageや使用技術の公式ドキュメントを参照します。CA秘密鍵とサーバー秘密鍵は接続元へmountまたはCOPYしません。CAをimageへ組み込む場合は、CAローテーション後にimageを再buildします。mountする場合も、CAを読み込む接続元プロセスの再起動またはreloadが必要です。
+
 ```text
 Application Container
     |
-    | http://mock-idp.test:9000
+    | https://mock-idp.test:9000
     v
 Docker DNS / network alias
     |
@@ -123,37 +172,37 @@ app (Mock IdP) Container
 
 `.local`はmDNSで使用され、OSやネットワーク環境によって名前解決と衝突する可能性があります。この用途ではテスト用に予約された`.test`を使用します。
 
-HTTPはローカル開発専用です。このMock IdPと未認証のAdmin APIをインターネットへ公開しないでください。
+HTTPSでもAdmin APIは未認証です。このMock IdPをインターネットへ公開しないでください。curlの`-k`やruntime、SDKの設定で証明書検証を無効化せず、接続元へCAを正しく登録してください。
 
 ## Issuer URL
 
-issuerは`http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`です。ブラウザの`/authorize`、サーバーサイドWebアプリの`/token`、Discovery、JWKS、JWTの`iss`、OIDCクライアント設定で同じURLを使用します。tenant、host、portは実行時に変更できません。
+issuerは`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`です。ブラウザの`/authorize`、サーバーサイドWebアプリの`/token`、Discovery、JWKS、JWTの`iss`、OIDCクライアント設定で同じURLを使用します。tenant、host、portは実行時に変更できません。
 
 OIDC endpointはissuerと同じtenant path配下にあります。
 
 ```text
-http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration
-http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize
-http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token
-http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks
+https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration
+https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize
+https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token
+https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks
 ```
 
 Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下の`/__mock`、`/__mock/api/*`、`/health`です。
 
-reverse proxy、HTTPS化、ローカルCA、証明書の構築は今回の標準構成の対象外です。
+Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待ち受けます。HTTP listenerやHTTPからHTTPSへのredirectは提供しません。
 
 ## OIDC設定
 
-| 項目                           | 既定値                                                                |
-| ------------------------------ | --------------------------------------------------------------------- |
-| Tenant ID                      | `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee`                                |
-| Issuer                         | `http://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0` |
-| Listen address                 | `0.0.0.0:9000`                                                        |
-| Public client                  | `mock-public-client`（secretなし）                                    |
-| Confidential client            | `mock-confidential-client`                                            |
-| Confidential secret            | `mock-client-secret-change-me`                                        |
-| Redirect URI                   | `http://localhost:3000/callback`                                      |
-| Access token audience/resource | `urn:mock-api`                                                        |
+| 項目                           | 既定値                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| Tenant ID                      | `aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee`                                 |
+| Issuer                         | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0` |
+| Listen address                 | `0.0.0.0:9000`                                                         |
+| Public client                  | `mock-public-client`（secretなし）                                     |
+| Confidential client            | `mock-confidential-client`                                             |
+| Confidential secret            | `mock-client-secret-change-me`                                         |
+| Redirect URI                   | `http://localhost:3000/callback`                                       |
+| Access token audience/resource | `urn:mock-api`                                                         |
 
 これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC Clients」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
 
@@ -170,9 +219,11 @@ Microsoft Graphや独自Web APIのAPI permissions、Expose an API、Optional cla
 Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
 
 ```bash
-curl http://mock-idp.test:9000/__mock/api/clients
+CURL_CA=.data/tls/ca.crt
 
-curl -X POST http://mock-idp.test:9000/__mock/api/clients \
+curl --cacert "$CURL_CA" https://mock-idp.test:9000/__mock/api/clients
+
+curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients \
   -H 'content-type: application/json' \
   -d '{
     "clientId":"my-app",
@@ -183,7 +234,7 @@ curl -X POST http://mock-idp.test:9000/__mock/api/clients \
     "accessTokenAudience":"urn:my-api"
   }'
 
-curl -X POST http://mock-idp.test:9000/__mock/api/clients/reset \
+curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/reset \
   -H 'content-type: application/json' \
   -d '{}'
 ```
@@ -205,24 +256,25 @@ ID tokenとJWT access tokenには`sub`, `oid`, `tid`, `name`, `preferred_usernam
 以下では、issuerがpath付きの場合もAdmin APIのbase URLにはoriginだけを指定します。
 
 ```bash
-MOCK_ORIGIN=http://mock-idp.test:9000
+MOCK_ORIGIN=https://mock-idp.test:9000
+CURL_CA=.data/tls/ca.crt
 
-curl "$MOCK_ORIGIN/__mock/api/scenario"
+curl --cacert "$CURL_CA" "$MOCK_ORIGIN/__mock/api/scenario"
 
-curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
+curl --cacert "$CURL_CA" -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
   -H 'content-type: application/json' \
   -d '{"scenario":"TOKEN_500","mode":"LIMITED","failureCount":2}'
 
-curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
+curl --cacert "$CURL_CA" -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
   -H 'content-type: application/json' \
   -d '{"scenario":"TOKEN_TIMEOUT","mode":"CONTINUOUS","parameters":{"delayMs":100}}'
 
-curl -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
+curl --cacert "$CURL_CA" -X PUT "$MOCK_ORIGIN/__mock/api/scenario" \
   -H 'content-type: application/json' \
   -d '{"scenario":"TOKEN_429","mode":"LIMITED","failureCount":1,"parameters":{"retryAfterSeconds":60}}'
 
-curl -X DELETE "$MOCK_ORIGIN/__mock/api/scenario"
-curl -X POST "$MOCK_ORIGIN/__mock/api/reset" \
+curl --cacert "$CURL_CA" -X DELETE "$MOCK_ORIGIN/__mock/api/scenario"
+curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
   -H 'content-type: application/json' \
   -d '{}'
 ```

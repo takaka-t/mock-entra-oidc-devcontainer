@@ -150,6 +150,7 @@ describe("Provider instance isolation", () => {
         keyDirectory: join(stateDirectory, "a", "keys"),
         clientConfigFile: join(stateDirectory, "a", "clients.json"),
       }),
+      { https: false },
     );
     const contextB = await buildApp(
       testConfig({
@@ -157,6 +158,7 @@ describe("Provider instance isolation", () => {
         keyDirectory: join(stateDirectory, "b", "keys"),
         clientConfigFile: join(stateDirectory, "b", "clients.json"),
       }),
+      { https: false },
     );
     try {
       const flow = await authorize(

@@ -1,10 +1,12 @@
 import { Buffer } from "node:buffer";
-import { mkdtemp, rm } from "node:fs/promises";
-import { request } from "node:http";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { request } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-import { URL } from "node:url";
+import { promisify } from "node:util";
+import { fileURLToPath, URL } from "node:url";
 import { buildApp } from "../dist/app.js";
 import {
   loadConfig,
@@ -12,17 +14,31 @@ import {
   mockIssuerPath,
   mockOrigin,
 } from "../dist/config.js";
+import { loadTlsServerOptions } from "../dist/tls.js";
 
 const listenHost = "127.0.0.1";
-const issuerHost = new URL(mockOrigin).host;
+const issuerUrl = new URL(mockOrigin);
+const issuerHost = issuerUrl.host;
 const stateDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
+const tlsDirectory = join(stateDirectory, "tls");
+const setupTlsScript = fileURLToPath(
+  new URL("./setup-tls.mjs", import.meta.url),
+);
+const execFileAsync = promisify(execFile);
 let context;
+let ca;
 
-function requestJson(url) {
+function requestJson(port, path) {
   return new Promise((resolve, reject) => {
     const outgoing = request(
-      url,
-      { headers: { host: issuerHost } },
+      {
+        hostname: listenHost,
+        port,
+        path,
+        servername: issuerUrl.hostname,
+        ca,
+        headers: { host: issuerHost },
+      },
       (response) => {
         const chunks = [];
         response.on("data", (chunk) => chunks.push(chunk));
@@ -44,24 +60,35 @@ function requestJson(url) {
 }
 
 try {
-  context = await buildApp({
+  await execFileAsync(process.execPath, [
+    setupTlsScript,
+    "--output-dir",
+    tlsDirectory,
+  ]);
+  const config = {
     ...loadConfig(),
     host: listenHost,
     keyDirectory: join(stateDirectory, "keys"),
     clientConfigFile: join(stateDirectory, "clients.json"),
-  });
+    tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
+    tlsCertificateFile: join(tlsDirectory, "server.crt"),
+    tlsPrivateKeyFile: join(tlsDirectory, "server.key.pem"),
+  };
+  const httpsOptions = await loadTlsServerOptions(config);
+  ca = await readFile(config.tlsCaCertificateFile);
+  context = await buildApp(config, { https: httpsOptions });
   await context.app.listen({ host: listenHost, port: 0 });
   const address = context.app.server.address();
   if (!address || typeof address === "string")
     throw new Error("Compiled server did not expose a TCP address");
-  const localOrigin = `http://${listenHost}:${address.port}`;
 
-  const healthResponse = await requestJson(`${localOrigin}/health`);
+  const healthResponse = await requestJson(address.port, "/health");
   if (healthResponse.statusCode !== 200 || healthResponse.body?.status !== "ok")
     throw new Error("Compiled server returned an invalid health response");
 
   const discoveryResponse = await requestJson(
-    `${localOrigin}${mockIssuerPath}/.well-known/openid-configuration`,
+    address.port,
+    `${mockIssuerPath}/.well-known/openid-configuration`,
   );
   if (
     discoveryResponse.statusCode !== 200 ||

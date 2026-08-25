@@ -42,6 +42,7 @@ describe("official Entra resilience scenarios", () => {
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
       }),
+      { https: false },
     );
   });
 
@@ -646,7 +647,7 @@ describe("official Entra resilience scenarios", () => {
     let original: AppContext | undefined;
     let restarted: AppContext | undefined;
     try {
-      original = await buildApp(restartConfig);
+      original = await buildApp(restartConfig, { https: false });
       original.store.set({
         scenario: "SIGNING_KEY_ROLLOVER",
         mode: "CONTINUOUS",
@@ -659,7 +660,7 @@ describe("official Entra resilience scenarios", () => {
       await original.app.close();
       original = undefined;
 
-      restarted = await buildApp(restartConfig);
+      restarted = await buildApp(restartConfig, { https: false });
       const restartedKeys = (
         await restarted.app.inject({ url: "/jwks", headers: { host } })
       ).json<{ keys: Array<{ kid?: string }> }>().keys;

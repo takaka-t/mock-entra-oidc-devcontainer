@@ -2,6 +2,7 @@ import formbody from "@fastify/formbody";
 import middie from "@fastify/middie";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ServerOptions as HttpsServerOptions } from "node:https";
 import type { AppConfig } from "./config.js";
 import { OidcClientStore } from "./clients/store.js";
 import { registerRoutes } from "./admin/routes.js";
@@ -21,6 +22,11 @@ export interface AppContext {
   app: FastifyInstance;
   store: InMemoryScenarioStore;
   clientStore: OidcClientStore;
+}
+
+export interface BuildAppOptions {
+  /** Use false only for in-process tests that do not open a network listener. */
+  https: HttpsServerOptions | false;
 }
 
 function managementPath(pathname: string): boolean {
@@ -164,11 +170,17 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error("OIDC middleware failed");
 }
 
-export async function buildApp(config: AppConfig): Promise<AppContext> {
-  const app = Fastify({
+export async function buildApp(
+  config: AppConfig,
+  options: BuildAppOptions,
+): Promise<AppContext> {
+  const commonOptions = {
     logger: config.logger,
     trustProxy: config.trustProxy,
-  });
+  };
+  const app: FastifyInstance = options.https
+    ? Fastify({ ...commonOptions, https: options.https })
+    : Fastify(commonOptions);
   const rolloverState = new SigningKeyRolloverState();
   const store = new InMemoryScenarioStore({
     onActivate: (scenario) => {

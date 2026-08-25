@@ -1,8 +1,10 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { loadTlsServerOptions } from "./tls.js";
 
 const config = loadConfig();
-const { app } = await buildApp(config);
+const https = await loadTlsServerOptions(config);
+const { app } = await buildApp(config, { https });
 
 const shutdown = async () => {
   await app.close();
