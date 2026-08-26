@@ -16,6 +16,8 @@ export interface OidcClientConfig {
   redirectUris: string[];
   postLogoutRedirectUris: string[];
   accessTokenAudience: string;
+  accessTokenScope: string;
+  emailOptionalClaim: boolean;
 }
 
 export type CreateOidcClientInput = OidcClientConfig;

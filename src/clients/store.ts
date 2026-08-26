@@ -40,6 +40,8 @@ export const defaultClients = (): OidcClientConfig[] => [
     redirectUris: ["http://localhost:3000/callback"],
     postLogoutRedirectUris: [],
     accessTokenAudience: "urn:mock-api",
+    accessTokenScope: "access_as_user",
+    emailOptionalClaim: false,
   },
   {
     clientId: "mock-confidential-client",
@@ -49,6 +51,8 @@ export const defaultClients = (): OidcClientConfig[] => [
     redirectUris: ["http://localhost:3000/callback"],
     postLogoutRedirectUris: [],
     accessTokenAudience: "urn:mock-api",
+    accessTokenScope: "access_as_user",
+    emailOptionalClaim: false,
   },
 ];
 

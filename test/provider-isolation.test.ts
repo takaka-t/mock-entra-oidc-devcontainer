@@ -208,6 +208,8 @@ describe("Provider instance isolation", () => {
         redirectUris: ["http://localhost:3000/callback"],
         postLogoutRedirectUris: [],
         accessTokenAudience: "urn:provider-a-only",
+        accessTokenScope: "access_as_user",
+        emailOptionalClaim: false,
       });
       const dynamicRequest = authorizationUrl("provider-a-only", "openid");
       expect(

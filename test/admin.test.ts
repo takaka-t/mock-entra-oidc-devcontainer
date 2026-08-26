@@ -402,6 +402,8 @@ describe("admin API and UI", () => {
       redirectUris: ["http://localhost:4321/callback"],
       postLogoutRedirectUris: ["http://localhost:4321/signed-out"],
       accessTokenAudience: "urn:admin-api",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     };
     const created = await context.app.inject({
       method: "POST",
@@ -474,6 +476,8 @@ describe("admin API and UI", () => {
       redirectUris: ["http://localhost/cb"],
       postLogoutRedirectUris: [],
       accessTokenAudience: "urn:x",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     },
     {
       clientId: "bad",
@@ -482,6 +486,8 @@ describe("admin API and UI", () => {
       redirectUris: ["http://localhost/cb"],
       postLogoutRedirectUris: [],
       accessTokenAudience: "urn:x",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     },
     {
       clientId: "bad",
@@ -490,6 +496,8 @@ describe("admin API and UI", () => {
       redirectUris: [],
       postLogoutRedirectUris: [],
       accessTokenAudience: "urn:x",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     },
     {
       clientId: "bad",
@@ -498,6 +506,8 @@ describe("admin API and UI", () => {
       redirectUris: ["relative"],
       postLogoutRedirectUris: [],
       accessTokenAudience: "not a uri",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     },
     {
       clientId: "legacy-api-input",
@@ -507,6 +517,8 @@ describe("admin API and UI", () => {
       postLogoutRedirectUris: [],
       scopes: ["openid"],
       accessTokenAudience: "urn:x",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     },
   ])("rejects invalid OIDC client %#", async (payload) => {
     const response = await context.app.inject({
@@ -532,6 +544,8 @@ describe("admin API and UI", () => {
         redirectUris: ["http://localhost/callback#fragment"],
         postLogoutRedirectUris: [],
         accessTokenAudience: "urn:fragment-client",
+        accessTokenScope: "access_as_user",
+        emailOptionalClaim: false,
       },
     });
     const update = await context.app.inject({
@@ -543,6 +557,8 @@ describe("admin API and UI", () => {
         redirectUris: ["http://localhost:3000/callback"],
         postLogoutRedirectUris: [],
         accessTokenAudience: "urn:mock-api#fragment",
+        accessTokenScope: "access_as_user",
+        emailOptionalClaim: false,
       },
     });
     for (const response of [create, update]) {

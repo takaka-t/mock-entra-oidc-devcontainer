@@ -185,11 +185,13 @@ describe("OIDC provider", () => {
     expect(id.payload).toMatchObject({
       iss: `http://${host}`,
       sub: "user-admin",
-      mail: "admin@example.com",
       groups: ["app-admin-group-id", "app-user-group-id"],
       nonce: "test-nonce",
+      ver: "2.0",
     });
+    expect(id.payload.mail).toBeUndefined();
     expect(id.payload.email).toBeUndefined();
+    expect(id.payload.sid).toBeTypeOf("string");
     expect(id.payload.nbf).toBe(id.payload.iat);
     const access = await jwtVerify(
       tokens.access_token,
@@ -202,9 +204,14 @@ describe("OIDC provider", () => {
     expect(access.payload).toMatchObject({
       iss: `http://${host}`,
       sub: "user-admin",
-      mail: "admin@example.com",
+      ver: "2.0",
+      azp: "mock-public-client",
+      azpacr: "0",
+      scp: "access_as_user",
     });
+    expect(access.payload.mail).toBeUndefined();
     expect(access.payload.email).toBeUndefined();
+    expect(access.payload.sid).toBe(id.payload.sid);
     expect(access.payload.nbf).toBe(access.payload.iat);
   });
 
@@ -307,6 +314,8 @@ describe("OIDC provider", () => {
       redirectUris: ["http://localhost:3000/callback"],
       postLogoutRedirectUris: ["http://localhost:3000/signed-out"],
       accessTokenAudience: "urn:dynamic-api",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: false,
     });
     const flow = await authorize(
       undefined,
@@ -336,6 +345,9 @@ describe("OIDC provider", () => {
     expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
     expect(decodeJwt(tokens.access_token).email).toBe("admin@example.com");
     expect(decodeJwt(tokens.access_token).aud).toBe("urn:dynamic-api");
+    expect(decodeJwt(tokens.access_token).azp).toBe("dynamic-post-client");
+    expect(decodeJwt(tokens.access_token).azpacr).toBe("1");
+    expect(decodeJwt(tokens.access_token).scp).toBe("access_as_user");
     expect(tokens.refresh_token).toBeTypeOf("string");
     await context.clientStore.delete("dynamic-post-client");
     const rejected = await context.app.inject({
@@ -352,6 +364,33 @@ describe("OIDC provider", () => {
       headers: { host },
     });
     expect(rejected.statusCode).toBe(400);
+  });
+
+  it("includes email without the email scope when emailOptionalClaim is enabled", async () => {
+    await context.clientStore.create({
+      clientId: "email-optional-claim-client",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: ["http://localhost:3000/callback"],
+      postLogoutRedirectUris: [],
+      accessTokenAudience: "urn:mock-api",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: true,
+    });
+    const flow = await authorize(
+      undefined,
+      "",
+      "email-optional-claim-client",
+      "openid profile",
+    );
+    const response = await exchange(flow.code, flow.verifier, {
+      clientId: "email-optional-claim-client",
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    const tokens = response.json<{ id_token: string; access_token: string }>();
+    expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
+    expect(decodeJwt(tokens.access_token).email).toBe("admin@example.com");
+    await context.clientStore.delete("email-optional-claim-client");
   });
 
   it("returns ACCESS_DENIED through the OIDC redirect flow", async () => {
@@ -529,6 +568,8 @@ describe("OIDC provider", () => {
       const accessPayload = decodeJwt(tokens.access_token);
       expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
       expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
+      expect(payload.sid).toBeTypeOf("string");
+      expect(accessPayload.sid).toBe(payload.sid);
       const jwks = (
         await context.app.inject({ url: jwksPath, headers: { host } })
       ).json();
@@ -663,6 +704,52 @@ describe("OIDC provider", () => {
         }
       }
     }
+  });
+
+  it("preserves sid and the optional email claim through SIGNING_KEY_ROLLOVER", async () => {
+    await context.clientStore.create({
+      clientId: "rollover-email-optional-claim-client",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: ["http://localhost:3000/callback"],
+      postLogoutRedirectUris: [],
+      accessTokenAudience: "urn:mock-api",
+      accessTokenScope: "access_as_user",
+      emailOptionalClaim: true,
+    });
+    const flow = await authorize(
+      undefined,
+      "",
+      "rollover-email-optional-claim-client",
+      "openid profile",
+    );
+    context.store.set({
+      scenario: "SIGNING_KEY_ROLLOVER",
+      mode: "LIMITED",
+      failureCount: 1,
+      parameters: {},
+    });
+    const response = await exchange(flow.code, flow.verifier, {
+      clientId: "rollover-email-optional-claim-client",
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    const tokens = response.json<{ id_token: string; access_token: string }>();
+    expect(decodeProtectedHeader(tokens.id_token).kid).toBe(
+      "mock-rollover-key",
+    );
+    const payload = decodeJwt(tokens.id_token);
+    expect(payload.sid).toBeTypeOf("string");
+    expect(payload.email).toBe("admin@example.com");
+    const jwks = (
+      await context.app.inject({ url: jwksPath, headers: { host } })
+    ).json();
+    await expect(
+      jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
+        issuer: `http://${host}`,
+        audience: "rollover-email-optional-claim-client",
+      }),
+    ).resolves.toBeDefined();
+    await context.clientStore.delete("rollover-email-optional-claim-client");
   });
 
   it("does not consume token faults for preflight and preserves CORS/cache headers", async () => {

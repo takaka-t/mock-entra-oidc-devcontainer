@@ -26,6 +26,8 @@ const publicClient = {
   redirectUris: ["http://localhost/callback", "http://localhost/callback"],
   postLogoutRedirectUris: [],
   accessTokenAudience: "urn:app",
+  accessTokenScope: "access_as_user",
+  emailOptionalClaim: false,
 };
 
 async function temporaryFiles(directory: string): Promise<string[]> {
@@ -189,6 +191,14 @@ describe("OIDC client store", () => {
         ...publicClient,
         clientId: "audience-fragment",
         accessTokenAudience: "urn:app#",
+      },
+    },
+    {
+      name: "access token scope containing whitespace",
+      client: {
+        ...publicClient,
+        clientId: "scope-with-space",
+        accessTokenScope: "access_as_user extra_scope",
       },
     },
   ])("rejects a $name without changing state", async ({ client }) => {

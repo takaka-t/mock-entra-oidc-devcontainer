@@ -1,9 +1,17 @@
 import Provider, {
   errors,
   interactionPolicy,
+  type Client,
   type Configuration,
+  type KoaContextWithOIDC,
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  SignJWT,
+  type JWTHeaderParameters,
+} from "jose";
 import type { AppConfig } from "../config.js";
 import type { OidcClientConfig } from "../clients/types.js";
 import { authorizationFaultDefinitions } from "../faults/authorization-fault.js";
@@ -20,13 +28,14 @@ function userClaims(
   user: MockUser,
   decision: FaultDecision | null | undefined,
   includeEmail: boolean,
-): Omit<MockUser, "groups"> & { groups?: string[]; email?: string } {
-  const claims: Omit<MockUser, "groups"> & {
+): Omit<MockUser, "groups" | "mail"> & { groups?: string[]; email?: string } {
+  const { mail, ...rest } = user;
+  const claims: Omit<MockUser, "groups" | "mail"> & {
     groups?: string[];
     email?: string;
   } = {
-    ...user,
-    ...(includeEmail ? { email: user.mail } : {}),
+    ...rest,
+    ...(includeEmail ? { email: mail } : {}),
     groups: [...user.groups],
   };
   if (decision?.scenario === "NO_GROUPS") delete claims.groups;
@@ -37,6 +46,62 @@ const supportedScopes = ["openid", "profile", "email", "offline_access"];
 
 function includesScope(value: unknown, scope: string): boolean {
   return typeof value === "string" && value.split(" ").includes(scope);
+}
+
+function emailOptionalClaimFor(client: Client | undefined): boolean {
+  return client?.metadata().mock_email_optional_claim === true;
+}
+
+/**
+ * A stable per-login-session identifier to use as the `sid` claim.
+ *
+ * oidc-provider only carries its own `Session#sidFor(clientId)` value onto
+ * issued tokens for backchannel-logout clients or when the OIDC `claims`
+ * request parameter explicitly asks for `sid` (see
+ * `helpers/process_response_types.js`) -- neither applies to this mock, and
+ * `ctx.oidc.session` at the /token endpoint is a fresh, cookie-less session
+ * unrelated to the one that authenticated at /authorize, so it cannot be
+ * used directly either. `sessionUid`, however, is copied verbatim from the
+ * AuthorizationCode (and its RefreshToken) onto every token derived from a
+ * given login, unconditionally, so it is used here as the `sid` value
+ * instead. This mock does not implement backchannel logout, so it does not
+ * need to match oidc-provider's own `sid` value bit-for-bit -- only be
+ * stable per login session, which `sessionUid` already is.
+ */
+function sessionIdFor(ctx: KoaContextWithOIDC): string | undefined {
+  return (
+    ctx.oidc.entities.AuthorizationCode?.sessionUid ??
+    ctx.oidc.entities.RefreshToken?.sessionUid ??
+    ctx.oidc.session?.uid
+  );
+}
+
+/**
+ * Entra ID always includes `sid` once a session exists, and lets an app
+ * registration request `email` independently of scope via optional claims.
+ * oidc-provider has no per-token-type claims customizer for ID Tokens
+ * (unlike `formats.customizers.jwt`, which only covers Access/Client
+ * Credentials tokens), so this re-signs the already-issued ID Token to add
+ * both claims after the fact.
+ */
+async function patchIdToken(
+  idToken: string,
+  ctx: KoaContextWithOIDC,
+  keys: SigningKeys,
+): Promise<string> {
+  const payload = { ...decodeJwt(idToken) };
+  const sid = sessionIdFor(ctx);
+  if (sid) payload.sid = sid;
+  const client = ctx.oidc.client;
+  if (emailOptionalClaimFor(client) && payload.email === undefined) {
+    const sub = typeof payload.sub === "string" ? payload.sub : undefined;
+    const user = sub ? findUser(sub) : undefined;
+    if (user) payload.email = user.mail;
+  }
+  const header = decodeProtectedHeader(idToken) as JWTHeaderParameters;
+  return new SignJWT(payload)
+    .setProtectedHeader(header)
+    .sign(keys.normal.privateKey);
 }
 
 export function createProvider(
@@ -125,10 +190,11 @@ export function createProvider(
         "tid",
         "name",
         "preferred_username",
-        "mail",
         "groups",
         "iat",
         "nbf",
+        "ver",
+        "sid",
       ],
       email: ["email"],
     },
@@ -136,21 +202,35 @@ export function createProvider(
     responseTypes: ["code"],
     pkce: { required: () => true },
     extraClientMetadata: {
-      properties: ["mock_access_token_audience"],
+      properties: [
+        "mock_access_token_audience",
+        "mock_access_token_scope",
+        "mock_email_optional_claim",
+      ],
       validator: (_ctx, key, value) => {
-        if (key !== "mock_access_token_audience" || typeof value !== "string")
-          throw new errors.InvalidClientMetadata(
-            "mock_access_token_audience must be a string",
-          );
-        try {
-          const resource = new URL(value);
-          if (resource.username || resource.password || value.includes("#"))
-            throw new Error("invalid resource URI");
-        } catch {
-          throw new errors.InvalidClientMetadata(
-            "mock_access_token_audience must be an absolute URI without credentials or a fragment",
-          );
+        if (key === "mock_access_token_audience") {
+          if (typeof value !== "string")
+            throw new errors.InvalidClientMetadata(
+              "mock_access_token_audience must be a string",
+            );
+          try {
+            const resource = new URL(value);
+            if (resource.username || resource.password || value.includes("#"))
+              throw new Error("invalid resource URI");
+          } catch {
+            throw new errors.InvalidClientMetadata(
+              "mock_access_token_audience must be an absolute URI without credentials or a fragment",
+            );
+          }
         }
+        if (key === "mock_access_token_scope" && typeof value !== "string")
+          throw new errors.InvalidClientMetadata(
+            "mock_access_token_scope must be a string",
+          );
+        if (key === "mock_email_optional_claim" && typeof value !== "boolean")
+          throw new errors.InvalidClientMetadata(
+            "mock_email_optional_claim must be a boolean",
+          );
       },
     },
     formats: {
@@ -162,15 +242,27 @@ export function createProvider(
               : undefined;
           const user = accountId ? findUser(accountId) : undefined;
           const tokenScope = "scope" in token ? token.scope : undefined;
+          const client = ctx.oidc.client;
           if (user)
             Object.assign(
               jwt.payload,
               userClaims(
                 user,
                 claimDecisionFor(ctx),
-                includesScope(tokenScope, "email"),
+                includesScope(tokenScope, "email") ||
+                  emailOptionalClaimFor(client),
               ),
             );
+          jwt.payload.ver = "2.0";
+          if (client) {
+            jwt.payload.azp = client.clientId;
+            jwt.payload.azpacr =
+              client.tokenEndpointAuthMethod === "none" ? "0" : "1";
+            const scope = client.metadata().mock_access_token_scope;
+            if (typeof scope === "string" && scope) jwt.payload.scp = scope;
+          }
+          const sid = sessionIdFor(ctx);
+          if (sid) jwt.payload.sid = sid;
           if (typeof jwt.payload.iat === "number")
             jwt.payload.nbf = jwt.payload.iat;
           return jwt;
@@ -210,9 +302,15 @@ export function createProvider(
         claims: (_use, scope) => {
           const issuedAt = Math.floor(Date.now() / 1000);
           return {
-            ...userClaims(user, scenario, includesScope(scope, "email")),
+            ...userClaims(
+              user,
+              scenario,
+              includesScope(scope, "email") ||
+                emailOptionalClaimFor(ctx.oidc.client),
+            ),
             iat: issuedAt,
             nbf: issuedAt,
+            ver: "2.0",
           };
         },
       };
@@ -241,7 +339,7 @@ export function createProvider(
 
   const provider = new Provider(config.issuer, configuration);
   provider.proxy = config.trustProxy;
-  provider.use(async (ctx, next) => {
+  provider.use(async (ctx: KoaContextWithOIDC, next) => {
     await next();
     if (
       ctx.path === "/.well-known/openid-configuration" &&
@@ -263,6 +361,19 @@ export function createProvider(
       };
     }
     if (ctx.path !== "/token" || ctx.status !== 200) return;
+    if (
+      typeof ctx.body === "object" &&
+      ctx.body !== null &&
+      typeof (ctx.body as Record<string, unknown>).id_token === "string"
+    ) {
+      const responseBody = ctx.body as Record<string, unknown>;
+      responseBody.id_token = await patchIdToken(
+        responseBody.id_token as string,
+        ctx,
+        keys,
+      );
+      ctx.body = responseBody;
+    }
     const ticket = store.getRequestTicket(ctx.req);
     const decision = store.consumeForRequest("token-jwt", ticket);
     if (!decision) return;
@@ -320,6 +431,8 @@ function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
     grant_types: ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: client.tokenEndpointAuthMethod,
     mock_access_token_audience: client.accessTokenAudience,
+    mock_access_token_scope: client.accessTokenScope,
+    mock_email_optional_claim: client.emailOptionalClaim,
   };
 }
 

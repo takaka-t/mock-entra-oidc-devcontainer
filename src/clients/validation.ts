@@ -26,6 +26,11 @@ const clientId = printableAscii
   .refine((value) => value.trim().length > 0, "must not be blank")
   .transform((value) => value.trim());
 
+const scopeName = printableAscii
+  .refine((value) => value.trim().length > 0, "must not be blank")
+  .transform((value) => value.trim())
+  .refine((value) => !/\s/.test(value), "must not contain whitespace");
+
 const absoluteUri = z
   .string()
   .trim()
@@ -58,6 +63,8 @@ const commonShape = {
   redirectUris: z.array(webUri).min(1).transform(unique),
   postLogoutRedirectUris: z.array(webUri).transform(unique),
   accessTokenAudience: absoluteUri,
+  accessTokenScope: scopeName,
+  emailOptionalClaim: z.boolean(),
 };
 
 function refineClient(
@@ -103,17 +110,14 @@ export const updateClientSchema = z
   .superRefine(refineClient);
 
 export const persistedClientSchema = z.preprocess((input) => {
-  if (
-    typeof input === "object" &&
-    input !== null &&
-    "scopes" in input &&
-    Array.isArray(input.scopes)
-  ) {
-    const { scopes: _legacyScopes, ...client } = input;
-    void _legacyScopes;
-    return client;
-  }
-  return input;
+  if (typeof input !== "object" || input === null) return input;
+  const { scopes: _legacyScopes, ...client } = input as Record<string, unknown>;
+  void _legacyScopes;
+  return {
+    accessTokenScope: "access_as_user",
+    emailOptionalClaim: false,
+    ...client,
+  };
 }, createClientSchema);
 
 export function parseCreateClient(input: unknown): CreateOidcClientInput {

@@ -180,7 +180,8 @@ describe("issuer routing and origin enforcement", () => {
       expect(verified.payload.nbf).toBe(verified.payload.iat);
       expect(verified.payload.nbf).toBeLessThanOrEqual(Date.now() / 1000);
       expect(verified.payload.exp).toBeGreaterThan(Date.now() / 1000);
-      expect(verified.payload.mail).toBe("admin@example.com");
+      expect(verified.payload.mail).toBeUndefined();
+      expect(verified.payload.ver).toBe("2.0");
       expect(verified.payload.tid).toBe(mockTenantId);
     }
   });

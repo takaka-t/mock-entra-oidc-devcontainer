@@ -223,11 +223,11 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 
 ### OIDCクライアント管理
 
-Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Access Token Audienceを設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。
+Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、emailのoptional claim化を設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。`accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です（省略すると400になります）。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
 
-標準OIDC scopeの`openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`email` claimは`email` scopeを要求した場合だけ返され、`offline_access`を要求するとRefresh Tokenが発行されます。`email`は表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
+標準OIDC scopeの`openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`email` claimは`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合に返されます（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）。`offline_access`を要求するとRefresh Tokenが発行されます。`email`は表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
 
-Microsoft Graphや独自Web APIのAPI permissions、Expose an API、Optional claimsはこのMock Providerの対象外です。
+Access Tokenの`scp`claimはクライアントごとに設定した単一の委任scope名をそのまま返すだけの簡易モデルです。Microsoft Graphや独自Web APIの複数permissionの管理、admin consent、Expose an APIの管理UIはこのMock Providerの対象外です。
 
 Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
 
@@ -244,7 +244,9 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients \
     "tokenEndpointAuthMethod":"none",
     "redirectUris":["http://localhost:8080/callback"],
     "postLogoutRedirectUris":[],
-    "accessTokenAudience":"urn:my-api"
+    "accessTokenAudience":"urn:my-api",
+    "accessTokenScope":"access_as_user",
+    "emailOptionalClaim":false
   }'
 
 curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/reset \
@@ -262,7 +264,7 @@ Client IDは作成後に変更できません。変更する場合は削除し�
 | Normal User       | `user@example.com`         | `app-user-group-id`                       |
 | Unauthorized User | `unauthorized@example.com` | なし                                      |
 
-ID tokenとJWT access tokenには`sub`, `oid`, `tid`, `name`, `preferred_username`, `mail`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`が含まれます。
+ID tokenとJWT access tokenには`sub`, `oid`, `tid`, `name`, `preferred_username`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`が含まれます。Access Tokenにはさらに`azp`（client_id）, `azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）, `scp`（クライアント設定の委任scope名）が含まれます。`email`は`email` scope要求時、またはクライアント設定でemail optional claimを有効にした場合だけ含まれます。`mail`はMicrosoft Graphのユーザープロパティ名でありEntra IDのトークンclaimには存在しないため含めていません。既知の制限として、ID TokenのJWTヘッダーには実際のEntra IDが付与する`typ:"JWT"`を設定していません（`oidc-provider`にID Token用のヘッダーカスタマイズ機構がなく、OIDC/JWT仕様上も`typ`はOPTIONALでMSAL等の検証対象にもならないため見送っています）。Access Tokenのヘッダーは`typ:"at+jwt"`です。
 
 ## シナリオ API
 
