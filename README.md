@@ -4,6 +4,28 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 
 > ローカル試験専用です。Admin APIは認証されず、ユーザー認証も選択式です。インターネットへ公開しないでください。
 
+## 目次
+
+- [起動](#起動)
+  - [事前セットアップ](#事前セットアップ)
+- [devcontainer起動後のセットアップ](#devcontainer起動後のセットアップ)
+  - [セットアップ手順](#セットアップ手順)
+  - [TLS証明書の詳細](#tls証明書の詳細)
+  - [Issuerとクライアント設定](#issuerとクライアント設定)
+  - [接続元でローカルCAを信頼する](#接続元でローカルcaを信頼する)
+    - [証明書の更新とCAローテーション](#証明書の更新とcaローテーション)
+- [ホストと別Composeからの接続](#ホストと別composeからの接続)
+- [Issuer URL](#issuer-url)
+- [OIDC設定](#oidc設定)
+  - [OIDCクライアント管理](#oidcクライアント管理)
+- [テストユーザー](#テストユーザー)
+- [シナリオ API](#シナリオ-api)
+  - [OAuth redirect errorとHTTP fault](#oauth-redirect-errorとhttp-fault)
+  - [Parametersと回復試験](#parametersと回復試験)
+  - [Provider標準機能との責務分離](#provider標準機能との責務分離)
+- [鍵と状態](#鍵と状態)
+- [開発コマンド](#開発コマンド)
+
 ## 起動
 
 既存のdevcontainerとNode.js 24を前提とします。Mock IdPのtenant IDとissuerは次の値に固定しています。
@@ -17,6 +39,10 @@ service名は既存の`app`のままです。OIDCで公開するhostnameはservi
 
 ### 事前セットアップ
 
+devcontainerを起動する前に、次の2点を準備してください。
+
+**1. 外部Docker networkの作成**
+
 Composeは外部Docker network `mock-idp-network`を使用します。初回起動前にnetworkの存在を確認し、存在しなければ作成してください。
 
 ```bash
@@ -24,7 +50,9 @@ docker network inspect mock-idp-network
 docker network create mock-idp-network
 ```
 
-`inspect`が成功した場合、`create`は不要です。
+`inspect`が成功した場合（既にnetworkが存在する場合）、`create`は不要です。
+
+**2. hostsファイルへのエントリ追加**
 
 ホストOS上のブラウザから同じURLへアクセスするため、hostsファイルへ次の行を追加してください。管理者権限が必要です。
 
@@ -39,14 +67,49 @@ hostsファイルはアプリケーションから自動変更しません。
 
 ## devcontainer起動後のセットアップ
 
-devcontainerを初めて起動したとき、または`node_modules`・`tls-private`用named volumeを作り直したときは、依存関係を導入してください。
+### セットアップ手順
 
-```bash
-npm ci
-npm run setup:tls
-```
+1. **依存関係を導入する**（devcontainerを初めて起動したとき、または`node_modules`用named volumeを作り直したときに実行）
 
-`setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を生成します。公開証明書と秘密鍵は別々のディレクトリへ書き込まれ、生成されるファイルは次の4つです。
+   ```bash
+   npm ci
+   ```
+
+2. **TLS証明書を生成する**（devcontainerを初めて起動したとき、または`tls-private`用named volumeを作り直したときに実行）
+
+   ```bash
+   npm run setup:tls
+   ```
+
+   `setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を生成します。生成されるファイルや取り扱い上の注意は[TLS証明書の詳細](#tls証明書の詳細)を参照してください。
+
+3. **Mock IdPを起動する**
+
+   ```bash
+   npm run dev
+   ```
+
+   - Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。
+   - 起動に必要な`ca.crt`、`server.crt`、`server.key.pem`がない、または内容が不正な場合は起動に失敗します。
+   - `ca.key.pem`はサーバー起動には読み込まず、証明書更新時だけ使用します。
+
+   起動後は次のURLが利用できます。これらのpath構造はMicrosoft Entra ID (v2.0 endpoint)の公式仕様に準拠しています（詳細は[Issuer URL](#issuer-url)を参照）。
+
+   - Admin UI: `https://mock-idp.test:9000/__mock`
+   - Discovery: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
+   - Authorization Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/authorize`
+   - Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/token`
+   - JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`
+   - Logout (RP-Initiated Logout) Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/logout`
+   - Health: `https://mock-idp.test:9000/health`
+
+4. **接続元でローカルCAを信頼する**
+
+   ブラウザやアプリケーションからHTTPSで接続するには、接続元（ホストOSやブラウザ、別Composeのコンテナなど）でローカルCAを信頼させる必要があります。設定しない場合、証明書エラーで接続できません。手順は[接続元でローカルCAを信頼する](#接続元でローカルcaを信頼する)を参照してください。
+
+### TLS証明書の詳細
+
+`setup:tls`が生成するファイルは次の4つです。公開証明書と秘密鍵は別々のディレクトリへ書き込まれます。
 
 | ファイル                           | 用途                                     |
 | ---------------------------------- | ---------------------------------------- |
@@ -55,31 +118,32 @@ npm run setup:tls
 | `.data/tls-private/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない       |
 | `.data/tls-private/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
 
-`.data/tls`（公開証明書）はリポジトリのbind mountにそのまま含まれ、ホストからも参照できます。一方`.data/tls-private`（秘密鍵）は`node_modules`と同様に専用のnamed volume（`tls-private`）としてマウントされます。これはWindows Docker DesktopのBind Mountが常にPOSIXのpermissionを正しく保持できるとは限らず、秘密鍵の0700/0600チェックが失敗しうるためです。named volumeであれば実体はLinux VM側の通常のファイルシステムになるため、この問題を回避できます。`.data/tls-private`はホストのファイルシステムからは直接見えません。公開証明書（`ca.crt`/`server.crt`）は機密情報ではないため、bind mount側での正確なpermission一致は要求しません。
+**背景: なぜ公開証明書と秘密鍵でディレクトリを分けているか**
 
-`.data/tls-private`は0700、秘密鍵は0600で作成され、これらは常に検証されます。`.data/`はGit対象外ですが、`ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
+- `.data/tls`（公開証明書）はリポジトリのbind mountにそのまま含まれ、ホストからも参照できます。
+- `.data/tls-private`（秘密鍵）は`node_modules`と同様に専用のnamed volume（`tls-private`）としてマウントされ、ホストのファイルシステムからは直接見えません。
+- これはWindows Docker DesktopのBind Mountが常にPOSIXのpermissionを正しく保持できるとは限らず、秘密鍵の0700/0600チェックが失敗しうるためです。named volumeであれば実体はLinux VM側の通常のファイルシステムになるため、この問題を回避できます。
+- 公開証明書（`ca.crt`/`server.crt`）は機密情報ではないため、bind mount側での正確なpermission一致は要求しません。
 
-出力先はそれぞれ独立したオプションで変更できます（`node scripts/setup-tls.mjs --output-dir <公開証明書用directory> --private-dir <秘密鍵用directory>`）。片方だけ指定した場合、もう片方はデフォルト（`.data/tls`または`.data/tls-private`）のままです。
+**取り扱い上の注意**
 
-依存関係とTLSファイルの準備後、devcontainer内で次を実行してください。Composeでは固定のコンテナport 9000をホストの`127.0.0.1:9000`に公開します。起動に必要な`ca.crt`、`server.crt`、`server.key.pem`がない、または内容が不正な場合は起動に失敗します。`ca.key.pem`はサーバー起動には読み込まず、証明書更新時だけ使用します。
+- `.data/tls-private`は0700、秘密鍵は0600で作成され、これらは常に検証されます。`.data/`はGit対象外です。
+- `ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。
+- permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
 
-```bash
-npm run dev
+### Issuerとクライアント設定
+
+OIDCクライアントにはauthority/issuerとして次の値を設定してください。
+
+```text
+https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0
 ```
 
-主なURLは次のとおりです。
+- Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成されます。
+- JWTの`tid`には固定tenant IDが入ります。
+- OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
 
-- Admin UI: `https://mock-idp.test:9000/__mock`
-- Discovery: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
-- Authorization Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/authorize`
-- Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/token`
-- JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`
-- Logout (RP-Initiated Logout) Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/logout`
-- Health: `https://mock-idp.test:9000/health`
-
-これらのpath構造はMicrosoft Entra ID (v2.0 endpoint)の公式仕様に準拠しています（詳細は「Issuer URL」節を参照）。
-
-OIDCクライアントにはauthority/issuerとして`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成され、JWTの`tid`には固定tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
+**MSAL利用時の注意**
 
 HTTPS化はMSALによるcustom authority受け入れの十分条件とは限りません。ホスト名（`mock-idp.test:9000`）自体はMicrosoftの既知クラウドインスタンスではないため、MSAL側のinstance discovery（既知authority検証）は引き続きブロックされます。
 
@@ -95,7 +159,13 @@ Mock IdPコンテナ自身のOS trust storeへCAを登録する必要はあり�
 - ホスト上のブラウザやアプリケーションでは、ホストOS、ブラウザ、runtimeの該当するtrust storeへ設定します。
 - 別Composeのアプリケーションでは、接続元コンテナのOS、runtime、SDKへ設定します。
 
-登録・解除方法はOS、ブラウザ、runtime、SDK、base image、組織のセキュリティポリシーによって異なるため、それぞれの公式ドキュメントを参照してください。登録または配布するのは公開CAの`.data/tls/ca.crt`だけです。`ca.key.pem`と`server.key.pem`は接続元へ渡さないでください。このCAは開発端末とテスト用コンテナだけで信頼し、不要になったら解除してください。
+**登録時の注意**
+
+- 登録・解除方法はOS、ブラウザ、runtime、SDK、base image、組織のセキュリティポリシーによって異なるため、それぞれの公式ドキュメントを参照してください。
+- 登録または配布するのは公開CAの`.data/tls/ca.crt`だけです。`ca.key.pem`と`server.key.pem`は接続元へ渡さないでください。
+- このCAは開発端末とテスト用コンテナだけで信頼し、不要になったら解除してください。
+
+**動作確認**
 
 devcontainer内では次のように疎通を確認できます。`-k`または`--insecure`は使用しません。
 
@@ -105,26 +175,44 @@ curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
 
 #### 証明書の更新とCAローテーション
 
-`npm run setup:tls`の通常再実行は、`.data/tls`と`.data/tls-private`それぞれに有効な2ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上なら何も変更しません。30日未満または期限切れでは、まだ有効な同じCAを使ってサーバー証明書だけを更新するため、CAの再登録は不要です。更新された証明書を反映するにはMock IdPを再起動してください。CAの残存期間が397日以下の場合は、有効期限内のローテーションを案内して失敗します。期限切れCA、不完全または不正なファイル一式、`.data/tls`と`.data/tls-private`の状態が食い違っている場合も自動上書きせず、コマンドが失敗します。
+**自動更新の判定（`npm run setup:tls`を再実行したとき）**
 
-CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。Mock IdPを停止し、`.data/tls`と`.data/tls-private`をそれぞれ明示的に別名へ退避した後、`npm run setup:tls -- --rotate-ca`で新規CAを生成してください。その後、旧CAの登録解除と新CAの登録をすべての接続元で行います。
+| 状態                                                                                                                             | 結果                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `.data/tls`と`.data/tls-private`それぞれに有効な2ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上 | 何も変更しない                                                           |
+| サーバー証明書の残存期間が30日未満、または期限切れ（CAはまだ有効）                                                               | まだ有効な同じCAを使ってサーバー証明書だけを更新する（CAの再登録は不要） |
+| CAの残存期間が397日以下                                                                                                          | 失敗する（有効期限内のローテーションを案内）                             |
+| CAが期限切れ、ファイル一式が不完全・不正、または`.data/tls`と`.data/tls-private`の状態が食い違っている                           | 失敗する（自動上書きしない）                                             |
 
-セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`や、`.data/tls.backup-*`、`.data/.tls-setup-*`、`.data/tls-private.backup-*`、`.data/.tls-private-setup-*`が残る場合があります。まず別の`setup:tls`プロセスが動いていないことを確認し、正規の`.data/tls`・`.data/tls-private`とこれらの復旧用directoryを確認してください。正規directoryがない場合は、確立済みCAを含むbackupをそれぞれ元のパスへ戻して内容を検証します。ロックだけを削除して再実行しないでください。復旧候補がある間、scriptは新しいCAの生成を拒否します。
+更新された証明書を反映するにはMock IdPを再起動してください。
 
-CA自体を更新するときは、サーバーを停止し、旧CAをすべての接続元のtrust storeから解除してから次を実行します。
+**CAをローテーションする手順**
 
-```bash
-npm run setup:tls -- --rotate-ca
-```
+CAを更新するときは、次の手順で行います。
 
-新しい`ca.crt`をすべての接続元へ再登録し、Mock IdPと接続元プロセスを再起動してください。CAが変わるため、古い証明書を組み込んだコンテナイメージも再buildが必要です。
+1. サーバーを停止する。
+2. 旧CAをすべての接続元のtrust storeから解除する。
+3. 新規CAを生成する。
 
-production buildを確認する場合は次を実行します。
+   ```bash
+   npm run setup:tls -- --rotate-ca
+   ```
 
-```bash
-npm run build:check
-npm start
-```
+4. 新しい`ca.crt`をすべての接続元へ再登録する。
+5. Mock IdPと接続元プロセスを再起動する。CAが変わるため、古い証明書を組み込んだコンテナイメージも再buildが必要です。
+
+> CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。その場合はMock IdPを停止し、`.data/tls`と`.data/tls-private`をそれぞれ明示的に別名へ退避してから上記の手順3（`--rotate-ca`）を実行してください。
+
+**異常終了時の復旧手順**
+
+セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`や、各ディレクトリ内に`<ファイル名>.backup-<pid>-<uuid>`形式のbackupファイル（例: `.data/tls/ca.crt.backup-*`、`.data/tls-private/server.key.pem.backup-*`）、`.tls-setup-*`形式の一時directory（例: `.data/tls/.tls-setup-*`、`.data/tls-private/.tls-setup-*`）が残る場合があります。
+
+1. 別の`setup:tls`プロセスが動いていないことを確認する。
+2. 正規の`.data/tls`・`.data/tls-private`と、上記の復旧用directoryの状態を確認する。
+3. 正規directoryがない場合は、確立済みCAを含むbackupをそれぞれ元のパスへ戻し、内容を検証する。
+
+- ロックだけを削除して再実行しないでください。
+- 復旧候補が残っている間、scriptは新しいCAの生成を拒否します。
 
 ## ホストと別Composeからの接続
 
@@ -223,13 +311,28 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 
 ### OIDCクライアント管理
 
-Admin UIではClient ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、emailのoptional claim化を設定できます。Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。`accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です（省略すると400になります）。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
+**設定できる項目**
 
-標準OIDC scopeの`openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`email` claimは`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合に返されます（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）。`offline_access`を要求するとRefresh Tokenが発行されます。`email`は表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
+- Client ID、Public/Confidential種別、secret、Token Endpoint認証方式、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、emailのoptional claim化。
+- Public clientは`none`、Confidential clientは`client_secret_basic`または`client_secret_post`を使用します。
+- `accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です（省略すると400になります）。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
 
-Access Tokenの`scp`claimはクライアントごとに設定した単一の委任scope名をそのまま返すだけの簡易モデルです。Microsoft Graphや独自Web APIの複数permissionの管理、admin consent、Expose an APIの管理UIはこのMock Providerの対象外です。
+**標準OIDC scope**
 
-Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
+標準OIDC scopeの`openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。
+
+- `email` claimは`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合に返されます（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）。
+- `offline_access`を要求するとRefresh Tokenが発行されます。
+- `email`は表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
+
+**このMock Providerの対象外**
+
+- Access Tokenの`scp`claimはクライアントごとに設定した単一の委任scope名をそのまま返すだけの簡易モデルです。
+- Microsoft Graphや独自Web APIの複数permissionの管理、admin consent、Expose an APIの管理UIは対象外です。
+
+> Client Secretはローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。未認証のAdmin APIと合わせて、インターネットへ絶対に公開しないでください。
+
+**操作例（Admin API）**
 
 ```bash
 CURL_CA=.data/tls/ca.crt
@@ -254,7 +357,11 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/r
   -d '{}'
 ```
 
-Client IDは作成後に変更できません。変更する場合は削除して再作成してください。`POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。Client設定は`.data/clients.json`へ永続化しますが、認可コード、Session、Grant、Access Token、Refresh TokenのProvider内部状態はProviderインスタンス単位のメモリだけに保持します。Clientを削除またはresetしても発行済みartifactは完全には失効せず、Providerを含むappの再構築またはプロセス再起動で破棄されます。
+**補足**
+
+- Client IDは作成後に変更できません。変更する場合は削除して再作成してください。
+- `POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。
+- Client設定は`.data/clients.json`へ永続化しますが、認可コード、Session、Grant、Access Token、Refresh TokenのProvider内部状態はProviderインスタンス単位のメモリだけに保持します。Clientを削除またはresetしても発行済みartifactは完全には失効せず、Providerを含むappの再構築またはプロセス再起動で破棄されます。
 
 ## テストユーザー
 
@@ -264,7 +371,14 @@ Client IDは作成後に変更できません。変更する場合は削除し�
 | Normal User       | `user@example.com`         | `app-user-group-id`                       |
 | Unauthorized User | `unauthorized@example.com` | なし                                      |
 
-ID tokenとJWT access tokenには`sub`, `oid`, `tid`, `name`, `preferred_username`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`が含まれます。Access Tokenにはさらに`azp`（client_id）, `azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）, `scp`（クライアント設定の委任scope名）が含まれます。`email`は`email` scope要求時、またはクライアント設定でemail optional claimを有効にした場合だけ含まれます。`mail`はMicrosoft Graphのユーザープロパティ名でありEntra IDのトークンclaimには存在しないため含めていません。既知の制限として、ID TokenのJWTヘッダーには実際のEntra IDが付与する`typ:"JWT"`を設定していません（`oidc-provider`にID Token用のヘッダーカスタマイズ機構がなく、OIDC/JWT仕様上も`typ`はOPTIONALでMSAL等の検証対象にもならないため見送っています）。Access Tokenのヘッダーは`typ:"at+jwt"`です。
+含まれるclaimは次のとおりです。
+
+- ID token・Access Token共通: `sub`, `oid`, `tid`, `name`, `preferred_username`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`
+- Access Tokenのみ: `azp`（client_id）、`azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）、`scp`（クライアント設定の委任scope名）
+- `email`: `email` scope要求時、またはクライアント設定でemail optional claimを有効にした場合だけ含まれます。
+- `mail`は含みません。Microsoft Graphのユーザープロパティ名であり、Entra IDのトークンclaimには存在しないためです。
+
+**既知の制限**: ID TokenのJWTヘッダーには実際のEntra IDが付与する`typ:"JWT"`を設定していません（`oidc-provider`にID Token用のヘッダーカスタマイズ機構がなく、OIDC/JWT仕様上も`typ`はOPTIONALでMSAL等の検証対象にもならないため見送っています）。Access Tokenのヘッダーは`typ:"at+jwt"`です。
 
 ## シナリオ API
 
