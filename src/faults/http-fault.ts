@@ -6,50 +6,37 @@ import {
   defaultTokenError,
   httpFaultEndpoints,
   scenarios,
+  type HttpFaultEndpoint,
+  type HttpFaultRouteTable,
 } from "../scenario/registry.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
-import type { FaultEndpoint } from "../scenario/types.js";
 
-type HttpFaultEndpoint = Extract<
-  FaultEndpoint,
-  "authorization-http" | "token" | "jwks" | "discovery"
->;
-
-const endpointEntries = Object.entries(httpFaultEndpoints) as Array<
-  [HttpFaultEndpoint, (typeof httpFaultEndpoints)[HttpFaultEndpoint]]
->;
-
-function externalPath(pathname: string, issuerPath: string): string {
-  return `${issuerPath}${pathname}`;
-}
-
-function matchesExternalPath(
-  pathname: string,
-  routePathname: string,
-  issuerPath: string,
-): boolean {
-  const canonicalPath = externalPath(routePathname, issuerPath);
-  return pathname === canonicalPath || pathname === `${canonicalPath}/`;
+function matchesPath(pathname: string, routePathname: string): boolean {
+  return pathname === routePathname || pathname === `${routePathname}/`;
 }
 
 function endpointFor(
   method: string | undefined,
   pathname: string,
-  issuerPath: string,
+  routes: HttpFaultRouteTable,
 ): HttpFaultEndpoint | null {
   const normalizedMethod = method?.toUpperCase();
   return (
-    endpointEntries.find(
+    (
+      Object.entries(routes) as Array<
+        [HttpFaultEndpoint, HttpFaultRouteTable[HttpFaultEndpoint]]
+      >
+    ).find(
       ([, route]) =>
-        matchesExternalPath(pathname, route.pathname, issuerPath) &&
+        matchesPath(pathname, route.pathname) &&
         route.method === normalizedMethod,
     )?.[0] ?? null
   );
 }
 
-function isKnownPath(pathname: string, issuerPath: string): boolean {
-  return endpointEntries.some(([, route]) =>
-    matchesExternalPath(pathname, route.pathname, issuerPath),
+function isKnownPath(pathname: string, routes: HttpFaultRouteTable): boolean {
+  return Object.values(routes).some((route) =>
+    matchesPath(pathname, route.pathname),
   );
 }
 
@@ -149,7 +136,7 @@ function delayThenContinue(
 export function createHttpFaultMiddleware(
   store: InMemoryScenarioStore,
   logger: FastifyBaseLogger,
-  issuerPath = "",
+  routes: HttpFaultRouteTable = httpFaultEndpoints,
 ) {
   return (
     req: IncomingMessage,
@@ -160,7 +147,7 @@ export function createHttpFaultMiddleware(
       const ticket = store.startRequest(req);
       const pathname = new URL(req.url ?? "/", "http://local").pathname;
 
-      if (!isKnownPath(pathname, issuerPath)) {
+      if (!isKnownPath(pathname, routes)) {
         safelyNext(next);
         return;
       }
@@ -173,7 +160,7 @@ export function createHttpFaultMiddleware(
         return;
       }
 
-      const endpoint = endpointFor(req.method, pathname, issuerPath);
+      const endpoint = endpointFor(req.method, pathname, routes);
       if (!endpoint) {
         safelyNext(next);
         return;

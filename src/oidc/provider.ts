@@ -14,6 +14,7 @@ import { findUser, type MockUser } from "../users/users.js";
 import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
+import { oidcInternalRoutes } from "./routes.js";
 
 function userClaims(
   user: MockUser,
@@ -176,10 +177,12 @@ export function createProvider(
         },
       },
     },
-    routes: { authorization: "/authorize", token: "/token", jwks: "/jwks" },
+    routes: oidcInternalRoutes,
     features: {
       devInteractions: { enabled: false },
       userinfo: { enabled: false },
+      // Entra ID's discovery document does not advertise a PAR endpoint.
+      pushedAuthorizationRequests: { enabled: false },
       resourceIndicators: {
         enabled: true,
         defaultResource: (_ctx, client) =>
@@ -240,6 +243,20 @@ export function createProvider(
   provider.proxy = config.trustProxy;
   provider.use(async (ctx, next) => {
     await next();
+    if (
+      ctx.path === "/.well-known/openid-configuration" &&
+      ctx.status === 200 &&
+      typeof ctx.body === "object" &&
+      ctx.body !== null
+    ) {
+      ctx.body = {
+        ...(ctx.body as Record<string, unknown>),
+        authorization_endpoint: `${config.issuerOrigin}${config.authorizePath}`,
+        token_endpoint: `${config.issuerOrigin}${config.tokenPath}`,
+        jwks_uri: `${config.issuerOrigin}${config.jwksPath}`,
+        end_session_endpoint: `${config.issuerOrigin}${config.logoutPath}`,
+      };
+    }
     if (ctx.path === "/jwks" && ctx.status === 200 && rolloverState.published) {
       ctx.body = {
         keys: [keys.normal.publicJwk, keys.rollover.publicJwk],

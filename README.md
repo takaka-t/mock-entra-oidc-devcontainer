@@ -48,11 +48,11 @@ npm run setup:tls
 
 `setup:tls`はローカルCAと`mock-idp.test`用サーバー証明書を生成します。公開証明書と秘密鍵は別々のディレクトリへ書き込まれ、生成されるファイルは次の4つです。
 
-| ファイル                           | 用途                         |
-| ---------------------------------- | ---------------------------- |
-| `.data/tls/ca.crt`                 | 接続元へ登録する公開CA証明書 |
-| `.data/tls/server.crt`             | Mock IdPが提示するサーバー証明書 |
-| `.data/tls-private/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない |
+| ファイル                           | 用途                                     |
+| ---------------------------------- | ---------------------------------------- |
+| `.data/tls/ca.crt`                 | 接続元へ登録する公開CA証明書             |
+| `.data/tls/server.crt`             | Mock IdPが提示するサーバー証明書         |
+| `.data/tls-private/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない       |
 | `.data/tls-private/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
 
 `.data/tls`（公開証明書）はリポジトリのbind mountにそのまま含まれ、ホストからも参照できます。一方`.data/tls-private`（秘密鍵）は`node_modules`と同様に専用のnamed volume（`tls-private`）としてマウントされます。これはWindows Docker DesktopのBind Mountが常にPOSIXのpermissionを正しく保持できるとは限らず、秘密鍵の0700/0600チェックが失敗しうるためです。named volumeであれば実体はLinux VM側の通常のファイルシステムになるため、この問題を回避できます。`.data/tls-private`はホストのファイルシステムからは直接見えません。公開証明書（`ca.crt`/`server.crt`）は機密情報ではないため、bind mount側での正確なpermission一致は要求しません。
@@ -71,14 +71,22 @@ npm run dev
 
 - Admin UI: `https://mock-idp.test:9000/__mock`
 - Discovery: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration`
-- Authorization Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize`
-- Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token`
-- JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks`
+- Authorization Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/authorize`
+- Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/token`
+- JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`
+- Logout (RP-Initiated Logout) Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/logout`
 - Health: `https://mock-idp.test:9000/health`
+
+これらのpath構造はMicrosoft Entra ID (v2.0 endpoint)の公式仕様に準拠しています（詳細は「Issuer URL」節を参照）。
 
 OIDCクライアントにはauthority/issuerとして`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`を設定してください。Discoveryが返す各endpointとJWTの正常系`iss`もこの値を基準に生成され、JWTの`tid`には固定tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
 
-HTTPS化はMSALによるcustom authority受け入れの十分条件とは限りません。MSAL.js（Browser / Node）では、使用するversionの設定方法に従って`knownAuthorities`へ`mock-idp.test:9000`を追加し、`protocolMode`を`OIDC`にしてください。MSAL Node v5では`protocolMode`の設定先が`auth`から`system`へ移動しているため、[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
+HTTPS化はMSALによるcustom authority受け入れの十分条件とは限りません。ホスト名（`mock-idp.test:9000`）自体はMicrosoftの既知クラウドインスタンスではないため、MSAL側のinstance discovery（既知authority検証）は引き続きブロックされます。
+
+- MSAL.js（Browser / Node）では、使用するversionの設定方法に従って`knownAuthorities`へ`mock-idp.test:9000`を追加してください。MSAL Node v5では設定先が`auth`から`system`へ移動しているため、[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。
+- `protocolMode`を`OIDC`にする回避策は、endpointのpath構造が非準拠だった以前は必須でしたが、Entra準拠のpath構造になった現在は必須ではなくなっている可能性があります。既定の`protocolMode`（AAD）で動作するかは使用するMSAL SDK/バージョンで実際に確認してください。
+- MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。
+- authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
 
 ### 接続元でローカルCAを信頼する
 
@@ -178,16 +186,19 @@ HTTPSでもAdmin APIは未認証です。このMock IdPをインターネット�
 
 ## Issuer URL
 
-issuerは`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`です。ブラウザの`/authorize`、サーバーサイドWebアプリの`/token`、Discovery、JWKS、JWTの`iss`、OIDCクライアント設定で同じURLを使用します。tenant、host、portは実行時に変更できません。
+issuerは`https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`です。Discovery、JWTの`iss`、OIDCクライアント設定（authority）で同じURLを使用します。tenant、host、portは実行時に変更できません。
 
-OIDC endpointはissuerと同じtenant path配下にあります。
+OIDC endpointはMicrosoft Entra ID (v2.0 endpoint)の[公式仕様](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)に合わせて配置しています。Discoveryはissuerと同じ`/v2.0`配下ですが、authorize/token/logoutは`/oauth2/v2.0/`、JWKSは`/discovery/v2.0/`という、issuerの`/v2.0`とは別のtenant直下の兄弟pathです（絶対URLは「起動」節を参照）。
 
-```text
-https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration
-https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/authorize
-https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/token
-https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/jwks
-```
+| Endpoint  | tenant直下からの相対Path                 |
+| --------- | ---------------------------------------- |
+| Discovery | `/v2.0/.well-known/openid-configuration` |
+| Authorize | `/oauth2/v2.0/authorize`                 |
+| Token     | `/oauth2/v2.0/token`                     |
+| JWKS      | `/discovery/v2.0/keys`                   |
+| Logout    | `/oauth2/v2.0/logout`                    |
+
+Microsoft Entra IDのDiscoveryドキュメントには`pushed_authorization_request_endpoint`（PAR）は含まれないため、このMock IdPでもPAR機能は無効化しています。
 
 Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下の`/__mock`、`/__mock/api/*`、`/health`です。
 
@@ -319,7 +330,7 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 AuthorizationのOAuth errorとHTTP faultは別の障害です。
 
 - `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`はAuthorization requestをProviderが検証した後、OAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`と`form_post`はProviderの標準処理に従います。
-- `AUTH_429`, `AUTH_500`はAuthorization endpoint自体のHTTP障害です。redirectせず、`GET /authorize`からHTTP statusとJSON本文を直接返します。`AUTH_TIMEOUT`はendpointで待機した後、通常のAuthorization処理を続けます。
+- `AUTH_429`, `AUTH_500`はAuthorization endpoint自体のHTTP障害です。redirectせず、Authorization endpoint（`GET .../oauth2/v2.0/authorize`）からHTTP statusとJSON本文を直接返します。`AUTH_TIMEOUT`はendpointで待機した後、通常のAuthorization処理を続けます。
 - したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はブラウザとAuthorization endpoint間のHTTP失敗です。
 
 HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含む安定したOAuth形式JSONですが、Authorization HTTP faultはOAuth redirect responseではありません。

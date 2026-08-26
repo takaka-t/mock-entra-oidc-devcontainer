@@ -26,12 +26,15 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
   return [...jar.values()].join("; ");
 }
 
+const authorizePath = "/oauth2/v2.0/authorize";
+const tokenPath = "/oauth2/v2.0/token";
+
 function authorizationUrl(clientId: string, scope: string) {
   const verifier = randomBytes(32).toString("base64url");
   return {
     verifier,
     url:
-      "/authorize?" +
+      `${authorizePath}?` +
       new URLSearchParams({
         client_id: clientId,
         redirect_uri: "http://localhost:3000/callback",
@@ -108,7 +111,7 @@ async function exchangeCode(
 ) {
   return context.app.inject({
     method: "POST",
-    url: "/token",
+    url: tokenPath,
     headers: { host, "content-type": "application/x-www-form-urlencoded" },
     payload: new URLSearchParams({
       grant_type: "authorization_code",
@@ -127,7 +130,7 @@ async function refresh(
 ) {
   return context.app.inject({
     method: "POST",
-    url: "/token",
+    url: tokenPath,
     headers: { host, "content-type": "application/x-www-form-urlencoded" },
     payload: new URLSearchParams({
       grant_type: "refresh_token",

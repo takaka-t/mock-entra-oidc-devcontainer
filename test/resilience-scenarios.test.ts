@@ -10,6 +10,9 @@ import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
+const authorizePath = "/oauth2/v2.0/authorize";
+const tokenPath = "/oauth2/v2.0/token";
+const jwksPath = "/discovery/v2.0/keys";
 
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
@@ -62,7 +65,7 @@ describe("official Entra resilience scenarios", () => {
     return {
       verifier,
       url:
-        "/authorize?" +
+        `${authorizePath}?` +
         new URLSearchParams({
           client_id: "mock-public-client",
           redirect_uri: "http://localhost:3000/callback",
@@ -126,7 +129,7 @@ describe("official Entra resilience scenarios", () => {
   async function exchange(code: string, verifier: string) {
     return context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
@@ -144,7 +147,7 @@ describe("official Entra resilience scenarios", () => {
   async function invalidTokenRequest(origin?: string) {
     return context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host,
         ...(origin ? { origin } : {}),
@@ -175,7 +178,7 @@ describe("official Entra resilience scenarios", () => {
       case "token":
         return context.app.inject({
           method: "POST",
-          url: withTrailingSlashes("/token", trailingSlashes),
+          url: withTrailingSlashes(tokenPath, trailingSlashes),
           headers: {
             host,
             ...(origin ? { origin } : {}),
@@ -185,7 +188,7 @@ describe("official Entra resilience scenarios", () => {
         });
       case "jwks":
         return context.app.inject({
-          url: withTrailingSlashes("/jwks", trailingSlashes),
+          url: withTrailingSlashes(jwksPath, trailingSlashes),
           headers: { host, ...(origin ? { origin } : {}) },
         });
       case "discovery":
@@ -435,9 +438,9 @@ describe("official Entra resilience scenarios", () => {
         endpoint === "authorization-http"
           ? authorizationRequest("method-isolation").url
           : endpoint === "token"
-            ? "/token"
+            ? tokenPath
             : endpoint === "jwks"
-              ? "/jwks"
+              ? jwksPath
               : "/.well-known/openid-configuration";
       const trailingSlashUrl = withTrailingSlashes(url, 1);
 
@@ -469,7 +472,7 @@ describe("official Entra resilience scenarios", () => {
     });
     const rejected = await context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host: "evil.test",
         "content-type": "application/x-www-form-urlencoded",
@@ -488,7 +491,7 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 1,
     });
     const invalid = await context.app.inject({
-      url: "/jwks",
+      url: jwksPath,
       headers: { host },
     });
     expect(invalid.statusCode).toBe(200);
@@ -498,7 +501,7 @@ describe("official Entra resilience scenarios", () => {
     expect(context.store.get().scenario).toBe("NORMAL");
 
     const recovered = await context.app.inject({
-      url: "/jwks",
+      url: jwksPath,
       headers: { host },
     });
     expect(recovered.statusCode).toBe(200);
@@ -507,7 +510,7 @@ describe("official Entra resilience scenarios", () => {
 
   it("supports successful signing-key rollover and keeps both public keys until reset", async () => {
     const initialJwks = (
-      await context.app.inject({ url: "/jwks", headers: { host } })
+      await context.app.inject({ url: jwksPath, headers: { host } })
     ).json<{ keys: Array<{ kid?: string }> }>();
     expect(initialJwks.keys).toHaveLength(1);
     const initialKid = initialJwks.keys[0]?.kid;
@@ -519,7 +522,7 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 1,
     });
     const publishedJwks = (
-      await context.app.inject({ url: "/jwks", headers: { host } })
+      await context.app.inject({ url: jwksPath, headers: { host } })
     ).json<{ keys: Array<{ kid?: string }> }>();
     expect(publishedJwks.keys.map(({ kid }) => kid)).toEqual([
       initialKid,
@@ -549,14 +552,14 @@ describe("official Entra resilience scenarios", () => {
     }
     expect(context.store.get().scenario).toBe("NORMAL");
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
 
     context.store.reset();
     const resetJwks = (
-      await context.app.inject({ url: "/jwks", headers: { host } })
+      await context.app.inject({ url: jwksPath, headers: { host } })
     ).json<{ keys: Array<{ kid?: string }> }>();
     expect(resetJwks.keys.map(({ kid }) => kid)).toEqual([initialKid]);
 
@@ -573,7 +576,7 @@ describe("official Entra resilience scenarios", () => {
     });
     context.store.clear();
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
@@ -584,11 +587,11 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 1,
     });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } }))
+      (await context.app.inject({ url: jwksPath, headers: { host } }))
         .statusCode,
     ).toBe(429);
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
@@ -599,10 +602,10 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 1,
     });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json(),
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json(),
     ).toEqual({ keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
@@ -613,11 +616,11 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 1,
     });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } }))
+      (await context.app.inject({ url: jwksPath, headers: { host } }))
         .statusCode,
     ).toBe(500);
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
@@ -629,7 +632,7 @@ describe("official Entra resilience scenarios", () => {
       parameters: { delayMs: 1 },
     });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } })).json<{
+      (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
@@ -653,7 +656,7 @@ describe("official Entra resilience scenarios", () => {
         mode: "CONTINUOUS",
       });
       expect(
-        (await original.app.inject({ url: "/jwks", headers: { host } })).json<{
+        (await original.app.inject({ url: jwksPath, headers: { host } })).json<{
           keys: unknown[];
         }>().keys,
       ).toHaveLength(2);
@@ -662,7 +665,7 @@ describe("official Entra resilience scenarios", () => {
 
       restarted = await buildApp(restartConfig, { https: false });
       const restartedKeys = (
-        await restarted.app.inject({ url: "/jwks", headers: { host } })
+        await restarted.app.inject({ url: jwksPath, headers: { host } })
       ).json<{ keys: Array<{ kid?: string }> }>().keys;
       expect(restartedKeys.map(({ kid }) => kid)).toEqual(["mock-normal-key"]);
     } finally {

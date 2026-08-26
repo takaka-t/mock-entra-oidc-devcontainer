@@ -16,6 +16,8 @@ import {
   removeProviderClient,
   validateProviderClient,
 } from "./oidc/provider.js";
+import { oidcInternalRoutes } from "./oidc/routes.js";
+import { resolveHttpFaultEndpoints } from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 
 export interface AppContext {
@@ -37,9 +39,77 @@ function adminPath(pathname: string): boolean {
   return pathname === "/__mock" || pathname.startsWith("/__mock/");
 }
 
-function oidcPath(pathname: string, issuerPath: string): boolean {
-  if (!issuerPath) return true;
-  return pathname === issuerPath || pathname.startsWith(`${issuerPath}/`);
+/**
+ * authorize/token/jwks used to be mounted directly below issuerPath
+ * (`{issuerPath}/authorize`, etc.). Now that their Entra-compliant homes are
+ * sibling paths (see oidcMounts below), a request for one of those legacy
+ * relative paths must not silently keep resolving to the same internal
+ * route — otherwise the non-compliant shape this change was meant to retire
+ * would still work.
+ */
+const legacyOidcRouteNames: readonly string[] =
+  Object.values(oidcInternalRoutes);
+
+function isLegacyOidcRoutePath(remainder: string): boolean {
+  return legacyOidcRouteNames.some(
+    (route) => remainder === route || remainder.startsWith(`${route}/`),
+  );
+}
+
+function issuerScopedPath(pathname: string, issuerPath: string): boolean {
+  const remainder = issuerPath
+    ? pathname === issuerPath
+      ? ""
+      : pathname.startsWith(`${issuerPath}/`)
+        ? pathname.slice(issuerPath.length)
+        : null
+    : pathname;
+  if (remainder === null) return false;
+  return !isLegacyOidcRoutePath(remainder);
+}
+
+interface OidcMount {
+  readonly external: string;
+  readonly internal: string;
+}
+
+/**
+ * authorize/token/jwks/logout are Entra-compliant sibling paths of
+ * issuerPath (not nested under it), so each needs its own
+ * external-to-internal mapping. authorize and logout additionally accept
+ * sub-paths because oidc-provider registers internal resume/confirmation
+ * routes below them (`/authorize/:uid` for the interaction-complete and
+ * authorization fault flows; `/session/end/confirm` and `/session/end/success`
+ * for RP-initiated logout).
+ */
+function oidcMounts(config: AppConfig): readonly OidcMount[] {
+  return [
+    {
+      external: config.authorizePath,
+      internal: oidcInternalRoutes.authorization,
+    },
+    { external: config.tokenPath, internal: oidcInternalRoutes.token },
+    { external: config.jwksPath, internal: oidcInternalRoutes.jwks },
+    { external: config.logoutPath, internal: oidcInternalRoutes.end_session },
+  ];
+}
+
+function matchOidcMount(pathname: string, config: AppConfig): OidcMount | null {
+  for (const mount of oidcMounts(config)) {
+    if (
+      pathname === mount.external ||
+      pathname.startsWith(`${mount.external}/`)
+    )
+      return mount;
+  }
+  return null;
+}
+
+function oidcPath(pathname: string, config: AppConfig): boolean {
+  return (
+    matchOidcMount(pathname, config) !== null ||
+    issuerScopedPath(pathname, config.issuerPath)
+  );
 }
 
 function interactionPath(pathname: string, issuerPath: string): boolean {
@@ -206,8 +276,7 @@ export async function buildApp(
     const pathname = rawPathname(url);
     const routedPath = routedPathname(url);
     const isAdmin = adminPath(routedPath);
-    const isOidc =
-      !managementPath(routedPath) && oidcPath(pathname, config.issuerPath);
+    const isOidc = !managementPath(routedPath) && oidcPath(pathname, config);
     const isInteraction = interactionRequestPath(
       pathname,
       routedPath,
@@ -222,13 +291,18 @@ export async function buildApp(
     }
     next();
   });
-  app.use(createHttpFaultMiddleware(store, app.log, config.issuerPath));
+  app.use(
+    createHttpFaultMiddleware(
+      store,
+      app.log,
+      resolveHttpFaultEndpoints(config),
+    ),
+  );
   app.use((req, res, next) => {
     const url = req.url ?? "/";
     const pathname = rawPathname(url);
     const routedPath = routedPathname(url);
-    const isOidc =
-      !managementPath(routedPath) && oidcPath(pathname, config.issuerPath);
+    const isOidc = !managementPath(routedPath) && oidcPath(pathname, config);
     const isInteraction = interactionRequestPath(
       pathname,
       routedPath,
@@ -237,13 +311,20 @@ export async function buildApp(
     );
     if (!isOidc || isInteraction) return next();
     const originalUrl = req.url ?? "/";
-    const mountedUrl = config.issuerPath
-      ? originalUrl.slice(config.issuerPath.length)
-      : originalUrl;
+    const mount = matchOidcMount(pathname, config);
+    let mountedUrl: string;
+    if (mount) {
+      mountedUrl = `${mount.internal}${originalUrl.slice(mount.external.length)}`;
+    } else {
+      const stripped = config.issuerPath
+        ? originalUrl.slice(config.issuerPath.length)
+        : originalUrl;
+      mountedUrl =
+        !stripped || stripped.startsWith("?") ? `/${stripped}` : stripped;
+    }
     (req as IncomingMessage & { originalUrl?: string }).originalUrl =
       originalUrl;
-    req.url =
-      !mountedUrl || mountedUrl.startsWith("?") ? `/${mountedUrl}` : mountedUrl;
+    req.url = mountedUrl;
     try {
       const result: unknown = providerHandler(req, res);
       if (

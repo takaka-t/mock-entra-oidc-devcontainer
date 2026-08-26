@@ -23,6 +23,15 @@ function assertOutsideRepositoryData(name: string, value: string): void {
     );
 }
 
+function tenantBasePathFor(issuerPath: string): string {
+  if (!issuerPath) return "";
+  if (!issuerPath.endsWith("/v2.0"))
+    throw new Error(
+      `testConfig issuer path must end with "/v2.0", got "${issuerPath}"`,
+    );
+  return issuerPath.slice(0, -"/v2.0".length);
+}
+
 export function testConfig(overrides: TestConfigOverrides): AppConfig {
   const defaults = loadConfig();
   assertOutsideRepositoryData("keyDirectory", overrides.keyDirectory);
@@ -31,6 +40,7 @@ export function testConfig(overrides: TestConfigOverrides): AppConfig {
   const url = new URL(issuer);
   const issuerPath =
     url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  const tenantBasePath = tenantBasePathFor(issuerPath);
   return {
     ...defaults,
     logger: false,
@@ -38,5 +48,9 @@ export function testConfig(overrides: TestConfigOverrides): AppConfig {
     issuer: `${url.origin}${issuerPath}`,
     issuerOrigin: url.origin,
     issuerPath,
+    authorizePath: `${tenantBasePath}/oauth2/v2.0/authorize`,
+    tokenPath: `${tenantBasePath}/oauth2/v2.0/token`,
+    jwksPath: `${tenantBasePath}/discovery/v2.0/keys`,
+    logoutPath: `${tenantBasePath}/oauth2/v2.0/logout`,
   };
 }

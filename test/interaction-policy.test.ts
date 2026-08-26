@@ -10,6 +10,7 @@ import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
+const authorizePath = "/oauth2/v2.0/authorize";
 const authorizationFaultCases = [
   ["AUTH_LOGIN_REQUIRED", "login_required"],
   ["AUTH_INTERACTION_REQUIRED", "interaction_required"],
@@ -63,7 +64,7 @@ class BrowserFlow {
       ...(options.prompt ? { prompt: options.prompt } : {}),
       ...(options.responseMode ? { response_mode: options.responseMode } : {}),
     });
-    return this.inject(`/authorize?${query}`);
+    return this.inject(`${authorizePath}?${query}`);
   }
 
   async openLocation(response: LightMyRequestResponse) {
@@ -362,7 +363,7 @@ describe("custom interaction policy", () => {
       code_challenge_method: "S256",
     });
     const response = await context.app.inject({
-      url: `/authorize?${query}`,
+      url: `${authorizePath}?${query}`,
       headers: { host },
     });
 
@@ -493,7 +494,7 @@ describe("custom interaction policy", () => {
 
     await context.app.inject({
       method: "HEAD",
-      url: `/authorize?${query}`,
+      url: `${authorizePath}?${query}`,
       headers: { host },
     });
 

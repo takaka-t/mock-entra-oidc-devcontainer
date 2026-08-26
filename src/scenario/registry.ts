@@ -1,3 +1,4 @@
+import type { AppConfig } from "../config.js";
 import type { FaultEndpoint, ScenarioName } from "./types.js";
 
 export type ScenarioParameterKind =
@@ -190,6 +191,18 @@ export const scenarioUiDefaults = {
   retryAfterSeconds: defaultRetryAfterSeconds,
 } as const;
 
+export type HttpFaultEndpoint = Extract<
+  FaultEndpoint,
+  "authorization-http" | "token" | "jwks" | "discovery"
+>;
+
+export interface HttpFaultRoute {
+  method: "GET" | "POST";
+  pathname: string;
+}
+
+export type HttpFaultRouteTable = Record<HttpFaultEndpoint, HttpFaultRoute>;
+
 export const httpFaultEndpoints = {
   "authorization-http": { method: "GET", pathname: "/authorize" },
   token: { method: "POST", pathname: "/token" },
@@ -198,7 +211,27 @@ export const httpFaultEndpoints = {
     method: "GET",
     pathname: "/.well-known/openid-configuration",
   },
-} as const satisfies Record<
-  Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">,
-  { method: "GET" | "POST"; pathname: string }
->;
+} as const satisfies HttpFaultRouteTable;
+
+/**
+ * authorize/token/jwks are Entra-compliant sibling paths of issuerPath (see
+ * src/app.ts), so their fault-injection routes must be resolved from the
+ * server's actual absolute paths rather than derived from a single shared
+ * prefix.
+ */
+export function resolveHttpFaultEndpoints(
+  config: Pick<
+    AppConfig,
+    "issuerPath" | "authorizePath" | "tokenPath" | "jwksPath"
+  >,
+): HttpFaultRouteTable {
+  return {
+    "authorization-http": { method: "GET", pathname: config.authorizePath },
+    token: { method: "POST", pathname: config.tokenPath },
+    jwks: { method: "GET", pathname: config.jwksPath },
+    discovery: {
+      method: "GET",
+      pathname: `${config.issuerPath}/.well-known/openid-configuration`,
+    },
+  };
+}

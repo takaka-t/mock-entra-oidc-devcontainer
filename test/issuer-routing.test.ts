@@ -6,13 +6,23 @@ import { join } from "node:path";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import { mockIssuerPath, mockOrigin, mockTenantId } from "../src/config.js";
+import {
+  mockAuthorizePath,
+  mockIssuerPath,
+  mockJwksPath,
+  mockOrigin,
+  mockTenantId,
+  mockTokenPath,
+} from "../src/config.js";
 import { testConfig } from "./test-config.js";
 
 const host = new URL(mockOrigin).host;
 const issuerPath = mockIssuerPath;
 const encodedIssuerPath = issuerPath.replace("/a", "/%61");
 const issuer = `http://${host}${issuerPath}`;
+const authorizeUrl = `http://${host}${mockAuthorizePath}`;
+const tokenUrl = `http://${host}${mockTokenPath}`;
+const jwksUrl = `http://${host}${mockJwksPath}`;
 
 function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
@@ -65,9 +75,9 @@ describe("issuer routing and origin enforcement", () => {
     expect(discovery.statusCode, discovery.body).toBe(200);
     expect(discovery.json()).toMatchObject({
       issuer,
-      authorization_endpoint: `${issuer}/authorize`,
-      token_endpoint: `${issuer}/token`,
-      jwks_uri: `${issuer}/jwks`,
+      authorization_endpoint: authorizeUrl,
+      token_endpoint: tokenUrl,
+      jwks_uri: jwksUrl,
     });
 
     const verifier = randomBytes(32).toString("base64url");
@@ -84,7 +94,7 @@ describe("issuer routing and origin enforcement", () => {
     });
     let jar = "";
     let response = await context.app.inject({
-      url: `${issuerPath}/authorize?${query}`,
+      url: `${mockAuthorizePath}?${query}`,
       headers: { host },
     });
     jar = updateCookies(jar, response.headers);
@@ -120,7 +130,10 @@ describe("issuer routing and origin enforcement", () => {
       attempts++
     ) {
       const next = new URL(String(response.headers.location), issuer);
-      expect(next.pathname.startsWith(issuerPath)).toBe(true);
+      expect(
+        next.pathname.startsWith(issuerPath) ||
+          next.pathname.startsWith(mockAuthorizePath),
+      ).toBe(true);
       response = await context.app.inject({
         url: `${next.pathname}${next.search}`,
         headers: { host, cookie: jar },
@@ -134,7 +147,7 @@ describe("issuer routing and origin enforcement", () => {
 
     const token = await context.app.inject({
       method: "POST",
-      url: `${issuerPath}/token`,
+      url: mockTokenPath,
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
@@ -151,7 +164,7 @@ describe("issuer routing and origin enforcement", () => {
     const tokens = token.json<{ id_token: string; access_token: string }>();
     const jwks = (
       await context.app.inject({
-        url: `${issuerPath}/jwks`,
+        url: mockJwksPath,
         headers: { host },
       })
     ).json();
@@ -204,7 +217,7 @@ describe("issuer routing and origin enforcement", () => {
     });
     const throttled = await context.app.inject({
       method: "POST",
-      url: `${issuerPath}/token`,
+      url: mockTokenPath,
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
@@ -234,7 +247,7 @@ describe("issuer routing and origin enforcement", () => {
     });
     const authorizationFailed = await context.app.inject({
       url:
-        `${issuerPath}/authorize?` +
+        `${mockAuthorizePath}?` +
         new URLSearchParams({
           client_id: "mock-public-client",
           redirect_uri: "http://localhost:3000/callback",
@@ -258,7 +271,7 @@ describe("issuer routing and origin enforcement", () => {
     expect(
       (
         await context.app.inject({
-          url: `${issuerPath}/jwks`,
+          url: mockJwksPath,
           headers: { host },
         })
       ).json(),
@@ -271,7 +284,7 @@ describe("issuer routing and origin enforcement", () => {
     expect(
       (
         await context.app.inject({
-          url: `${issuerPath}/jwks`,
+          url: mockJwksPath,
           headers: { host },
         })
       ).json<{ keys: unknown[] }>().keys,

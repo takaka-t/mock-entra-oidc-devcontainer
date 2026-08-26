@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   loadConfig,
+  mockAuthorizePath,
   mockIssuer,
   mockIssuerPath,
+  mockJwksPath,
+  mockLogoutPath,
   mockOrigin,
   mockPort,
   mockTenantId,
+  mockTokenPath,
 } from "../src/config.js";
 
 describe("fixed OIDC configuration", () => {
@@ -15,6 +19,10 @@ describe("fixed OIDC configuration", () => {
       issuer: mockIssuer,
       issuerOrigin: mockOrigin,
       issuerPath: mockIssuerPath,
+      authorizePath: mockAuthorizePath,
+      tokenPath: mockTokenPath,
+      jwksPath: mockJwksPath,
+      logoutPath: mockLogoutPath,
       port: mockPort,
       host: "0.0.0.0",
       logger: true,

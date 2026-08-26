@@ -8,6 +8,9 @@ import { mockTenantId, type AppConfig } from "../src/config.js";
 import { scenarioNames } from "../src/scenario/types.js";
 import { testConfig } from "./test-config.js";
 
+const tokenPath = "/oauth2/v2.0/token";
+const jwksPath = "/discovery/v2.0/keys";
+
 describe("test configuration safety", () => {
   it.each([
     {
@@ -92,7 +95,7 @@ describe("admin API and UI", () => {
       (
         await context.app.inject({
           method: "POST",
-          url: "/token",
+          url: tokenPath,
           headers: {
             host: "localhost",
             "content-type": "application/x-www-form-urlencoded",
@@ -118,7 +121,10 @@ describe("admin API and UI", () => {
 
   it("resets the active count and published signing key through the Reset API", async () => {
     const initialKeys = (
-      await context.app.inject({ url: "/jwks", headers: { host: "localhost" } })
+      await context.app.inject({
+        url: jwksPath,
+        headers: { host: "localhost" },
+      })
     ).json<{ keys: Array<{ kid?: string }> }>().keys;
     expect(initialKeys).toHaveLength(1);
 
@@ -130,7 +136,7 @@ describe("admin API and UI", () => {
     expect(
       (
         await context.app.inject({
-          url: "/jwks",
+          url: jwksPath,
           headers: { host: "localhost" },
         })
       ).json<{ keys: unknown[] }>().keys,
@@ -140,7 +146,7 @@ describe("admin API and UI", () => {
     expect(
       (
         await context.app.inject({
-          url: "/jwks",
+          url: jwksPath,
           headers: { host: "localhost" },
         })
       ).json<{ keys: unknown[] }>().keys,
@@ -170,7 +176,10 @@ describe("admin API and UI", () => {
       lastCompleted: null,
     });
     const resetKeys = (
-      await context.app.inject({ url: "/jwks", headers: { host: "localhost" } })
+      await context.app.inject({
+        url: jwksPath,
+        headers: { host: "localhost" },
+      })
     ).json<{ keys: Array<{ kid?: string }> }>().keys;
     expect(resetKeys.map(({ kid }) => kid)).toEqual([initialKeys[0]?.kid]);
   });

@@ -13,9 +13,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import {
   loadConfig,
+  mockAuthorizePath,
   mockIssuer,
   mockIssuerPath,
+  mockJwksPath,
   mockOrigin,
+  mockTokenPath,
 } from "../src/config.js";
 import { loadTlsServerOptions } from "../src/tls.js";
 
@@ -155,9 +158,9 @@ describe("direct HTTPS hosting", () => {
     >;
     expect(metadata).toMatchObject({
       issuer: mockIssuer,
-      authorization_endpoint: `${mockIssuer}/authorize`,
-      token_endpoint: `${mockIssuer}/token`,
-      jwks_uri: `${mockIssuer}/jwks`,
+      authorization_endpoint: `${mockOrigin}${mockAuthorizePath}`,
+      token_endpoint: `${mockOrigin}${mockTokenPath}`,
+      jwks_uri: `${mockOrigin}${mockJwksPath}`,
     });
 
     const verifier = randomBytes(32).toString("base64url");
@@ -172,9 +175,7 @@ describe("direct HTTPS hosting", () => {
       code_challenge_method: "S256",
     });
     let jar = "";
-    let response = await requestTls(
-      `${mockIssuerPath}/authorize?${query.toString()}`,
-    );
+    let response = await requestTls(`${mockAuthorizePath}?${query.toString()}`);
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(303);
     expect(response.headers["set-cookie"]?.join(";")).toMatch(
@@ -232,7 +233,7 @@ describe("direct HTTPS hosting", () => {
       code: String(code),
       code_verifier: verifier,
     }).toString();
-    const tokenResponse = await requestTls(`${mockIssuerPath}/token`, {
+    const tokenResponse = await requestTls(mockTokenPath, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
@@ -245,7 +246,7 @@ describe("direct HTTPS hosting", () => {
       id_token: string;
       access_token: string;
     };
-    const jwksResponse = await requestTls(`${mockIssuerPath}/jwks`);
+    const jwksResponse = await requestTls(mockJwksPath);
     const jwks = JSON.parse(jwksResponse.body.toString());
     await expect(
       jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {

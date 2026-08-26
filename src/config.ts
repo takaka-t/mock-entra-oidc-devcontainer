@@ -1,14 +1,23 @@
 export const mockTenantId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 export const mockOrigin = "https://mock-idp.test:9000";
 export const mockPort = 9000;
-export const mockIssuerPath = `/${mockTenantId}/v2.0`;
+export const mockTenantBasePath = `/${mockTenantId}`;
+export const mockIssuerPath = `${mockTenantBasePath}/v2.0`;
 export const mockIssuer = `${mockOrigin}${mockIssuerPath}`;
+export const mockAuthorizePath = `${mockTenantBasePath}/oauth2/v2.0/authorize`;
+export const mockTokenPath = `${mockTenantBasePath}/oauth2/v2.0/token`;
+export const mockJwksPath = `${mockTenantBasePath}/discovery/v2.0/keys`;
+export const mockLogoutPath = `${mockTenantBasePath}/oauth2/v2.0/logout`;
 
 export interface AppConfig {
   tenantId: string;
   issuer: string;
   issuerOrigin: string;
   issuerPath: string;
+  authorizePath: string;
+  tokenPath: string;
+  jwksPath: string;
+  logoutPath: string;
   port: number;
   host: string;
   logger: boolean;
@@ -26,6 +35,10 @@ export function loadConfig(): AppConfig {
     issuer: mockIssuer,
     issuerOrigin: mockOrigin,
     issuerPath: mockIssuerPath,
+    authorizePath: mockAuthorizePath,
+    tokenPath: mockTokenPath,
+    jwksPath: mockJwksPath,
+    logoutPath: mockLogoutPath,
     port: mockPort,
     host: "0.0.0.0",
     logger: true,

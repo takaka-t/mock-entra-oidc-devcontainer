@@ -3,6 +3,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { FastifyBaseLogger } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHttpFaultMiddleware } from "../../src/faults/http-fault.js";
+import {
+  httpFaultEndpoints,
+  type HttpFaultRouteTable,
+} from "../../src/scenario/registry.js";
 import { InMemoryScenarioStore } from "../../src/scenario/store.js";
 
 interface ResponseHarness {
@@ -465,11 +469,13 @@ describe("HTTP fault middleware", () => {
         mode: "LIMITED",
         failureCount: 1,
       });
-      const middleware = createHttpFaultMiddleware(
-        store,
-        logger(),
-        "/tenant/v2.0",
-      );
+      const routes = Object.fromEntries(
+        Object.entries(httpFaultEndpoints).map(([key, route]) => [
+          key,
+          { ...route, pathname: `/tenant/v2.0${route.pathname}` },
+        ]),
+      ) as HttpFaultRouteTable;
+      const middleware = createHttpFaultMiddleware(store, logger(), routes);
       const outside = response();
       const outsideNext = vi.fn();
 

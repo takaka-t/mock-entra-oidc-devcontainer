@@ -14,6 +14,9 @@ import { buildApp, type AppContext } from "../src/app.js";
 import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
+const authorizePath = "/oauth2/v2.0/authorize";
+const tokenPath = "/oauth2/v2.0/token";
+const jwksPath = "/discovery/v2.0/keys";
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
     current
@@ -75,7 +78,7 @@ describe("OIDC provider", () => {
     });
     let jar = "";
     let response = await context.app.inject({
-      url: `/authorize?${query}`,
+      url: `${authorizePath}?${query}`,
       headers: { host, cookie: jar },
     });
     jar = cookies(jar, response.headers);
@@ -140,7 +143,7 @@ describe("OIDC provider", () => {
     });
     return context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
@@ -161,9 +164,9 @@ describe("OIDC provider", () => {
     });
     expect(discovery.json()).toMatchObject({
       issuer: `http://${host}`,
-      authorization_endpoint: `http://${host}/authorize`,
-      token_endpoint: `http://${host}/token`,
-      jwks_uri: `http://${host}/jwks`,
+      authorization_endpoint: `http://${host}${authorizePath}`,
+      token_endpoint: `http://${host}${tokenPath}`,
+      jwks_uri: `http://${host}${jwksPath}`,
       code_challenge_methods_supported: ["S256"],
     });
     const flow = await authorize();
@@ -173,7 +176,7 @@ describe("OIDC provider", () => {
     expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
     expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
     const jwks = (
-      await context.app.inject({ url: "/jwks", headers: { host } })
+      await context.app.inject({ url: jwksPath, headers: { host } })
     ).json();
     const id = await jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
       issuer: `http://${host}`,
@@ -313,7 +316,7 @@ describe("OIDC provider", () => {
     );
     const response = await context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: { host, "content-type": "application/x-www-form-urlencoded" },
       payload: new URLSearchParams({
         grant_type: "authorization_code",
@@ -337,7 +340,7 @@ describe("OIDC provider", () => {
     await context.clientStore.delete("dynamic-post-client");
     const rejected = await context.app.inject({
       url:
-        "/authorize?" +
+        `${authorizePath}?` +
         new URLSearchParams({
           client_id: "dynamic-post-client",
           redirect_uri: "http://localhost:3000/callback",
@@ -370,7 +373,7 @@ describe("OIDC provider", () => {
       code_challenge_method: "S256",
     });
     const start = await context.app.inject({
-      url: `/authorize?${query}`,
+      url: `${authorizePath}?${query}`,
       headers: { host },
     });
     const interaction = new URL(
@@ -418,7 +421,7 @@ describe("OIDC provider", () => {
       code_challenge_method: "S256",
     });
     const malformed = await context.app.inject({
-      url: `/authorize?${query}`,
+      url: `${authorizePath}?${query}`,
       headers: { host },
     });
     expect(malformed.statusCode).toBe(303);
@@ -435,7 +438,7 @@ describe("OIDC provider", () => {
       parameters: {},
     });
     expect(
-      (await context.app.inject({ url: "/jwks", headers: { host } }))
+      (await context.app.inject({ url: jwksPath, headers: { host } }))
         .statusCode,
     ).toBe(200);
     expect((await exchange("bad", "bad")).statusCode).toBe(500);
@@ -464,7 +467,7 @@ describe("OIDC provider", () => {
   });
 
   it.each([
-    ["JWKS_500", "/jwks"],
+    ["JWKS_500", jwksPath],
     ["DISCOVERY_500", "/.well-known/openid-configuration"],
   ] as const)("injects %s only at its endpoint", async (scenario, url) => {
     context.store.set({
@@ -527,7 +530,7 @@ describe("OIDC provider", () => {
       expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
       expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
       const jwks = (
-        await context.app.inject({ url: "/jwks", headers: { host } })
+        await context.app.inject({ url: jwksPath, headers: { host } })
       ).json();
       const tokenCases = [
         {
@@ -671,7 +674,7 @@ describe("OIDC provider", () => {
     const origin = "http://localhost:3000";
     const preflight = await context.app.inject({
       method: "OPTIONS",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host,
         origin,
@@ -685,7 +688,7 @@ describe("OIDC provider", () => {
 
     const fault = await context.app.inject({
       method: "POST",
-      url: "/token",
+      url: tokenPath,
       headers: {
         host,
         origin,
@@ -701,8 +704,8 @@ describe("OIDC provider", () => {
   });
 
   it.each([
-    ["TOKEN_TIMEOUT", "POST", "/token", 400],
-    ["JWKS_TIMEOUT", "GET", "/jwks", 200],
+    ["TOKEN_TIMEOUT", "POST", tokenPath, 400],
+    ["JWKS_TIMEOUT", "GET", jwksPath, 200],
     ["DISCOVERY_TIMEOUT", "GET", "/.well-known/openid-configuration", 200],
   ] as const)(
     "delays and consumes %s",
