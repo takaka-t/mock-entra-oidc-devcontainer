@@ -415,36 +415,36 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 
 `CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の対象要求にもFaultを返し、その後の現在状態はNORMALになります。Timeoutも遅延開始時にcountを消費し、クライアントが切断しても戻しません。
 
-| シナリオ                       | 対象                      | 動作                                                  |
-| ------------------------------ | ------------------------- | ----------------------------------------------------- |
-| `NORMAL`                       | なし                      | Faultを適用しない                                     |
-| `ACCESS_DENIED`                | Authorization OAuth       | `access_denied`を検証済みredirect URIへ返す           |
-| `AUTH_LOGIN_REQUIRED`          | Authorization OAuth       | `login_required`を検証済みredirect URIへ返す          |
-| `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す    |
-| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す         |
-| `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                    |
-| `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す               |
-| `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す         |
-| `AUTH_TIMEOUT`                 | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す                    |
-| `NO_GROUPS`                    | ID/access token claim生成 | `groups`だけを除外                                    |
-| `WRONG_AUDIENCE`               | ID/access token           | 正常鍵で署名し、`aud`だけを変更                       |
-| `WRONG_ISSUER`                 | ID/access token           | 正常鍵で署名し、`iss`だけを変更                       |
-| `EXPIRED_TOKEN`                | ID/access token           | 正常鍵で署名し、整合した過去の`iat`/`nbf`/`exp`を設定 |
-| `FUTURE_NBF`                   | ID/access token           | 正常鍵で署名し、`now < nbf < exp`にする               |
-| `INVALID_SIGNATURE`            | ID/access token           | 非公開Key Bで署名し、公開Key Aの`kid`を設定           |
-| `UNKNOWN_KID`                  | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                  |
-| `SIGNING_KEY_ROLLOVER`         | Token/JWKS                | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開              |
-| `TOKEN_400`                    | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す                 |
-| `TOKEN_429`                    | `POST` Token              | HTTP 429と`Retry-After`を返す                         |
-| `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                   |
-| `TOKEN_TIMEOUT`                | `POST` Token              | 指定時間遅延してから通常処理を続行                    |
-| `JWKS_INVALID`                 | `GET` JWKS                | HTTP 200で不正なJWKSを返す                            |
-| `JWKS_429`                     | `GET` JWKS                | HTTP 429と`Retry-After`を返す                         |
-| `JWKS_500`                     | `GET` JWKS                | HTTP 500と任意の`Retry-After`を返す                   |
-| `JWKS_TIMEOUT`                 | `GET` JWKS                | 指定時間遅延してから通常処理を続行                    |
-| `DISCOVERY_429`                | `GET` Discovery           | HTTP 429と`Retry-After`を返す                         |
-| `DISCOVERY_500`                | `GET` Discovery           | HTTP 500と任意の`Retry-After`を返す                   |
-| `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
+| シナリオ | 対象 | 動作 |
+| --- | --- | --- |
+| `NORMAL` | なし | Faultを適用しない |
+| `ACCESS_DENIED` | Authorization OAuth | `access_denied`を検証済みredirect URIへ返す |
+| `AUTH_LOGIN_REQUIRED` | Authorization OAuth | `login_required`を検証済みredirect URIへ返す |
+| `AUTH_INTERACTION_REQUIRED` | Authorization OAuth | `interaction_required`を検証済みredirect URIへ返す |
+| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth | `temporarily_unavailable`をredirect URIへ返す |
+| `AUTH_SERVER_ERROR` | Authorization OAuth | `server_error`をredirect URIへ返す |
+| `AUTH_429` | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す |
+| `AUTH_500` | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す |
+| `AUTH_TIMEOUT` | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す |
+| `NO_GROUPS` | ID/access token claim生成 | `groups` claimを（空配列ではなく）完全に削除する。ID Token・Access Tokenの両方が対象 |
+| `WRONG_AUDIENCE` | ID/access token | 正常鍵で署名し、`aud`を実際の`client_id`とは無関係な固定のダミー値に変更する |
+| `WRONG_ISSUER` | ID/access token | 正常鍵で署名し、`iss`を実際のissuerとは異なる固定のダミー値に変更する |
+| `EXPIRED_TOKEN` | ID/access token | 正常鍵で署名し、`exp`を現在時刻より60秒過去、`iat`/`nbf`をそこからさらに1時間前に設定する（3者の前後関係は維持） |
+| `FUTURE_NBF` | ID/access token | 正常鍵で署名し、`nbf`を現在時刻から5分後（ただし`exp`の1秒前を超えない）に設定する |
+| `INVALID_SIGNATURE` | ID/access token | 非公開Key Bで署名し、公開Key Aの`kid`を設定 |
+| `UNKNOWN_KID` | ID/access token | Key Aで署名し、JWKSにない`kid`を設定 |
+| `SIGNING_KEY_ROLLOVER` | Token/JWKS | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開 |
+| `TOKEN_400` | `POST` Token | 設定可能なOAuth errorをHTTP 400で返す。`error`未指定時は`invalid_grant`を既定値とし、`error_description`は`errorDescription`パラメータを指定した場合だけ含める |
+| `TOKEN_429` | `POST` Token | HTTP 429と`Retry-After`を返す |
+| `TOKEN_500` | `POST` Token | HTTP 500と任意の`Retry-After`を返す |
+| `TOKEN_TIMEOUT` | `POST` Token | 指定時間遅延してから通常処理を続行 |
+| `JWKS_INVALID` | `GET` JWKS | HTTP 200で、`keys`に1件だけ含むがRSA鍵として必須の`n`/`e`を欠いた不完全なkeyオブジェクトを返す（配列自体は空にしない） |
+| `JWKS_429` | `GET` JWKS | HTTP 429と`Retry-After`を返す |
+| `JWKS_500` | `GET` JWKS | HTTP 500と任意の`Retry-After`を返す |
+| `JWKS_TIMEOUT` | `GET` JWKS | 指定時間遅延してから通常処理を続行 |
+| `DISCOVERY_429` | `GET` Discovery | HTTP 429と`Retry-After`を返す |
+| `DISCOVERY_500` | `GET` Discovery | HTTP 500と任意の`Retry-After`を返す |
+| `DISCOVERY_TIMEOUT` | `GET` Discovery | 指定時間遅延してから通常処理を続行 |
 
 ### OAuth redirect errorとConnectivity ProbeのHTTP fault
 
@@ -456,6 +456,8 @@ AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害で�
 - したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はクライアントとMicrosoft Entra IDとの間の接続性の問題です。
 
 `HEAD`は本文を持てないため、Connectivity Probeの429と500はHTTP statusとheaderだけを返します。`content-type`は正常時の200と同じ`text/html; charset=utf-8`です。Token、JWKS、DiscoveryのHTTP faultは従来どおりJSON本文を返し、HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含みます。
+
+`ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`の`error_description`は、シナリオ名ではなく固定の説明文（例: "Login required by mock scenario"）を使用します。
 
 ### Parametersと回復試験
 
