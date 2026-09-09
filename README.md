@@ -20,7 +20,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
   - [OIDCクライアント管理](#oidcクライアント管理)
 - [テストユーザー](#テストユーザー)
 - [シナリオ API](#シナリオ-api)
-  - [OAuth redirect errorとHTTP fault](#oauth-redirect-errorとhttp-fault)
+  - [OAuth redirect errorとConnectivity ProbeのHTTP fault](#oauth-redirect-errorとconnectivity-probeのhttp-fault)
   - [Parametersと回復試験](#parametersと回復試験)
   - [Provider標準機能との責務分離](#provider標準機能との責務分離)
 - [鍵と状態](#鍵と状態)
@@ -101,6 +101,7 @@ hostsファイルはアプリケーションから自動変更しません。
    - Token Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/token`
    - JWKS: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`
    - Logout (RP-Initiated Logout) Endpoint: `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/logout`
+   - Connectivity Probe (`HEAD`のみ): `https://mock-idp.test:9000/common/oauth2/v2.0/authorize`
    - Health: `https://mock-idp.test:9000/health`
 
 4. **接続元でローカルCAを信頼する**
@@ -286,6 +287,10 @@ OIDC endpointはMicrosoft Entra ID (v2.0 endpoint)の[公式仕様](https://lear
 | JWKS      | `/discovery/v2.0/keys`                   |
 | Logout    | `/oauth2/v2.0/logout`                    |
 
+LogoutはRP-Initiated Logoutの確認ページを経由します。確認ページの送信先とサインアウト完了ページはLogout pathのsub pathとして`/oauth2/v2.0/logout/confirm`、`/oauth2/v2.0/logout/success`に配置されます（クライアントが直接呼ぶpathではありません）。`post_logout_redirect_uri`は、そのクライアントのPost Logout Redirect URIに登録済みの場合だけ受け付けます。
+
+`common`はEntraのmulti-tenant aliasです。クライアントライブラリはsign-inを始める前に`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`で到達性を確認します。このMock IdPはこの接続性プローブだけをtenant直下ではなくorigin直下の`/common/oauth2/v2.0/authorize`で提供し、`HEAD`のみを受け付けます（他のmethodは404）。tenant aliasとしての`common`は実装していないため、このpathで認証フローは開始できません。
+
 Microsoft Entra IDのDiscoveryドキュメントには`pushed_authorization_request_endpoint`（PAR）は含まれないため、このMock IdPでもPAR機能は無効化しています。
 
 Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下の`/__mock`、`/__mock/api/*`、`/health`です。
@@ -418,9 +423,9 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す    |
 | `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す         |
 | `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                    |
-| `AUTH_429`                     | `GET` Authorization       | HTTP 429と`Retry-After`を直接返す                     |
-| `AUTH_500`                     | `GET` Authorization       | HTTP 500と任意の`Retry-After`を直接返す               |
-| `AUTH_TIMEOUT`                 | `GET` Authorization       | 指定時間遅延してから通常処理を続行                    |
+| `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す               |
+| `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す         |
+| `AUTH_TIMEOUT`                 | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す                    |
 | `NO_GROUPS`                    | ID/access token claim生成 | `groups`だけを除外                                    |
 | `WRONG_AUDIENCE`               | ID/access token           | 正常鍵で署名し、`aud`だけを変更                       |
 | `WRONG_ISSUER`                 | ID/access token           | 正常鍵で署名し、`iss`だけを変更                       |
@@ -441,22 +446,23 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `DISCOVERY_500`                | `GET` Discovery           | HTTP 500と任意の`Retry-After`を返す                   |
 | `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                    |
 
-### OAuth redirect errorとHTTP fault
+### OAuth redirect errorとConnectivity ProbeのHTTP fault
 
-AuthorizationのOAuth errorとHTTP faultは別の障害です。
+AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害です。前者は通常の認証要求そのものに、後者は認証を始める前の到達性確認に作用します。
 
 - `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`はAuthorization requestをProviderが検証した後、OAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`と`form_post`はProviderの標準処理に従います。
-- `AUTH_429`, `AUTH_500`はAuthorization endpoint自体のHTTP障害です。redirectせず、Authorization endpoint（`GET .../oauth2/v2.0/authorize`）からHTTP statusとJSON本文を直接返します。`AUTH_TIMEOUT`はendpointで待機した後、通常のAuthorization処理を続けます。
-- したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はブラウザとAuthorization endpoint間のHTTP失敗です。
+- `AUTH_429`, `AUTH_500`, `AUTH_TIMEOUT`はConnectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`）だけに作用します。正常時のEntraはこのプローブへHTTP 200を返すので、Mockも既定では200を返し、Scenario適用時だけ429、500、遅延を再現します。`AUTH_TIMEOUT`は待機後に通常どおり200を返します。
+- これらは通常の認証要求には一切影響しません。`AUTH_500`をCONTINUOUSで有効にしていても、`GET {tenant}/oauth2/v2.0/authorize`は通常のAuthorization処理を続け、LIMITED countも消費しません。
+- したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はクライアントとMicrosoft Entra IDとの間の接続性の問題です。
 
-HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含む安定したOAuth形式JSONですが、Authorization HTTP faultはOAuth redirect responseではありません。
+`HEAD`は本文を持てないため、Connectivity Probeの429と500はHTTP statusとheaderだけを返します。`content-type`は正常時の200と同じ`text/html; charset=utf-8`です。Token、JWKS、DiscoveryのHTTP faultは従来どおりJSON本文を返し、HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含みます。
 
 ### Parametersと回復試験
 
 - `AUTH_429`, `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`の`retryAfterSeconds`は1以上のsafe integerで、未指定時は60秒です。
 - `AUTH_500`, `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`でも`retryAfterSeconds`を任意指定できます。指定した場合だけ`Retry-After`を返します。
 - `AUTH_TIMEOUT`, `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT`の`delayMs`は1〜300,000msで、未指定時は30,000msです。
-- Authorization/JWKS/Discovery Faultは`GET`、Token Faultは`POST`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`、`HEAD`はLIMITED countを消費しません。
+- Connectivity Probe Faultは`HEAD`、Token Faultは`POST`、JWKS/Discovery Faultは`GET`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`はLIMITED countを消費しません。Authorization endpointはHTTP faultの対象外です。
 - Mock自身は待機や再試行を行いません。429では`Retry-After`が終わるまで再取得せず、5xxではheaderがあれば従い、なければ指数バックオフするクライアント動作を試験してください。Timeoutでも即時再試行を避けてください。
 
 Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、429の既定値は60秒です。特定のAADSTS番号には依存しません。
@@ -495,7 +501,7 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 
 ## 鍵と状態
 
-通常鍵と異常署名鍵は初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには通常鍵の公開部分だけを掲載します。鍵ディレクトリを削除すると再生成されます。
+署名鍵は通常鍵、rollover鍵、異常署名鍵の3種を初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには既定で通常鍵の公開部分だけを掲載し、`SIGNING_KEY_ROLLOVER`の適用後は通常鍵とrollover鍵の2つを掲載します。鍵ディレクトリを削除すると再生成されます。
 
 OIDC artifactとシナリオストアは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴は失われます。
 

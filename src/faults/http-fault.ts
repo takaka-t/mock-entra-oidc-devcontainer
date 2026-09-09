@@ -4,12 +4,12 @@ import {
   defaultDelayMs,
   defaultRetryAfterSeconds,
   defaultTokenError,
-  httpFaultEndpoints,
   scenarios,
   type HttpFaultEndpoint,
   type HttpFaultRouteTable,
 } from "../scenario/registry.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
+import { commonProbeContentType } from "../oidc/common-probe.js";
 
 function matchesPath(pathname: string, routePathname: string): boolean {
   return pathname === routePathname || pathname === `${routePathname}/`;
@@ -34,9 +34,17 @@ function endpointFor(
   );
 }
 
-function isKnownPath(pathname: string, routes: HttpFaultRouteTable): boolean {
-  return Object.values(routes).some((route) =>
-    matchesPath(pathname, route.pathname),
+/**
+ * CORS and preflight cover a wider set of paths than fault injection: the
+ * tenant Authorization endpoint keeps its browser-facing behavior even though
+ * its HTTP faults moved to the `common` connectivity probe.
+ */
+function isCorsPath(
+  pathname: string,
+  corsPathnames: readonly string[],
+): boolean {
+  return corsPathnames.some((corsPathname) =>
+    matchesPath(pathname, corsPathname),
   );
 }
 
@@ -133,10 +141,16 @@ function delayThenContinue(
   if (responseUnavailable(req, res)) cancel();
 }
 
+/**
+ * `routes` and `corsPathnames` are required: the fault-injection paths depend
+ * on the configured issuer (see resolveHttpFaultEndpoints), so there is no
+ * route table that is correct by default.
+ */
 export function createHttpFaultMiddleware(
   store: InMemoryScenarioStore,
   logger: FastifyBaseLogger,
-  routes: HttpFaultRouteTable = httpFaultEndpoints,
+  routes: HttpFaultRouteTable,
+  corsPathnames: readonly string[],
 ) {
   return (
     req: IncomingMessage,
@@ -147,7 +161,7 @@ export function createHttpFaultMiddleware(
       const ticket = store.startRequest(req);
       const pathname = new URL(req.url ?? "/", "http://local").pathname;
 
-      if (!isKnownPath(pathname, routes)) {
+      if (!isCorsPath(pathname, corsPathnames)) {
         safelyNext(next);
         return;
       }
@@ -195,52 +209,52 @@ export function createHttpFaultMiddleware(
         return;
       }
 
+      /**
+       * The `common` connectivity probe is a HEAD request, which cannot carry a
+       * body, so its faults are status and headers only and reuse the healthy
+       * probe's content type.
+       */
+      const bodyless = req.method?.toUpperCase() === "HEAD";
       setNoStoreHeaders(res);
-      res.setHeader("content-type", "application/json; charset=utf-8");
+      res.setHeader(
+        "content-type",
+        bodyless ? commonProbeContentType : "application/json; charset=utf-8",
+      );
+      const respond = (statusCode: number, body: object): void => {
+        res.statusCode = statusCode;
+        res.end(bodyless ? undefined : JSON.stringify(body));
+      };
+
       switch (effect) {
         case "http-400":
-          res.statusCode = 400;
-          res.end(
-            JSON.stringify({
-              error: decision.parameters.error ?? defaultTokenError,
-              ...(decision.parameters.errorDescription
-                ? { error_description: decision.parameters.errorDescription }
-                : {}),
-            }),
-          );
+          respond(400, {
+            error: decision.parameters.error ?? defaultTokenError,
+            ...(decision.parameters.errorDescription
+              ? { error_description: decision.parameters.errorDescription }
+              : {}),
+          });
           return;
         case "http-429":
           setRetryAfterHeaders(
             res,
             decision.parameters.retryAfterSeconds ?? defaultRetryAfterSeconds,
           );
-          res.statusCode = 429;
-          res.end(
-            JSON.stringify({
-              error: "temporarily_unavailable",
-              error_description: `Injected ${decision.scenario} fault`,
-            }),
-          );
+          respond(429, {
+            error: "temporarily_unavailable",
+            error_description: `Injected ${decision.scenario} fault`,
+          });
           return;
         case "http-500":
           if (decision.parameters.retryAfterSeconds !== undefined) {
             setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds);
           }
-          res.statusCode = 500;
-          res.end(
-            JSON.stringify({
-              error: "server_error",
-              error_description: `Injected ${decision.scenario} fault`,
-            }),
-          );
+          respond(500, {
+            error: "server_error",
+            error_description: `Injected ${decision.scenario} fault`,
+          });
           return;
         case "jwks-invalid":
-          res.statusCode = 200;
-          res.end(
-            JSON.stringify({
-              keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }],
-            }),
-          );
+          respond(200, { keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
           return;
         default:
           throw new Error(

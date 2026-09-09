@@ -2,12 +2,37 @@ import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { FastifyBaseLogger } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHttpFaultMiddleware } from "../../src/faults/http-fault.js";
 import {
-  httpFaultEndpoints,
-  type HttpFaultRouteTable,
-} from "../../src/scenario/registry.js";
+  mockAuthorizePath,
+  mockCommonAuthorizePath,
+} from "../../src/config.js";
+import { createHttpFaultMiddleware } from "../../src/faults/http-fault.js";
+import { commonProbeContentType } from "../../src/oidc/common-probe.js";
+import type { HttpFaultRouteTable } from "../../src/scenario/registry.js";
 import { InMemoryScenarioStore } from "../../src/scenario/store.js";
+
+/**
+ * A synthetic route table for exercising the middleware in isolation. The real
+ * paths depend on the configured issuer (resolveHttpFaultEndpoints), which is
+ * covered by the app-level tests; these unit tests only need stable pathnames.
+ */
+const testRoutes: HttpFaultRouteTable = {
+  "authorization-http": { method: "HEAD", pathname: mockCommonAuthorizePath },
+  token: { method: "POST", pathname: "/token" },
+  jwks: { method: "GET", pathname: "/jwks" },
+  discovery: { method: "GET", pathname: "/.well-known/openid-configuration" },
+};
+
+function faultMiddleware(
+  store: InMemoryScenarioStore,
+  log: FastifyBaseLogger,
+  routes: HttpFaultRouteTable = testRoutes,
+  corsPathnames: readonly string[] = Object.values(routes).map(
+    (route) => route.pathname,
+  ),
+) {
+  return createHttpFaultMiddleware(store, log, routes, corsPathnames);
+}
 
 interface ResponseHarness {
   response: ServerResponse;
@@ -52,11 +77,21 @@ function logger(): FastifyBaseLogger {
   return { warn: vi.fn() } as unknown as FastifyBaseLogger;
 }
 
+const json = "application/json; charset=utf-8";
+
+/**
+ * `authorization-http` is the `common` connectivity probe, so its target method
+ * is HEAD and its fault responses carry no body. `otherMethod` is a method the
+ * endpoint must ignore.
+ */
 const endpointCases = [
   {
     endpoint: "authorization-http",
-    method: "GET",
-    url: "/authorize",
+    method: "HEAD",
+    otherMethod: "GET",
+    url: mockCommonAuthorizePath,
+    bodyless: true,
+    contentType: commonProbeContentType,
     throttle: "AUTH_429",
     serverError: "AUTH_500",
     timeout: "AUTH_TIMEOUT",
@@ -64,7 +99,10 @@ const endpointCases = [
   {
     endpoint: "token",
     method: "POST",
+    otherMethod: "GET",
     url: "/token",
+    bodyless: false,
+    contentType: json,
     throttle: "TOKEN_429",
     serverError: "TOKEN_500",
     timeout: "TOKEN_TIMEOUT",
@@ -72,7 +110,10 @@ const endpointCases = [
   {
     endpoint: "jwks",
     method: "GET",
+    otherMethod: "HEAD",
     url: "/jwks",
+    bodyless: false,
+    contentType: json,
     throttle: "JWKS_429",
     serverError: "JWKS_500",
     timeout: "JWKS_TIMEOUT",
@@ -80,7 +121,10 @@ const endpointCases = [
   {
     endpoint: "discovery",
     method: "GET",
+    otherMethod: "HEAD",
     url: "/.well-known/openid-configuration",
+    bodyless: false,
+    contentType: json,
     throttle: "DISCOVERY_429",
     serverError: "DISCOVERY_500",
     timeout: "DISCOVERY_TIMEOUT",
@@ -91,8 +135,8 @@ describe("HTTP fault middleware", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each([
-    ["AUTH_500", "POST", "/authorize"],
-    ["AUTH_500", "HEAD", "/authorize"],
+    ["AUTH_500", "GET", mockCommonAuthorizePath],
+    ["AUTH_500", "POST", mockCommonAuthorizePath],
     ["TOKEN_500", "GET", "/token"],
     ["TOKEN_500", "HEAD", "/token"],
     ["TOKEN_429", "GET", "/token"],
@@ -108,11 +152,7 @@ describe("HTTP fault middleware", () => {
     const res = response();
     const next = vi.fn();
 
-    createHttpFaultMiddleware(store, logger())(
-      request(method, url),
-      res.response,
-      next,
-    );
+    faultMiddleware(store, logger())(request(method, url), res.response, next);
 
     expect(next).toHaveBeenCalledOnce();
     expect(store.get().remainingFailures).toBe(1);
@@ -130,7 +170,7 @@ describe("HTTP fault middleware", () => {
       const res = response();
       const next = vi.fn();
 
-      createHttpFaultMiddleware(store, logger())(
+      faultMiddleware(store, logger())(
         request("OPTIONS", url),
         res.response,
         next,
@@ -153,7 +193,7 @@ describe("HTTP fault middleware", () => {
       store.set({ scenario: serverError, mode: "LIMITED", failureCount: 1 });
       const res = response();
 
-      createHttpFaultMiddleware(store, logger())(
+      faultMiddleware(store, logger())(
         request(method, `${url}/?ignored=query`),
         res.response,
         vi.fn(),
@@ -175,7 +215,7 @@ describe("HTTP fault middleware", () => {
       const res = response();
       const next = vi.fn();
 
-      createHttpFaultMiddleware(store, logger())(
+      faultMiddleware(store, logger())(
         request(method, `${url}//?ignored=query`),
         res.response,
         next,
@@ -192,11 +232,11 @@ describe("HTTP fault middleware", () => {
   );
 
   it.each(endpointCases)(
-    "does not consume $serverError for OPTIONS or HEAD with a trailing slash",
-    ({ serverError, url }) => {
+    "does not consume $serverError for OPTIONS or a non-target method with a trailing slash",
+    ({ serverError, otherMethod, url }) => {
       const store = new InMemoryScenarioStore();
       store.set({ scenario: serverError, mode: "LIMITED", failureCount: 1 });
-      const middleware = createHttpFaultMiddleware(store, logger());
+      const middleware = faultMiddleware(store, logger());
       const options = response();
       const optionsNext = vi.fn();
 
@@ -204,11 +244,11 @@ describe("HTTP fault middleware", () => {
       expect(options.response.statusCode).toBe(204);
       expect(optionsNext).not.toHaveBeenCalled();
 
-      const head = response();
-      const headNext = vi.fn();
-      middleware(request("HEAD", `${url}/`), head.response, headNext);
-      expect(headNext).toHaveBeenCalledOnce();
-      expect(head.end).not.toHaveBeenCalled();
+      const other = response();
+      const otherNext = vi.fn();
+      middleware(request(otherMethod, `${url}/`), other.response, otherNext);
+      expect(otherNext).toHaveBeenCalledOnce();
+      expect(other.end).not.toHaveBeenCalled();
       expect(store.get()).toMatchObject({
         scenario: serverError,
         remainingFailures: 1,
@@ -217,13 +257,54 @@ describe("HTTP fault middleware", () => {
     },
   );
 
+  it.each(["GET", "POST"] as const)(
+    "keeps the tenant Authorization endpoint free of HTTP faults for %s",
+    (method) => {
+      const store = new InMemoryScenarioStore();
+      store.set({ scenario: "AUTH_500", mode: "LIMITED", failureCount: 1 });
+      const res = response();
+      const next = vi.fn();
+
+      faultMiddleware(store, logger(), testRoutes, [mockAuthorizePath])(
+        request(method, mockAuthorizePath),
+        res.response,
+        next,
+      );
+
+      expect(next).toHaveBeenCalledOnce();
+      expect(res.end).not.toHaveBeenCalled();
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect(store.get().remainingFailures).toBe(1);
+    },
+  );
+
+  it("answers OPTIONS on a CORS-only path that carries no fault route", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "AUTH_500", mode: "LIMITED", failureCount: 1 });
+    const res = response();
+    const next = vi.fn();
+
+    faultMiddleware(store, logger(), testRoutes, [mockAuthorizePath])(
+      request("OPTIONS", mockAuthorizePath),
+      res.response,
+      next,
+    );
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.response.statusCode).toBe(204);
+    expect(res.headers.get("access-control-allow-methods")).toBe(
+      "GET, HEAD, POST, OPTIONS",
+    );
+    expect(store.get().remainingFailures).toBe(1);
+  });
+
   it("adds CORS and no-store headers to injected errors", () => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: "TOKEN_400", mode: "CONTINUOUS" });
     const res = response();
     const log = logger();
 
-    createHttpFaultMiddleware(store, log)(
+    faultMiddleware(store, log)(
       {
         ...request("POST", "/token"),
         headers: { origin: "https://rp.example.test" },
@@ -255,7 +336,7 @@ describe("HTTP fault middleware", () => {
 
   it.each(endpointCases)(
     "returns $throttle at $endpoint with the common Retry-After/body contract",
-    ({ throttle, endpoint, method, url }) => {
+    ({ throttle, endpoint, method, url, bodyless, contentType }) => {
       const store = new InMemoryScenarioStore();
       store.set({
         scenario: throttle,
@@ -265,7 +346,7 @@ describe("HTTP fault middleware", () => {
       const res = response();
       const log = logger();
 
-      createHttpFaultMiddleware(store, log)(
+      faultMiddleware(store, log)(
         {
           ...request(method, `${url}?ignored=query`),
           headers: { origin: "https://rp.example.test" },
@@ -281,14 +362,16 @@ describe("HTTP fault middleware", () => {
       );
       expect(res.headers.get("cache-control")).toBe("no-store");
       expect(res.headers.get("pragma")).toBe("no-cache");
-      expect(res.headers.get("content-type")).toBe(
-        "application/json; charset=utf-8",
-      );
+      expect(res.headers.get("content-type")).toBe(contentType);
       expect(res.headers.has("location")).toBe(false);
-      expect(JSON.parse(String(res.end.mock.calls[0]?.[0]))).toEqual({
-        error: "temporarily_unavailable",
-        error_description: `Injected ${throttle} fault`,
-      });
+      if (bodyless) {
+        expect(res.end.mock.calls[0]?.[0]).toBeUndefined();
+      } else {
+        expect(JSON.parse(String(res.end.mock.calls[0]?.[0]))).toEqual({
+          error: "temporarily_unavailable",
+          error_description: `Injected ${throttle} fault`,
+        });
+      }
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ scenario: throttle, endpoint }),
         "[MOCK-IDP] fault injected",
@@ -303,7 +386,7 @@ describe("HTTP fault middleware", () => {
       store.set({ scenario: throttle, mode: "CONTINUOUS" });
       const res = response();
 
-      createHttpFaultMiddleware(store, logger())(
+      faultMiddleware(store, logger())(
         request(method, url),
         res.response,
         vi.fn(),
@@ -315,9 +398,9 @@ describe("HTTP fault middleware", () => {
 
   it.each(endpointCases)(
     "adds Retry-After to $serverError only when configured",
-    ({ serverError, method, url }) => {
+    ({ serverError, method, url, bodyless }) => {
       const store = new InMemoryScenarioStore();
-      const middleware = createHttpFaultMiddleware(store, logger());
+      const middleware = faultMiddleware(store, logger());
 
       store.set({ scenario: serverError, mode: "CONTINUOUS" });
       const withoutRetryAfter = response();
@@ -328,12 +411,16 @@ describe("HTTP fault middleware", () => {
         withoutRetryAfter.headers.has("access-control-expose-headers"),
       ).toBe(false);
       expect(withoutRetryAfter.headers.has("location")).toBe(false);
-      expect(
-        JSON.parse(String(withoutRetryAfter.end.mock.calls[0]?.[0])),
-      ).toEqual({
-        error: "server_error",
-        error_description: `Injected ${serverError} fault`,
-      });
+      if (bodyless) {
+        expect(withoutRetryAfter.end.mock.calls[0]?.[0]).toBeUndefined();
+      } else {
+        expect(
+          JSON.parse(String(withoutRetryAfter.end.mock.calls[0]?.[0])),
+        ).toEqual({
+          error: "server_error",
+          error_description: `Injected ${serverError} fault`,
+        });
+      }
 
       store.set({
         scenario: serverError,
@@ -355,7 +442,7 @@ describe("HTTP fault middleware", () => {
     store.set({ scenario: "JWKS_INVALID", mode: "CONTINUOUS" });
     const res = response();
 
-    createHttpFaultMiddleware(store, logger())(
+    faultMiddleware(store, logger())(
       request("GET", "/jwks"),
       res.response,
       vi.fn(),
@@ -376,7 +463,7 @@ describe("HTTP fault middleware", () => {
     ({ throttle, method, url }) => {
       const store = new InMemoryScenarioStore();
       store.set({ scenario: throttle, mode: "LIMITED", failureCount: 1 });
-      const middleware = createHttpFaultMiddleware(store, logger());
+      const middleware = faultMiddleware(store, logger());
       const injected = response();
       const normal = response();
       const normalNext = vi.fn();
@@ -402,10 +489,10 @@ describe("HTTP fault middleware", () => {
     (scenario) => {
       const store = new InMemoryScenarioStore();
       store.set({ scenario, mode: "LIMITED", failureCount: 1 });
-      const req = request("GET", "/authorize");
+      const req = request("GET", mockAuthorizePath);
       const next = vi.fn();
 
-      createHttpFaultMiddleware(store, logger())(
+      faultMiddleware(store, logger(), testRoutes, [mockAuthorizePath])(
         req,
         response().response,
         next,
@@ -423,15 +510,15 @@ describe("HTTP fault middleware", () => {
     },
   );
 
-  it("isolates AUTH_500 and preserves LIMITED 2 until two GET /authorize requests", () => {
+  it("isolates AUTH_500 and preserves LIMITED 2 until two HEAD probe requests", () => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: "AUTH_500", mode: "LIMITED", failureCount: 2 });
-    const middleware = createHttpFaultMiddleware(store, logger());
+    const middleware = faultMiddleware(store, logger());
     for (const [method, url] of [
       ["POST", "/token"],
       ["GET", "/jwks"],
       ["GET", "/.well-known/openid-configuration"],
-      ["POST", "/authorize"],
+      ["GET", mockCommonAuthorizePath],
     ] as const) {
       const next = vi.fn();
       middleware(request(method, url), response().response, next);
@@ -441,7 +528,11 @@ describe("HTTP fault middleware", () => {
 
     for (const remaining of [1, 0]) {
       const injected = response();
-      middleware(request("GET", "/authorize"), injected.response, vi.fn());
+      middleware(
+        request("HEAD", mockCommonAuthorizePath),
+        injected.response,
+        vi.fn(),
+      );
       expect(injected.response.statusCode).toBe(500);
       expect(
         remaining === 0
@@ -451,7 +542,11 @@ describe("HTTP fault middleware", () => {
     }
     const recovered = response();
     const recoveredNext = vi.fn();
-    middleware(request("GET", "/authorize"), recovered.response, recoveredNext);
+    middleware(
+      request("HEAD", mockCommonAuthorizePath),
+      recovered.response,
+      recoveredNext,
+    );
     expect(recoveredNext).toHaveBeenCalledOnce();
     expect(recovered.end).not.toHaveBeenCalled();
     expect(store.get()).toMatchObject({
@@ -470,12 +565,12 @@ describe("HTTP fault middleware", () => {
         failureCount: 1,
       });
       const routes = Object.fromEntries(
-        Object.entries(httpFaultEndpoints).map(([key, route]) => [
+        Object.entries(testRoutes).map(([key, route]) => [
           key,
           { ...route, pathname: `/tenant/v2.0${route.pathname}` },
         ]),
       ) as HttpFaultRouteTable;
-      const middleware = createHttpFaultMiddleware(store, logger(), routes);
+      const middleware = faultMiddleware(store, logger(), routes);
       const outside = response();
       const outsideNext = vi.fn();
 
@@ -509,7 +604,7 @@ describe("HTTP fault middleware", () => {
       const res = response();
       const next = vi.fn();
 
-      createHttpFaultMiddleware(store, logger())(req, res.response, next);
+      faultMiddleware(store, logger())(req, res.response, next);
 
       expect(next).not.toHaveBeenCalled();
       expect(res.end).not.toHaveBeenCalled();
@@ -553,11 +648,11 @@ describe("HTTP fault middleware", () => {
               parameters: { delayMs: 100 },
             },
       );
-      const req = request("GET", "/authorize");
+      const req = request("HEAD", mockCommonAuthorizePath);
       const res = response();
       const next = vi.fn();
 
-      createHttpFaultMiddleware(store, logger())(req, res.response, next);
+      faultMiddleware(store, logger())(req, res.response, next);
       expect(vi.getTimerCount()).toBe(1);
       expect(req.listenerCount("aborted")).toBe(1);
       expect(res.response.listenerCount("close")).toBe(1);
@@ -594,12 +689,12 @@ describe("HTTP fault middleware", () => {
       failureCount: 1,
       parameters: { delayMs: 100 },
     });
-    const req = request("GET", "/authorize");
+    const req = request("HEAD", mockCommonAuthorizePath);
     Object.defineProperty(req, "destroyed", { value: true });
     const res = response();
     const next = vi.fn();
 
-    createHttpFaultMiddleware(store, logger())(req, res.response, next);
+    faultMiddleware(store, logger())(req, res.response, next);
 
     expect(vi.getTimerCount()).toBe(0);
     expect(req.listenerCount("aborted")).toBe(0);
@@ -616,7 +711,7 @@ describe("HTTP fault middleware", () => {
     const store = new InMemoryScenarioStore();
     const next = vi.fn();
 
-    createHttpFaultMiddleware(store, logger())(
+    faultMiddleware(store, logger())(
       request("GET", "http://["),
       response().response,
       next,

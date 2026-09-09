@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import {
   mockAuthorizePath,
+  mockCommonAuthorizePath,
   mockIssuerPath,
   mockJwksPath,
   mockOrigin,
@@ -261,8 +262,25 @@ describe("issuer routing and origin enforcement", () => {
         }).toString(),
       headers: { host },
     });
-    expect(authorizationFailed.statusCode).toBe(500);
-    expect(authorizationFailed.headers.location).toBeUndefined();
+    // The HTTP faults moved to the connectivity probe, so a real Authorization
+    // request proceeds normally and leaves the LIMITED count untouched.
+    expect(authorizationFailed.statusCode).toBe(303);
+    expect(authorizationFailed.headers.location).toBeDefined();
+    expect(context.store.get()).toMatchObject({
+      scenario: "AUTH_500",
+      remainingFailures: 1,
+      triggeredCount: 0,
+    });
+
+    // The probe stays at the server root even though the issuer is nested.
+    const probeFailed = await context.app.inject({
+      method: "HEAD",
+      url: mockCommonAuthorizePath,
+      headers: { host },
+    });
+    expect(probeFailed.statusCode).toBe(500);
+    expect(probeFailed.body).toBe("");
+    expect(context.store.get().scenario).toBe("NORMAL");
 
     context.store.set({
       scenario: "JWKS_INVALID",

@@ -93,7 +93,13 @@ export class InMemoryScenarioStore {
     return this.#requestTickets.get(request);
   }
 
-  /** Consumes a fault without binding to a specific in-flight request. */
+  /**
+   * Consumes a fault without binding to a specific in-flight request.
+   *
+   * Test-only. Every production caller goes through consumeForRequest so that
+   * a single request cannot consume the same activation twice; this bypasses
+   * that guard and exists only to keep the store's own unit tests readable.
+   */
   consume(endpoint: FaultEndpoint): FaultDecision | null {
     return this.#consume(endpoint, false, undefined);
   }

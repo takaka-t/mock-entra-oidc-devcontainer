@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   loadConfig,
   mockAuthorizePath,
+  mockCommonAuthorizePath,
   mockIssuer,
   mockIssuerPath,
   mockJwksPath,
@@ -23,6 +24,7 @@ describe("fixed OIDC configuration", () => {
       tokenPath: mockTokenPath,
       jwksPath: mockJwksPath,
       logoutPath: mockLogoutPath,
+      commonAuthorizePath: mockCommonAuthorizePath,
       port: mockPort,
       host: "0.0.0.0",
       logger: true,
@@ -37,5 +39,6 @@ describe("fixed OIDC configuration", () => {
     expect(mockIssuer).toBe(
       "https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0",
     );
+    expect(mockCommonAuthorizePath).toBe("/common/oauth2/v2.0/authorize");
   });
 });

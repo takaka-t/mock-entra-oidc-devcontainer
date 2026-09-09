@@ -17,6 +17,7 @@ const host = "mock-idp.test:9000";
 const authorizePath = "/oauth2/v2.0/authorize";
 const tokenPath = "/oauth2/v2.0/token";
 const jwksPath = "/discovery/v2.0/keys";
+const logoutPath = "/oauth2/v2.0/logout";
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
     current
@@ -167,6 +168,7 @@ describe("OIDC provider", () => {
       authorization_endpoint: `http://${host}${authorizePath}`,
       token_endpoint: `http://${host}${tokenPath}`,
       jwks_uri: `http://${host}${jwksPath}`,
+      end_session_endpoint: `http://${host}${logoutPath}`,
       code_challenge_methods_supported: ["S256"],
     });
     const flow = await authorize();

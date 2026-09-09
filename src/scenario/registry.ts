@@ -166,7 +166,6 @@ export const defaultTokenError = "invalid_grant";
 export const defaultRetryAfterSeconds = 60;
 
 export interface ScenarioUiMetadata {
-  label: ScenarioName;
   supportsMode: boolean;
   parameterKind: ScenarioParameterKind;
 }
@@ -176,7 +175,6 @@ export const scenarioUiMetadata = Object.fromEntries(
     ([name, definition]) => [
       name,
       {
-        label: name,
         supportsMode: name !== "NORMAL",
         parameterKind: definition.parameterKind,
       },
@@ -197,36 +195,30 @@ export type HttpFaultEndpoint = Extract<
 >;
 
 export interface HttpFaultRoute {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "HEAD";
   pathname: string;
 }
 
 export type HttpFaultRouteTable = Record<HttpFaultEndpoint, HttpFaultRoute>;
 
-export const httpFaultEndpoints = {
-  "authorization-http": { method: "GET", pathname: "/authorize" },
-  token: { method: "POST", pathname: "/token" },
-  jwks: { method: "GET", pathname: "/jwks" },
-  discovery: {
-    method: "GET",
-    pathname: "/.well-known/openid-configuration",
-  },
-} as const satisfies HttpFaultRouteTable;
-
 /**
- * authorize/token/jwks are Entra-compliant sibling paths of issuerPath (see
- * src/app.ts), so their fault-injection routes must be resolved from the
- * server's actual absolute paths rather than derived from a single shared
- * prefix.
+ * token/jwks are Entra-compliant sibling paths of issuerPath (see src/app.ts),
+ * so their fault-injection routes must be resolved from the server's actual
+ * absolute paths rather than derived from a single shared prefix. The `common`
+ * connectivity probe is tenant-independent, so it keeps the same root-level
+ * pathname in every configuration.
  */
 export function resolveHttpFaultEndpoints(
   config: Pick<
     AppConfig,
-    "issuerPath" | "authorizePath" | "tokenPath" | "jwksPath"
+    "issuerPath" | "tokenPath" | "jwksPath" | "commonAuthorizePath"
   >,
 ): HttpFaultRouteTable {
   return {
-    "authorization-http": { method: "GET", pathname: config.authorizePath },
+    "authorization-http": {
+      method: "HEAD",
+      pathname: config.commonAuthorizePath,
+    },
     token: { method: "POST", pathname: config.tokenPath },
     jwks: { method: "GET", pathname: config.jwksPath },
     discovery: {
@@ -234,4 +226,29 @@ export function resolveHttpFaultEndpoints(
       pathname: `${config.issuerPath}/.well-known/openid-configuration`,
     },
   };
+}
+
+/**
+ * The CORS surface is deliberately wider than the fault route table: the
+ * tenant Authorization endpoint no longer carries an HTTP fault, but preflight
+ * and CORS headers there must keep behaving as they did before the faults
+ * moved to the `common` connectivity probe.
+ */
+export function resolveCorsPathnames(
+  config: Pick<
+    AppConfig,
+    | "issuerPath"
+    | "authorizePath"
+    | "tokenPath"
+    | "jwksPath"
+    | "commonAuthorizePath"
+  >,
+): readonly string[] {
+  return [
+    config.authorizePath,
+    config.tokenPath,
+    config.jwksPath,
+    `${config.issuerPath}/.well-known/openid-configuration`,
+    config.commonAuthorizePath,
+  ];
 }

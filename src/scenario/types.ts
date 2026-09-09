@@ -32,6 +32,11 @@ export const scenarioNames = [
 export type ScenarioName = (typeof scenarioNames)[number];
 export type FaultScenarioName = Exclude<ScenarioName, "NORMAL">;
 export type ScenarioMode = "CONTINUOUS" | "LIMITED";
+/**
+ * `authorization` is the OAuth redirect fault on a real Authorization request.
+ * `authorization-http` is the `common` connectivity probe (`HEAD`), which is a
+ * separate failure from a sign-in and never affects one.
+ */
 export type FaultEndpoint =
   | "authorization"
   | "authorization-http"

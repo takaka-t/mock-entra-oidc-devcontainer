@@ -16,8 +16,12 @@ import {
   removeProviderClient,
   validateProviderClient,
 } from "./oidc/provider.js";
+import { registerCommonProbeRoute } from "./oidc/common-probe.js";
 import { oidcInternalRoutes } from "./oidc/routes.js";
-import { resolveHttpFaultEndpoints } from "./scenario/registry.js";
+import {
+  resolveCorsPathnames,
+  resolveHttpFaultEndpoints,
+} from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 
 export interface AppContext {
@@ -79,8 +83,9 @@ interface OidcMount {
  * external-to-internal mapping. authorize and logout additionally accept
  * sub-paths because oidc-provider registers internal resume/confirmation
  * routes below them (`/authorize/:uid` for the interaction-complete and
- * authorization fault flows; `/session/end/confirm` and `/session/end/success`
- * for RP-initiated logout).
+ * authorization fault flows; `/logout/confirm` and `/logout/success` for
+ * RP-initiated logout). oidcInternalRoutes explains why each internal route
+ * name has to be the last segment of its external path.
  */
 function oidcMounts(config: AppConfig): readonly OidcMount[] {
   return [
@@ -105,7 +110,37 @@ function matchOidcMount(pathname: string, config: AppConfig): OidcMount | null {
   return null;
 }
 
+/**
+ * The RP-initiated logout pages are state-changing HTML forms rendered in a
+ * browser (the confirmation prompt and the post-logout landing page), so they
+ * need the same clickjacking and caching protections as the sign-in
+ * interaction pages rather than the plain redirect handling the other OIDC
+ * mounts get.
+ */
+function logoutPagePath(pathname: string, config: AppConfig): boolean {
+  return (
+    matchOidcMount(pathname, config)?.internal ===
+    oidcInternalRoutes.end_session
+  );
+}
+
+/**
+ * The `common` connectivity probe is deliberately kept out of oidcPath():
+ * routing it into oidc-provider would turn a reachability check into a tenant
+ * Authorization request. It still gets the same Host/origin enforcement as
+ * every other Entra-shaped endpoint, so it needs a predicate of its own.
+ */
+function commonProbePath(pathname: string, config: AppConfig): boolean {
+  return (
+    pathname === config.commonAuthorizePath ||
+    pathname === `${config.commonAuthorizePath}/`
+  );
+}
+
 function oidcPath(pathname: string, config: AppConfig): boolean {
+  // An empty issuerPath makes every root-level path issuer-scoped, so the probe
+  // has to be excluded explicitly or it would be dispatched to oidc-provider.
+  if (commonProbePath(pathname, config)) return false;
   return (
     matchOidcMount(pathname, config) !== null ||
     issuerScopedPath(pathname, config.issuerPath)
@@ -283,8 +318,10 @@ export async function buildApp(
       config.issuerPath,
       routedIssuerPath,
     );
-    if (isAdmin || isInteraction) setSensitiveResponseHeaders(response);
-    if (!isAdmin && !isOidc && !isInteraction) return next();
+    const isCommonProbe = commonProbePath(pathname, config);
+    if (isAdmin || isInteraction || logoutPagePath(pathname, config))
+      setSensitiveResponseHeaders(response);
+    if (!isAdmin && !isOidc && !isInteraction && !isCommonProbe) return next();
     if (requestOrigin(request, config.trustProxy) !== config.issuerOrigin) {
       sendOriginError(response);
       return;
@@ -296,6 +333,7 @@ export async function buildApp(
       store,
       app.log,
       resolveHttpFaultEndpoints(config),
+      resolveCorsPathnames(config),
     ),
   );
   app.use((req, res, next) => {
@@ -340,6 +378,7 @@ export async function buildApp(
       next(asError(error));
     }
   });
+  registerCommonProbeRoute(app, config);
   await registerRoutes(app, provider, store, clientStore, config);
   return { app, store, clientStore };
 }

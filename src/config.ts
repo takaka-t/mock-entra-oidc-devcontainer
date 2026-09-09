@@ -9,6 +9,15 @@ export const mockTokenPath = `${mockTenantBasePath}/oauth2/v2.0/token`;
 export const mockJwksPath = `${mockTenantBasePath}/discovery/v2.0/keys`;
 export const mockLogoutPath = `${mockTenantBasePath}/oauth2/v2.0/logout`;
 
+/**
+ * `common` is Entra's multi-tenant alias. Clients probe reachability with a
+ * bodyless `HEAD` against its Authorization endpoint before starting a real
+ * sign-in, so this Mock serves that path for `HEAD` only and keeps it out of
+ * the tenant-scoped OIDC surface.
+ */
+export const mockCommonTenantId = "common";
+export const mockCommonAuthorizePath = `/${mockCommonTenantId}/oauth2/v2.0/authorize`;
+
 export interface AppConfig {
   tenantId: string;
   issuer: string;
@@ -18,6 +27,7 @@ export interface AppConfig {
   tokenPath: string;
   jwksPath: string;
   logoutPath: string;
+  commonAuthorizePath: string;
   port: number;
   host: string;
   logger: boolean;
@@ -39,6 +49,7 @@ export function loadConfig(): AppConfig {
     tokenPath: mockTokenPath,
     jwksPath: mockJwksPath,
     logoutPath: mockLogoutPath,
+    commonAuthorizePath: mockCommonAuthorizePath,
     port: mockPort,
     host: "0.0.0.0",
     logger: true,
