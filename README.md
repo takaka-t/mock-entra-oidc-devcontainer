@@ -415,6 +415,8 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 
 `CONTINUOUS`は解除またはResetまで対象要求すべてへFaultを適用します。`LIMITED`は1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の対象要求にもFaultを返し、その後の現在状態はNORMALになります。Timeoutも遅延開始時にcountを消費し、クライアントが切断しても戻しません。
 
+シナリオstoreはプロセス全体で共有される単一のグローバル状態であり、`client_id`やredirect_uri、セッション単位のスコープを持ちません。そのためシナリオをarmedにしてから対象の要求が到達するまでの間に、無関係な別の`GET`要求（並行実行中の別テスト・別アプリ、同一アプリのsilent SSO用iframeなど）が認可endpointへ先に到達すると、そちらがFaultを消費し、意図した対象には何も起こらない一方で無関係な相手にerrorが返ることがあります。mockインスタンスは同時に1つの認可フローのみが進行する直列実行を前提としてください。並列にテストを実行する場合は、mock IdPインスタンスをテストワーカーごとに分離してください。
+
 | シナリオ | 対象 | 動作 |
 | --- | --- | --- |
 | `NORMAL` | なし | Faultを適用しない |
