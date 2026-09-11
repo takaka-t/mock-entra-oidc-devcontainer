@@ -16,18 +16,23 @@ import {
   removeProviderClient,
   validateProviderClient,
 } from "./oidc/provider.js";
-import { registerCommonProbeRoute } from "./oidc/common-probe.js";
+import {
+  matchesCommonProbePath,
+  registerCommonProbeRoute,
+} from "./oidc/common-probe.js";
 import { oidcInternalRoutes } from "./oidc/routes.js";
 import {
   resolveCorsPathnames,
   resolveHttpFaultEndpoints,
 } from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
+import { MockUserStore } from "./users/store.js";
 
 export interface AppContext {
   app: FastifyInstance;
   store: InMemoryScenarioStore;
   clientStore: OidcClientStore;
+  userStore: MockUserStore;
 }
 
 export interface BuildAppOptions {
@@ -131,10 +136,7 @@ function logoutPagePath(pathname: string, config: AppConfig): boolean {
  * every other Entra-shaped endpoint, so it needs a predicate of its own.
  */
 function commonProbePath(pathname: string, config: AppConfig): boolean {
-  return (
-    pathname === config.commonAuthorizePath ||
-    pathname === `${config.commonAuthorizePath}/`
-  );
+  return matchesCommonProbePath(pathname, config.commonAuthorizePath);
 }
 
 function oidcPath(pathname: string, config: AppConfig): boolean {
@@ -294,7 +296,16 @@ export async function buildApp(
     onReset: () => rolloverState.reset(),
   });
   const keys = await loadSigningKeys(config.keyDirectory);
-  const provider = createProvider(config, store, keys, rolloverState, app.log);
+  const userStore = new MockUserStore(config.userConfigFile);
+  await userStore.initialize();
+  const provider = createProvider(
+    config,
+    store,
+    userStore,
+    keys,
+    rolloverState,
+    app.log,
+  );
   const clientStore = new OidcClientStore(
     config.clientConfigFile,
     (client) => applyProviderClient(provider, client),
@@ -379,6 +390,6 @@ export async function buildApp(
     }
   });
   registerCommonProbeRoute(app, config);
-  await registerRoutes(app, provider, store, clientStore, config);
-  return { app, store, clientStore };
+  await registerRoutes(app, provider, store, clientStore, userStore, config);
+  return { app, store, clientStore, userStore };
 }

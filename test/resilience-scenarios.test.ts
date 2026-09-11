@@ -48,6 +48,7 @@ describe("official Entra resilience scenarios", () => {
         issuer,
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
+        userConfigFile: join(stateDirectory, "users.json"),
       }),
       { https: false },
     );
@@ -739,6 +740,7 @@ describe("official Entra resilience scenarios", () => {
       issuer,
       keyDirectory: join(restartDirectory, "keys"),
       clientConfigFile: join(restartDirectory, "clients.json"),
+      userConfigFile: join(restartDirectory, "users.json"),
     });
     let original: AppContext | undefined;
     let restarted: AppContext | undefined;

@@ -11,6 +11,7 @@ import {
 } from "jose";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
+import { mockTenantId } from "../src/config.js";
 import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
@@ -47,6 +48,7 @@ describe("OIDC provider", () => {
         issuer: `http://${host}`,
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
+        userConfigFile: join(stateDirectory, "users.json"),
       }),
       { https: false },
     );
@@ -64,6 +66,7 @@ describe("OIDC provider", () => {
     challenge = "",
     clientId = "mock-public-client",
     scope = "openid profile",
+    accountId = "user-admin",
   ): Promise<{ code: string; verifier: string }> {
     challenge ||= createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
@@ -94,7 +97,7 @@ describe("OIDC provider", () => {
       headers: { host, cookie: jar },
     });
     jar = cookies(jar, response.headers);
-    expect(response.body).toContain("Select a test user");
+    expect(response.body).toContain("テストユーザーを選択してください。");
     response = await context.app.inject({
       method: "POST",
       url: interactionUrl,
@@ -103,7 +106,7 @@ describe("OIDC provider", () => {
         cookie: jar,
         "content-type": "application/x-www-form-urlencoded",
       },
-      payload: "accountId=user-admin",
+      payload: `accountId=${encodeURIComponent(accountId)}`,
     });
     jar = cookies(jar, response.headers);
     for (
@@ -216,6 +219,88 @@ describe("OIDC provider", () => {
     expect(access.payload.sid).toBe(id.payload.sid);
     expect(access.payload.nbf).toBe(access.payload.iat);
   });
+
+  it.each(["delete", "reset"] as const)(
+    "issues managed user claims and rejects code/refresh exchange after %s",
+    async (operation) => {
+      const user = {
+        sub: "api-created-user",
+        oid: "ABCDEF01-2345-6789-ABCD-EF0123456789",
+        name: "API Created",
+        preferred_username: "api.created@example.com",
+        mail: "api-created@example.com",
+        groups: ["dynamic-group"],
+      };
+      const created = await context.app.inject({
+        method: "POST",
+        url: "/__mock/api/users",
+        headers: { host },
+        payload: user,
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      const flow = await authorize(
+        undefined,
+        "",
+        "mock-public-client",
+        "openid profile email offline_access",
+        user.sub,
+      );
+      const response = await exchange(flow.code, flow.verifier);
+      expect(response.statusCode, response.body).toBe(200);
+      const tokens = response.json<{
+        id_token: string;
+        access_token: string;
+        refresh_token: string;
+      }>();
+      expect(tokens.refresh_token).toBeTruthy();
+      for (const token of [tokens.id_token, tokens.access_token]) {
+        const payload = decodeJwt(token);
+        expect(payload).toMatchObject({
+          sub: user.sub,
+          oid: user.oid.toLowerCase(),
+          tid: mockTenantId,
+          name: user.name,
+          preferred_username: user.preferred_username,
+          email: user.mail,
+          groups: ["dynamic-group"],
+        });
+        expect(payload.mail).toBeUndefined();
+      }
+
+      const pending = await authorize(
+        undefined,
+        "",
+        "mock-public-client",
+        "openid profile",
+        user.sub,
+      );
+      const deleted = await context.app.inject({
+        method: operation === "delete" ? "DELETE" : "POST",
+        url:
+          operation === "delete"
+            ? `/__mock/api/users/${user.sub}`
+            : "/__mock/api/users/reset",
+        headers: { host },
+        ...(operation === "reset" ? { payload: {} } : {}),
+      });
+      expect(deleted.statusCode).toBe(operation === "delete" ? 204 : 200);
+      const afterDeletion = await exchange(pending.code, pending.verifier);
+      expect(afterDeletion.statusCode).toBe(400);
+      expect(afterDeletion.json()).toMatchObject({ error: "invalid_grant" });
+      const refresh = await context.app.inject({
+        method: "POST",
+        url: tokenPath,
+        headers: { host, "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams({
+          grant_type: "refresh_token",
+          client_id: "mock-public-client",
+          refresh_token: tokens.refresh_token,
+        }).toString(),
+      });
+      expect(refresh.statusCode, refresh.body).toBe(400);
+      expect(refresh.json()).toMatchObject({ error: "invalid_grant" });
+    },
+  );
 
   it("supports the confidential client with client_secret_basic and PKCE", async () => {
     const flow = await authorize(undefined, "", "mock-confidential-client");

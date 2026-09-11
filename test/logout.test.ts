@@ -44,6 +44,7 @@ describe("RP-initiated logout", () => {
         issuer: `${origin}${mockIssuerPath}`,
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
+        userConfigFile: join(stateDirectory, "users.json"),
       }),
       { https: false },
     );

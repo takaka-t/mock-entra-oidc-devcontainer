@@ -19,6 +19,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 - [OIDC設定](#oidc設定)
   - [OIDCクライアント管理](#oidcクライアント管理)
 - [テストユーザー](#テストユーザー)
+  - [テストユーザー管理](#テストユーザー管理)
 - [シナリオ API](#シナリオ-api)
   - [OAuth redirect errorとConnectivity ProbeのHTTP fault](#oauth-redirect-errorとconnectivity-probeのhttp-fault)
   - [Parametersと回復試験](#parametersと回復試験)
@@ -129,6 +130,7 @@ hostsファイルはアプリケーションから自動変更しません。
 **取り扱い上の注意**
 
 - `.data/tls-private`は0700、秘密鍵は0600で作成され、これらは常に検証されます。`.data/`はGit対象外です。
+- `--output-dir`と`--private-dir`には、同一でも親子関係でもない独立したディレクトリを指定してください。パスを正規化して重複・包含を検出した場合、セットアップはファイル生成前にエラーで終了します。
 - `ca.key.pem`と`server.key.pem`を共有ストレージ、接続元コンテナ、ホストOSのtrust storeへコピーしないでください。接続元に渡すのは`ca.crt`だけです。
 - permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
 
@@ -310,7 +312,9 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 | Redirect URI                   | `http://localhost:3000/callback`                                       |
 | Access token audience/resource | `urn:mock-api`                                                         |
 
-これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC Clients」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
+これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC クライアント一覧」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
+
+登録・編集はダイアログで行います。保存中は入力・終了操作が無効になり、成功するとダイアログが閉じ、一覧上部に対象と操作結果が表示されます。通知は閉じるか、同じ一覧で次の変更操作を始めるまで残ります。保存に失敗した場合は入力を保持し、ダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は保存完了を明示し、「一覧を再読み込み」で一覧取得だけを再試行できます。キャンセル・閉じる・Escで終了でき、未保存の変更がある場合だけ破棄を確認します。背景クリックでは閉じません。
 
 全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
@@ -364,17 +368,20 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/r
 
 **補足**
 
-- Client IDは作成後に変更できません。変更する場合は削除して再作成してください。
+- Client IDは前後の空白を除いて1〜100文字の印字可能ASCIIとし、`.`・`..`は指定できません。作成後に変更する場合は削除して再作成してください。
+- `.data/clients.json`にも同じ入力検証を適用します。不適合なIDが保存されている場合は自動変換せず起動に失敗するため、設定ファイルを修正してください。
 - `POST /__mock/api/clients/reset`はクライアントだけを初期状態へ戻し、シナリオのリセットには影響しません。
 - Client設定は`.data/clients.json`へ永続化しますが、認可コード、Session、Grant、Access Token、Refresh TokenのProvider内部状態はProviderインスタンス単位のメモリだけに保持します。Clientを削除またはresetしても発行済みartifactは完全には失効せず、Providerを含むappの再構築またはプロセス再起動で破棄されます。
 
 ## テストユーザー
 
-| 表示名            | username                   | groups                                    |
-| ----------------- | -------------------------- | ----------------------------------------- |
-| Admin User        | `admin@example.com`        | `app-admin-group-id`, `app-user-group-id` |
-| Normal User       | `user@example.com`         | `app-user-group-id`                       |
-| Unauthorized User | `unauthorized@example.com` | なし                                      |
+| sub                 | 表示名            | username                   | oid                                    | groups                                    |
+| ------------------- | ----------------- | -------------------------- | -------------------------------------- | ----------------------------------------- |
+| `user-admin`        | Admin User        | `admin@example.com`        | `11111111-1111-1111-1111-111111111111` | `app-admin-group-id`, `app-user-group-id` |
+| `user-normal`       | Normal User       | `user@example.com`         | `22222222-2222-2222-2222-222222222222` | `app-user-group-id`                       |
+| `user-unauthorized` | Unauthorized User | `unauthorized@example.com` | `33333333-3333-3333-3333-333333333333` | なし                                      |
+
+これらは初回起動時に作成される初期ユーザーです。Admin UIの「テストユーザー一覧」からユーザーを追加・編集・削除でき、変更は再起動なしでサインイン画面とトークンに反映されます。設定は`.data/users.json`へ0600で保存されます。`tid`は常にこのMockのTenant IDです。登録・編集ダイアログ、保存結果の通知、未保存の変更の破棄確認はOIDCクライアントと同じ動作です。
 
 含まれるclaimは次のとおりです。
 
@@ -382,6 +389,65 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/r
 - Access Tokenのみ: `azp`（client_id）、`azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）、`scp`（クライアント設定の委任scope名）
 - `email`: `email` scope要求時、またはクライアント設定でemail optional claimを有効にした場合だけ含まれます。
 - `mail`は含みません。Microsoft Graphのユーザープロパティ名であり、Entra IDのトークンclaimには存在しないためです。
+
+### テストユーザー管理
+
+**設定できる項目**
+
+- `sub`: ユーザーの識別子です。Admin UIでは新規作成時にランダムなUUIDが初期値として入力されており、保存前は編集できます。空欄で保存した場合やAdmin APIで省略した場合は、サーバー側でランダムなUUIDを一度だけ生成して保存します。明示する場合は、前後の空白を除いて1〜100文字の印字可能ASCIIとし、`.`・`..`は指定できません。サインイン画面の選択値とトークンの`sub`になり、作成後は変更できません。
+- `oid`: GUID形式です。小文字に正規化して保存します。Admin UIでは新規作成時にランダムなUUIDが初期値として入力されており、編集できます。
+- `name`: 表示名です。日本語などのUnicodeも使えます。
+- `preferred_username`: UPN相当の値です。
+- `mail`: メール形式です。`email` claimとして返されます（`email` scope要求時またはemail optional claim有効時）。
+- `groups`: 1行に1件（Admin API では文字列配列）。重複は除去され、空も指定できます。
+- `name`・`preferred_username`・各グループ名は前後の空白を除去し、内部の改行（CR/LF）を拒否します。日本語などのUnicodeや内部の空白は保持します。
+- `tid`は設定項目ではなく、常にTenant IDが付与されます。`users.json`に`tid`を含めると起動時に検証エラーになります。
+- `oid`と`preferred_username`はユーザー間で重複できません（`preferred_username`は大文字小文字を区別しません）。
+- Admin APIでは作成時（`POST /__mock/api/users`）は`sub`以外の全項目、更新時（`PUT /__mock/api/users/:sub`）は全項目が必須です（省略すると400になります）。
+
+**操作例（Admin API）**
+
+```bash
+CURL_CA=.data/tls/ca.crt
+
+curl --cacert "$CURL_CA" https://mock-idp.test:9000/__mock/api/users
+
+curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users \
+  -H 'content-type: application/json' \
+  -d '{
+    "sub":"user-auditor",
+    "oid":"44444444-4444-4444-4444-444444444444",
+    "name":"Auditor User",
+    "preferred_username":"auditor@example.com",
+    "mail":"auditor@example.com",
+    "groups":["app-auditor-group-id"]
+  }'
+
+curl --cacert "$CURL_CA" -X PUT https://mock-idp.test:9000/__mock/api/users/user-auditor \
+  -H 'content-type: application/json' \
+  -d '{
+    "oid":"44444444-4444-4444-4444-444444444444",
+    "name":"Auditor User",
+    "preferred_username":"auditor@example.com",
+    "mail":"auditor@example.com",
+    "groups":["app-auditor-group-id","app-user-group-id"]
+  }'
+
+curl --cacert "$CURL_CA" -X DELETE https://mock-idp.test:9000/__mock/api/users/user-auditor
+
+curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users/reset \
+  -H 'content-type: application/json' \
+  -d '{}'
+```
+
+**補足**
+
+- `sub`は作成後に変更できません。変更する場合は削除して再作成してください。
+- `POST /__mock/api/users/reset`はテストユーザーだけを初期状態へ戻し、シナリオやOIDC Clientのリセットには影響しません。
+- `.data/users.json`にも同じ入力検証を適用します。不適合なIDや改行入りの項目が保存されている場合は自動変換せず起動に失敗するため、設定ファイルを修正してください。
+- ユーザー設定は`.data/users.json`へ永続化しますが、Session、Grant、発行済みトークンのProvider内部状態はメモリだけに保持します。削除・resetで消えたユーザーのブラウザセッションでは、次の通常の認可要求でユーザー選択をやり直し、`prompt=none`では`login_required`を返します。そのユーザーの発行済み認可コード・Refresh Tokenの交換は`invalid_grant`になります。
+- 削除・resetは発行済みJWTを失効させません。また、同じ`sub`を再作成すると残存するセッションやGrantが再び利用される場合があります。Provider内部状態を完全に破棄するにはプロセスを再起動してください。
+- エラーは`invalid_user`（400）、`user_conflict`（409）、`user_not_found`（404）で返します。
 
 **既知の制限**: ID TokenのJWTヘッダーには実際のEntra IDが付与する`typ:"JWT"`を設定していません（`oidc-provider`にID Token用のヘッダーカスタマイズ機構がなく、OIDC/JWT仕様上も`typ`はOPTIONALでMSAL等の検証対象にもならないため見送っています）。Access Tokenのヘッダーは`typ:"at+jwt"`です。
 
@@ -417,36 +483,36 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 
 シナリオstoreはプロセス全体で共有される単一のグローバル状態であり、`client_id`やredirect_uri、セッション単位のスコープを持ちません。そのためシナリオをarmedにしてから対象の要求が到達するまでの間に、無関係な別の`GET`要求（並行実行中の別テスト・別アプリ、同一アプリのsilent SSO用iframeなど）が認可endpointへ先に到達すると、そちらがFaultを消費し、意図した対象には何も起こらない一方で無関係な相手にerrorが返ることがあります。mockインスタンスは同時に1つの認可フローのみが進行する直列実行を前提としてください。並列にテストを実行する場合は、mock IdPインスタンスをテストワーカーごとに分離してください。
 
-| シナリオ | 対象 | 動作 |
-| --- | --- | --- |
-| `NORMAL` | なし | Faultを適用しない |
-| `ACCESS_DENIED` | Authorization OAuth | `access_denied`を検証済みredirect URIへ返す |
-| `AUTH_LOGIN_REQUIRED` | Authorization OAuth | `login_required`を検証済みredirect URIへ返す |
-| `AUTH_INTERACTION_REQUIRED` | Authorization OAuth | `interaction_required`を検証済みredirect URIへ返す |
-| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth | `temporarily_unavailable`をredirect URIへ返す |
-| `AUTH_SERVER_ERROR` | Authorization OAuth | `server_error`をredirect URIへ返す |
-| `AUTH_429` | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す |
-| `AUTH_500` | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す |
-| `AUTH_TIMEOUT` | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す |
-| `NO_GROUPS` | ID/access token claim生成 | `groups` claimを（空配列ではなく）完全に削除する。ID Token・Access Tokenの両方が対象 |
-| `WRONG_AUDIENCE` | ID/access token | 正常鍵で署名し、`aud`を実際の`client_id`とは無関係な固定のダミー値に変更する |
-| `WRONG_ISSUER` | ID/access token | 正常鍵で署名し、`iss`を実際のissuerとは異なる固定のダミー値に変更する |
-| `EXPIRED_TOKEN` | ID/access token | 正常鍵で署名し、`exp`を現在時刻より60秒過去、`iat`/`nbf`をそこからさらに1時間前に設定する（3者の前後関係は維持） |
-| `FUTURE_NBF` | ID/access token | 正常鍵で署名し、`nbf`を現在時刻から5分後（ただし`exp`の1秒前を超えない）に設定する |
-| `INVALID_SIGNATURE` | ID/access token | 非公開Key Bで署名し、公開Key Aの`kid`を設定 |
-| `UNKNOWN_KID` | ID/access token | Key Aで署名し、JWKSにない`kid`を設定 |
-| `SIGNING_KEY_ROLLOVER` | Token/JWKS | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開 |
-| `TOKEN_400` | `POST` Token | 設定可能なOAuth errorをHTTP 400で返す。`error`未指定時は`invalid_grant`を既定値とし、`error_description`は`errorDescription`パラメータを指定した場合だけ含める |
-| `TOKEN_429` | `POST` Token | HTTP 429と`Retry-After`を返す |
-| `TOKEN_500` | `POST` Token | HTTP 500と任意の`Retry-After`を返す |
-| `TOKEN_TIMEOUT` | `POST` Token | 指定時間遅延してから通常処理を続行 |
-| `JWKS_INVALID` | `GET` JWKS | HTTP 200で、`keys`に1件だけ含むがRSA鍵として必須の`n`/`e`を欠いた不完全なkeyオブジェクトを返す（配列自体は空にしない） |
-| `JWKS_429` | `GET` JWKS | HTTP 429と`Retry-After`を返す |
-| `JWKS_500` | `GET` JWKS | HTTP 500と任意の`Retry-After`を返す |
-| `JWKS_TIMEOUT` | `GET` JWKS | 指定時間遅延してから通常処理を続行 |
-| `DISCOVERY_429` | `GET` Discovery | HTTP 429と`Retry-After`を返す |
-| `DISCOVERY_500` | `GET` Discovery | HTTP 500と任意の`Retry-After`を返す |
-| `DISCOVERY_TIMEOUT` | `GET` Discovery | 指定時間遅延してから通常処理を続行 |
+| シナリオ                       | 対象                      | 動作                                                                                                                                                           |
+| ------------------------------ | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NORMAL`                       | なし                      | Faultを適用しない                                                                                                                                              |
+| `ACCESS_DENIED`                | Authorization OAuth       | `access_denied`を検証済みredirect URIへ返す                                                                                                                    |
+| `AUTH_LOGIN_REQUIRED`          | Authorization OAuth       | `login_required`を検証済みredirect URIへ返す                                                                                                                   |
+| `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す                                                                                                             |
+| `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す                                                                                                                  |
+| `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                                                                                                                             |
+| `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す                                                                                                                        |
+| `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す                                                                                                                  |
+| `AUTH_TIMEOUT`                 | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す                                                                                                                             |
+| `NO_GROUPS`                    | ID/access token claim生成 | `groups` claimを（空配列ではなく）完全に削除する。ID Token・Access Tokenの両方が対象                                                                           |
+| `WRONG_AUDIENCE`               | ID/access token           | 正常鍵で署名し、`aud`を実際の`client_id`とは無関係な固定のダミー値に変更する                                                                                   |
+| `WRONG_ISSUER`                 | ID/access token           | 正常鍵で署名し、`iss`を実際のissuerとは異なる固定のダミー値に変更する                                                                                          |
+| `EXPIRED_TOKEN`                | ID/access token           | 正常鍵で署名し、`exp`を現在時刻より60秒過去、`iat`/`nbf`をそこからさらに1時間前に設定する（3者の前後関係は維持）                                               |
+| `FUTURE_NBF`                   | ID/access token           | 正常鍵で署名し、`nbf`を現在時刻から5分後（ただし`exp`の1秒前を超えない）に設定する                                                                             |
+| `INVALID_SIGNATURE`            | ID/access token           | 非公開Key Bで署名し、公開Key Aの`kid`を設定                                                                                                                    |
+| `UNKNOWN_KID`                  | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                                                                                                                           |
+| `SIGNING_KEY_ROLLOVER`         | Token/JWKS                | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開                                                                                                                       |
+| `TOKEN_400`                    | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す。`error`未指定時は`invalid_grant`を既定値とし、`error_description`は`errorDescription`パラメータを指定した場合だけ含める |
+| `TOKEN_429`                    | `POST` Token              | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
+| `TOKEN_TIMEOUT`                | `POST` Token              | 指定時間遅延してから通常処理を続行                                                                                                                             |
+| `JWKS_INVALID`                 | `GET` JWKS                | HTTP 200で、`keys`に1件だけ含むがRSA鍵として必須の`n`/`e`を欠いた不完全なkeyオブジェクトを返す（配列自体は空にしない）                                         |
+| `JWKS_429`                     | `GET` JWKS                | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `JWKS_500`                     | `GET` JWKS                | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
+| `JWKS_TIMEOUT`                 | `GET` JWKS                | 指定時間遅延してから通常処理を続行                                                                                                                             |
+| `DISCOVERY_429`                | `GET` Discovery           | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `DISCOVERY_500`                | `GET` Discovery           | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
+| `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                                                                                                                             |
 
 ### OAuth redirect errorとConnectivity ProbeのHTTP fault
 
@@ -507,7 +573,7 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 
 署名鍵は通常鍵、rollover鍵、異常署名鍵の3種を初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには既定で通常鍵の公開部分だけを掲載し、`SIGNING_KEY_ROLLOVER`の適用後は通常鍵とrollover鍵の2つを掲載します。鍵ディレクトリを削除すると再生成されます。
 
-OIDC artifactとシナリオストアは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴は失われます。
+OIDC ClientとテストユーザーはそれぞれAdmin UI/Admin APIで管理し、`.data/clients.json`と`.data/users.json`へ永続化します。OIDC artifactとシナリオストアは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴は失われます。
 
 ## 開発コマンド
 

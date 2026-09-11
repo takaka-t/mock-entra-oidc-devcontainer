@@ -55,6 +55,7 @@ describe("issuer routing and origin enforcement", () => {
         issuer,
         keyDirectory,
         clientConfigFile: `${keyDirectory}/clients.json`,
+        userConfigFile: `${keyDirectory}/users.json`,
       }),
       { https: false },
     );
@@ -110,7 +111,7 @@ describe("issuer routing and origin enforcement", () => {
     });
     jar = updateCookies(jar, response.headers);
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain("Select a test user");
+    expect(response.body).toContain("テストユーザーを選択してください。");
 
     response = await context.app.inject({
       method: "POST",
@@ -453,6 +454,7 @@ describe("trusted HTTPS proxy", () => {
         trustProxy: true,
         keyDirectory,
         clientConfigFile: `${keyDirectory}/clients.json`,
+        userConfigFile: `${keyDirectory}/users.json`,
         issuer: `https://login.microsoftonline.test${issuerPath}`,
       }),
       { https: false },

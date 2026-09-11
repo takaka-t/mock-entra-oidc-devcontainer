@@ -1,4 +1,6 @@
 import {
+  mkdir,
+  rename,
   mkdtemp,
   readFile,
   readdir,
@@ -130,6 +132,43 @@ describe("OIDC client store", () => {
     );
     await expect(store.initialize()).rejects.toBeInstanceOf(SyntaxError);
     expect(await readFile(file, "utf8")).toBe("not-json");
+  });
+
+  it.each([".", "..", "c".repeat(101)])(
+    "rejects an unmanageable persisted client ID %s without rewriting it",
+    async (clientId) => {
+      const file = join(directory, "clients.json");
+      const original = JSON.stringify([{ ...publicClient, clientId }]);
+      await writeFile(file, original);
+      const provider = providerCallbacks();
+      const store = new OidcClientStore(file, provider.apply, provider.remove);
+      await expect(store.initialize()).rejects.toBeInstanceOf(ZodError);
+      expect(await readFile(file, "utf8")).toBe(original);
+      expect(provider.apply).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rolls back the provider on a failed file commit and allows retry", async () => {
+    const file = join(directory, "clients.json");
+    const provider = providerCallbacks();
+    const store = new OidcClientStore(file, provider.apply, provider.remove);
+    await store.initialize();
+    const before = await readFile(file, "utf8");
+    const backup = file + ".backup";
+    await rename(file, backup);
+    await mkdir(file);
+    await expect(store.create(publicClient)).rejects.toMatchObject({
+      code: "EISDIR",
+    });
+    expect(store.list()).toEqual(defaultClients());
+    expect([...provider.clients.values()]).toEqual(defaultClients());
+    expect(await readFile(backup, "utf8")).toBe(before);
+    expect(await temporaryFiles(directory)).toEqual([]);
+    await rm(file, { recursive: true });
+    await rename(backup, file);
+    await store.create(publicClient);
+    expect(provider.clients.has(publicClient.clientId)).toBe(true);
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(store.list());
   });
 
   it("migrates legacy scopes out of persisted clients", async () => {

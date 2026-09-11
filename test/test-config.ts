@@ -2,7 +2,10 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type AppConfig } from "../src/config.js";
 
-type TestStatePaths = Pick<AppConfig, "keyDirectory" | "clientConfigFile">;
+type TestStatePaths = Pick<
+  AppConfig,
+  "keyDirectory" | "clientConfigFile" | "userConfigFile"
+>;
 type TestConfigOverrides = TestStatePaths &
   Partial<Omit<AppConfig, keyof TestStatePaths>>;
 
@@ -36,6 +39,7 @@ export function testConfig(overrides: TestConfigOverrides): AppConfig {
   const defaults = loadConfig();
   assertOutsideRepositoryData("keyDirectory", overrides.keyDirectory);
   assertOutsideRepositoryData("clientConfigFile", overrides.clientConfigFile);
+  assertOutsideRepositoryData("userConfigFile", overrides.userConfigFile);
   const issuer = overrides.issuer ?? defaults.issuer;
   const url = new URL(issuer);
   const issuerPath =

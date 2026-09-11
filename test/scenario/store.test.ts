@@ -83,7 +83,7 @@ describe("InMemoryScenarioStore", () => {
   it("validates invariants even when the store is called directly", () => {
     const store = new InMemoryScenarioStore();
     expect(() => store.set({ scenario: "TOKEN_500" } as never)).toThrow(
-      "mode is required",
+      "mode は必須です",
     );
     expect(() =>
       store.set({

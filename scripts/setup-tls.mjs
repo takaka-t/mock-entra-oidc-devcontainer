@@ -22,7 +22,7 @@ import {
   rmdir,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 
 process.umask(0o077);
@@ -106,6 +106,14 @@ function parseDirectoryOption(
   return { value: currentValue, consumed: 0 };
 }
 
+function containsDirectory(parent, directory) {
+  const path = relative(parent, directory);
+  return (
+    path === "" ||
+    (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
+  );
+}
+
 function parseArguments(arguments_) {
   let outputDirectory = resolve(".data/tls");
   let privateDirectory = resolve(".data/tls-private");
@@ -151,6 +159,13 @@ function parseArguments(arguments_) {
     throw new Error(`Unknown argument: ${argument}`);
   }
 
+  if (
+    containsDirectory(outputDirectory, privateDirectory) ||
+    containsDirectory(privateDirectory, outputDirectory)
+  )
+    throw new Error(
+      "TLS public and private directories must be separate: neither may equal or contain the other. No files were changed.",
+    );
   return { help: false, outputDirectory, privateDirectory, rotateCa };
 }
 

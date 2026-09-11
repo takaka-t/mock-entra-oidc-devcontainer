@@ -110,6 +110,29 @@ class BrowserFlow {
     let response = initialResponse;
     for (let attempts = 0; attempts < 8; attempts++) {
       const rawLocation = response.headers.location;
+      // oidc-provider switches accounts by auto-posting a logout form before
+      // resuming the interaction. Follow it as a browser would.
+      if (!rawLocation && response.statusCode === 200) {
+        const action = /<form method="post" action="([^"]+)">/.exec(
+          response.body,
+        )?.[1];
+        const xsrf = /name="xsrf" value="([^"]+)"/.exec(response.body)?.[1];
+        if (
+          action &&
+          xsrf &&
+          response.body.includes('name="logout" value="yes"')
+        ) {
+          const target = new URL(action, issuer);
+          expect(target.origin).toBe(issuer);
+          expect(target.pathname).toBe("/oauth2/v2.0/logout/confirm");
+          response = await this.inject(target.pathname + target.search, {
+            method: "POST",
+            contentType: "application/x-www-form-urlencoded",
+            payload: new URLSearchParams({ xsrf, logout: "yes" }).toString(),
+          });
+          continue;
+        }
+      }
       if (!rawLocation)
         throw new Error(
           `Expected redirect, received ${response.statusCode}: ${response.body.slice(0, 200)}`,
@@ -125,7 +148,11 @@ class BrowserFlow {
     const start = await this.start(options);
     const interaction = await this.openLocation(start);
     expect(interaction.statusCode, interaction.body).toBe(200);
-    expect(interaction.body).toContain("Select a test user");
+    expect(interaction.body).toContain('<html lang="ja">');
+    expect(interaction.body).toContain("Mock Entra ID にサインイン");
+    expect(interaction.body).toContain("テストユーザーを選択してください。");
+    expect(interaction.body).toContain("Admin User");
+    expect(interaction.body).toContain("admin@example.com");
     return this.followToCallback(await this.submit(interaction));
   }
 
@@ -163,6 +190,7 @@ describe("custom interaction policy", () => {
         issuer,
         keyDirectory: join(stateDirectory, "keys"),
         clientConfigFile: join(stateDirectory, "clients.json"),
+        userConfigFile: join(stateDirectory, "users.json"),
       }),
       { https: false },
     );
@@ -545,13 +573,63 @@ describe("custom interaction policy", () => {
     });
     const picker = await browser.openLocation(start);
     expect(picker.statusCode).toBe(200);
-    expect(picker.body).toContain("Select a test user");
+    expect(picker.body).toContain("テストユーザーを選択してください。");
     const existing = await browser.followToCallback(
       await browser.submit(picker, "accountId=user-normal"),
     );
     expect(existing.searchParams.get("code")).toBeTruthy();
     expect(existing.searchParams.get("state")).toBe("existing-select");
   });
+
+  it.each(["delete", "reset"] as const)(
+    "recovers an existing browser session after user %s",
+    async (operation) => {
+      const sub = "removed-user";
+      await context.userStore.create({
+        sub,
+        oid: "44444444-4444-4444-4444-444444444444",
+        name: "Removed User",
+        preferred_username: "removed@example.com",
+        mail: "removed@example.com",
+        groups: [],
+      });
+      const browser = new BrowserFlow(context);
+      const initialPicker = await browser.openLocation(await browser.start());
+      const initial = await browser.followToCallback(
+        await browser.submit(initialPicker, "accountId=" + sub),
+      );
+      expect(initial.searchParams.get("code")).toBeTruthy();
+
+      const removed = await context.app.inject({
+        method: operation === "delete" ? "DELETE" : "POST",
+        url:
+          operation === "delete"
+            ? "/__mock/api/users/" + sub
+            : "/__mock/api/users/reset",
+        headers: { host },
+        ...(operation === "reset" ? { payload: {} } : {}),
+      });
+      expect(removed.statusCode).toBe(operation === "delete" ? 204 : 200);
+
+      const silent = await browser.followToCallback(
+        await browser.start({ prompt: "none", state: "removed-silent" }),
+      );
+      expect(silent.searchParams.get("error")).toBe("login_required");
+      expect(silent.searchParams.get("state")).toBe("removed-silent");
+
+      const picker = await browser.openLocation(await browser.start());
+      expect(picker.statusCode, picker.body).toBe(200);
+      expect(picker.body).not.toContain('value="' + sub + '"');
+      const recovered = await browser.followToCallback(
+        await browser.submit(picker, "accountId=user-normal"),
+      );
+      expect(recovered.searchParams.get("code")).toBeTruthy();
+      const resumed = await browser.followToCallback(
+        await browser.start({ prompt: "none" }),
+      );
+      expect(resumed.searchParams.get("code")).toBeTruthy();
+    },
+  );
 
   it("returns 400 for an invalid interaction body", async () => {
     const browser = new BrowserFlow(context);
@@ -571,5 +649,42 @@ describe("custom interaction policy", () => {
     expect(picker.headers["referrer-policy"]).toBe("no-referrer");
     expect(picker.headers["x-content-type-options"]).toBe("nosniff");
     expect(picker.headers["x-frame-options"]).toBe("DENY");
+  });
+
+  it("lists Admin-managed users on the sign-in page with HTML escaping", async () => {
+    const created = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      headers: { host },
+      payload: {
+        sub: "eve",
+        oid: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        name: "Eve <script>alert(1)</script>",
+        preferred_username: "eve&co@example.com",
+        mail: "eve@example.com",
+        groups: [],
+      },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const browser = new BrowserFlow(context);
+    const picker = await browser.openLocation(await browser.start());
+    expect(picker.statusCode).toBe(200);
+    expect(picker.body).toContain('value="eve"');
+    expect(picker.body).toContain("Eve &lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(picker.body).toContain("eve&amp;co@example.com");
+    expect(picker.body).not.toContain("<script>alert(1)</script>");
+
+    const deleted = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/users/eve",
+      headers: { host },
+    });
+    expect(deleted.statusCode).toBe(204);
+    const stale = new BrowserFlow(context);
+    const staleInteraction = await stale.openLocation(await stale.start());
+    expect(staleInteraction.body).not.toContain('value="eve"');
+    const rejected = await stale.submit(staleInteraction, "accountId=eve");
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toEqual({ error: "unknown_user" });
   });
 });

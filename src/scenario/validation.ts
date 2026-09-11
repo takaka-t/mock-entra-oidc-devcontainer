@@ -25,14 +25,16 @@ export function parseScenarioInput(value: unknown): SetScenarioInput {
   const parsed = baseSchema.parse(value);
   if (parsed.scenario === "NORMAL") {
     if (parsed.mode || parsed.failureCount || parsed.parameters)
-      throw new Error("NORMAL does not accept mode, count, or parameters");
+      throw new Error(
+        "NORMAL では mode、failureCount、parameters を指定できません",
+      );
     return { scenario: "NORMAL" };
   }
-  if (!parsed.mode) throw new Error("mode is required");
+  if (!parsed.mode) throw new Error("mode は必須です");
   if (parsed.mode === "LIMITED" && parsed.failureCount === undefined)
-    throw new Error("failureCount is required for LIMITED");
+    throw new Error("LIMITED では failureCount が必須です");
   if (parsed.mode === "CONTINUOUS" && parsed.failureCount !== undefined)
-    throw new Error("failureCount is not allowed for CONTINUOUS");
+    throw new Error("CONTINUOUS では failureCount を指定できません");
 
   const definition = scenarios[parsed.scenario];
   let parameters: ScenarioParameters | undefined;

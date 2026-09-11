@@ -15,7 +15,13 @@ import {
 import { routedPathname } from "../http-path.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import { parseScenarioInput } from "../scenario/validation.js";
-import { users } from "../users/users.js";
+import {
+  UserConflictError,
+  UserNotFoundError,
+  type MockUserStore,
+} from "../users/store.js";
+import type { MockUser } from "../users/types.js";
+import { escapeHtml } from "./html.js";
 import { renderAdminHtml } from "./ui.js";
 
 const interactionBodySchema = z
@@ -59,18 +65,72 @@ function applicationJson(value: string | string[] | undefined): boolean {
 function invalidResetBody(reply: FastifyReply) {
   return reply.code(400).send({
     error: "invalid_reset_body",
-    message: "Reset body must be an empty JSON object",
+    message: "リセット要求の本文は空の JSON オブジェクト {} にしてください",
   });
 }
 
-function interactionHtml(uid: string, issuerPath: string): string {
+const userFieldLabels: Record<string, string> = {
+  sub: "ユーザー ID（sub）",
+  oid: "オブジェクト ID（oid）",
+  name: "表示名（name）",
+  preferred_username: "優先ユーザー名（preferred_username）",
+  mail: "メールアドレス（mail）",
+  groups: "グループ（groups）",
+};
+
+const clientFieldLabels: Record<string, string> = {
+  clientId: "クライアント ID（client_id）",
+  clientType: "クライアント種別（clientType）",
+  clientSecret: "クライアントシークレット（client_secret）",
+  tokenEndpointAuthMethod:
+    "トークンエンドポイント認証方式（tokenEndpointAuthMethod）",
+  redirectUris: "リダイレクト URI（redirectUris）",
+  postLogoutRedirectUris:
+    "ログアウト後のリダイレクト URI（postLogoutRedirectUris）",
+  accessTokenAudience: "アクセストークンの対象者（accessTokenAudience / aud）",
+  accessTokenScope: "アクセストークンのスコープ（accessTokenScope / scp）",
+  emailOptionalClaim: "email claim（email）",
+};
+
+function localizedZodMessage(issue: ZodError["issues"][number]): string {
+  if (issue.code === "custom") return issue.message;
+  if (issue.code === "unrecognized_keys")
+    return `未対応の項目が含まれています: ${issue.keys.join(", ")}`;
+  if (issue.code === "invalid_type") return "値の型が正しくありません";
+  if (issue.code === "invalid_format") return "形式が正しくありません";
+  if (issue.code === "too_small") return "値が短すぎるか、少なすぎます";
+  if (issue.code === "too_big") return "値が長すぎるか、多すぎます";
+  return "入力値が正しくありません";
+}
+
+function formatZodIssues(
+  error: ZodError,
+  fieldLabels: Record<string, string> = {},
+): string {
+  return error.issues
+    .map((issue) => {
+      const field = issue.path[0];
+      const label =
+        typeof field === "string" ? (fieldLabels[field] ?? field) : undefined;
+      return label
+        ? `${label}：${localizedZodMessage(issue)}`
+        : localizedZodMessage(issue);
+    })
+    .join("; ");
+}
+
+function interactionHtml(
+  uid: string,
+  issuerPath: string,
+  users: readonly MockUser[],
+): string {
   const buttons = users
     .map(
       (user) =>
-        `<button name="accountId" value="${user.sub}" type="submit"><strong>${user.name}</strong><small>${user.preferred_username}</small></button>`,
+        `<button name="accountId" value="${escapeHtml(user.sub)}" type="submit"><strong>${escapeHtml(user.name)}</strong><small>${escapeHtml(user.preferred_username)}</small></button>`,
     )
     .join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Mock sign in</title><style>body{font-family:system-ui;background:#f4f6f8;padding:3rem}.box{max-width:420px;margin:auto;background:white;padding:2rem;border-radius:12px}button{display:block;width:100%;text-align:left;padding:1rem;margin:.7rem 0;background:white;border:1px solid #bbb;border-radius:7px;cursor:pointer}small{display:block;color:#666;margin-top:.3rem}</style></head><body><main class="box"><h1>Mock Entra ID</h1><p>Select a test user</p><form method="post" action="${issuerPath}/interaction/${encodeURIComponent(uid)}">${buttons}</form></main></body></html>`;
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock Entra ID にサインイン</title><style>body{font-family:system-ui;background:#f4f6f8;padding:3rem}.box{max-width:420px;margin:auto;background:white;padding:2rem;border-radius:12px}button{display:block;width:100%;text-align:left;padding:1rem;margin:.7rem 0;background:white;border:1px solid #bbb;border-radius:7px;cursor:pointer}small{display:block;color:#666;margin-top:.3rem}</style></head><body><main class="box"><h1>Mock Entra ID にサインイン</h1><p>テストユーザーを選択してください。</p><form method="post" action="${issuerPath}/interaction/${encodeURIComponent(uid)}">${buttons}</form></main></body></html>`;
 }
 
 type InteractionDetails = Awaited<ReturnType<Provider["interactionDetails"]>>;
@@ -141,7 +201,7 @@ async function consentInteraction(
 function unsupportedPrompt(reply: FastifyReply, prompt: string) {
   return reply.code(400).send({
     error: "unsupported_interaction_prompt",
-    message: `Unsupported interaction prompt: ${prompt}`,
+    message: `対応していないインタラクションプロンプトです: ${prompt}`,
   });
 }
 
@@ -150,6 +210,7 @@ export async function registerRoutes(
   provider: Provider,
   store: InMemoryScenarioStore,
   clientStore: OidcClientStore,
+  userStore: MockUserStore,
   config: AppConfig,
 ): Promise<void> {
   app.addHook("onRequest", async (request, reply) => {
@@ -158,7 +219,7 @@ export async function registerRoutes(
     if (!sameOrigin(request.headers.origin, config.issuerOrigin)) {
       await reply.code(403).send({
         error: "invalid_admin_origin",
-        message: "Origin does not match the configured issuer",
+        message: "Origin が設定済みの Issuer（issuer）と一致しません",
       });
       return;
     }
@@ -168,7 +229,8 @@ export async function registerRoutes(
     ) {
       await reply.code(415).send({
         error: "unsupported_media_type",
-        message: "Admin request body must use application/json",
+        message:
+          "管理 API のリクエスト本文には application/json を使用してください",
       });
     }
   });
@@ -188,7 +250,7 @@ export async function registerRoutes(
         error: "invalid_scenario",
         message:
           error instanceof ZodError
-            ? error.issues.map((issue) => issue.message).join("; ")
+            ? formatZodIssues(error)
             : (error as Error).message,
       });
     }
@@ -238,6 +300,45 @@ export async function registerRoutes(
       return invalidResetBody(reply);
     return reply.send(await clientStore.reset());
   });
+  app.get("/__mock/api/users", async () => userStore.list());
+  app.post("/__mock/api/users", async (request, reply) => {
+    try {
+      return reply
+        .code(201)
+        .send(await userStore.create(request.body as never));
+    } catch (error) {
+      return userError(reply, error);
+    }
+  });
+  app.put<{ Params: { sub: string } }>(
+    "/__mock/api/users/:sub",
+    async (request, reply) => {
+      try {
+        return await userStore.update(
+          request.params.sub,
+          request.body as never,
+        );
+      } catch (error) {
+        return userError(reply, error);
+      }
+    },
+  );
+  app.delete<{ Params: { sub: string } }>(
+    "/__mock/api/users/:sub",
+    async (request, reply) => {
+      try {
+        await userStore.delete(request.params.sub);
+        return reply.code(204).send();
+      } catch (error) {
+        return userError(reply, error);
+      }
+    },
+  );
+  app.post("/__mock/api/users/reset", async (request, reply) => {
+    if (!resetBodySchema.safeParse(request.body).success)
+      return invalidResetBody(reply);
+    return reply.send(await userStore.reset());
+  });
 
   app.get<{ Params: { uid: string } }>(
     `${config.issuerPath}/interaction/:uid`,
@@ -263,7 +364,13 @@ export async function registerRoutes(
         case "select_account":
           return reply
             .type("text/html; charset=utf-8")
-            .send(interactionHtml(request.params.uid, config.issuerPath));
+            .send(
+              interactionHtml(
+                request.params.uid,
+                config.issuerPath,
+                userStore.list(),
+              ),
+            );
         default:
           return unsupportedPrompt(reply, details.prompt.name);
       }
@@ -298,7 +405,7 @@ export async function registerRoutes(
       if (!body.success)
         return reply.code(400).send({ error: "invalid_interaction_body" });
       const { accountId } = body.data;
-      if (!users.some((user) => user.sub === accountId))
+      if (!userStore.find(accountId))
         return reply.code(400).send({ error: "unknown_user" });
       const requestedPrompts = new Set(
         typeof details.params.prompt === "string"
@@ -327,25 +434,47 @@ export async function registerRoutes(
   );
 }
 
+function userError(reply: FastifyReply, error: unknown) {
+  if (error instanceof UserConflictError)
+    return reply.code(409).send({
+      error: "user_conflict",
+      message:
+        "同じユーザー ID、オブジェクト ID、または優先ユーザー名を持つテストユーザーが既に登録されています",
+    });
+  if (error instanceof UserNotFoundError)
+    return reply.code(404).send({
+      error: "user_not_found",
+      message: "指定されたテストユーザーが見つかりません",
+    });
+  if (error instanceof ZodError)
+    return reply.code(400).send({
+      error: "invalid_user",
+      message: formatZodIssues(error, userFieldLabels),
+    });
+  throw error;
+}
+
 function clientError(reply: import("fastify").FastifyReply, error: unknown) {
   if (error instanceof ClientConflictError)
-    return reply
-      .code(409)
-      .send({ error: "client_conflict", message: error.message });
+    return reply.code(409).send({
+      error: "client_conflict",
+      message:
+        "同じクライアント ID を持つ OIDC クライアントが既に登録されています",
+    });
   if (error instanceof ClientNotFoundError)
-    return reply
-      .code(404)
-      .send({ error: "client_not_found", message: error.message });
+    return reply.code(404).send({
+      error: "client_not_found",
+      message: "指定された OIDC クライアントが見つかりません",
+    });
   if (error instanceof ZodError)
     return reply.code(400).send({
       error: "invalid_client",
-      message: error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; "),
+      message: formatZodIssues(error, clientFieldLabels),
     });
   if (error instanceof ClientValidationError)
-    return reply
-      .code(400)
-      .send({ error: "invalid_client", message: error.message });
+    return reply.code(400).send({
+      error: "invalid_client",
+      message: "OIDC Provider がクライアント設定を受け入れませんでした",
+    });
   throw error;
 }

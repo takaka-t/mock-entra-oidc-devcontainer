@@ -73,6 +73,7 @@ try {
     host: listenHost,
     keyDirectory: join(stateDirectory, "keys"),
     clientConfigFile: join(stateDirectory, "clients.json"),
+    userConfigFile: join(stateDirectory, "users.json"),
     tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
     tlsCertificateFile: join(tlsDirectory, "server.crt"),
     tlsPrivateKeyFile: join(tlsPrivateDirectory, "server.key.pem"),

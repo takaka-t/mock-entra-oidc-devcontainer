@@ -317,6 +317,29 @@ afterEach(async () => {
 });
 
 describe("TLS setup script", () => {
+  it.each([
+    ["bundle", "bundle"],
+    ["bundle", "bundle/private"],
+    ["bundle/public", "bundle"],
+    ["bundle", "bundle/../bundle"],
+  ])(
+    "rejects overlapping directories %s and %s before writing",
+    async (publicPath, privatePath) => {
+      const directory = await temporaryDirectory();
+      const message = await rejectedMessage(
+        run(process.execPath, [
+          setupScript,
+          "--output-dir",
+          join(directory, publicPath),
+          "--private-dir",
+          join(directory, privatePath),
+        ]),
+      );
+      expect(message).toContain("neither may equal or contain the other");
+      expect(await readdir(directory)).toEqual([]);
+    },
+  );
+
   it("creates the public/private bundle in the default directories and is idempotent", async () => {
     const workingDirectory = await temporaryDirectory();
     const outputDirectory = join(workingDirectory, ".data", "tls");

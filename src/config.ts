@@ -34,6 +34,7 @@ export interface AppConfig {
   trustProxy: boolean;
   keyDirectory: string;
   clientConfigFile: string;
+  userConfigFile: string;
   tlsCaCertificateFile: string;
   tlsCertificateFile: string;
   tlsPrivateKeyFile: string;
@@ -56,6 +57,7 @@ export function loadConfig(): AppConfig {
     trustProxy: false,
     keyDirectory: ".data/keys",
     clientConfigFile: ".data/clients.json",
+    userConfigFile: ".data/users.json",
     tlsCaCertificateFile: ".data/tls/ca.crt",
     tlsCertificateFile: ".data/tls/server.crt",
     tlsPrivateKeyFile: ".data/tls-private/server.key.pem",

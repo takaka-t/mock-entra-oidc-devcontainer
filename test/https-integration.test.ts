@@ -122,6 +122,7 @@ describe("direct HTTPS hosting", () => {
       host: "127.0.0.1",
       keyDirectory: join(stateDirectory, "keys"),
       clientConfigFile: join(stateDirectory, "clients.json"),
+      userConfigFile: join(stateDirectory, "users.json"),
       tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
       tlsCertificateFile: join(tlsDirectory, "server.crt"),
       tlsPrivateKeyFile: join(tlsPrivateDirectory, "server.key.pem"),
@@ -191,7 +192,9 @@ describe("direct HTTPS hosting", () => {
     );
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(200);
-    expect(response.body.toString()).toContain("Select a test user");
+    expect(response.body.toString()).toContain(
+      "テストユーザーを選択してください。",
+    );
 
     const selection = "accountId=user-admin";
     response = await requestTls(

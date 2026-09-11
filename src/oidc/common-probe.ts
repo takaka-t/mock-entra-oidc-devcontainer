@@ -8,6 +8,21 @@ import type { AppConfig } from "../config.js";
  */
 export const commonProbeContentType = "text/html; charset=utf-8";
 
+/** Match Fastify's static route aliases without decoding path separators. */
+export function matchesCommonProbePath(
+  pathname: string,
+  routePathname: string,
+): boolean {
+  const decodeUnreserved = (value: string): string =>
+    value.replace(/%([\da-f]{2})/gi, (escape, hex: string) => {
+      const character = String.fromCharCode(Number.parseInt(hex, 16));
+      return /^[a-z\d._~-]$/i.test(character) ? character : escape;
+    });
+  const path = decodeUnreserved(pathname);
+  const route = decodeUnreserved(routePathname);
+  return path === route || path === `${route}/`;
+}
+
 /**
  * `HEAD {origin}/common/oauth2/v2.0/authorize` is the reachability probe client
  * libraries send before starting a sign-in. It is not part of the tenant OIDC

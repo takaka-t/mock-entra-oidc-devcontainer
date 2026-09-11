@@ -152,6 +152,7 @@ describe("Provider instance isolation", () => {
         issuer: issuerA,
         keyDirectory: join(stateDirectory, "a", "keys"),
         clientConfigFile: join(stateDirectory, "a", "clients.json"),
+        userConfigFile: join(stateDirectory, "a", "users.json"),
       }),
       { https: false },
     );
@@ -160,6 +161,7 @@ describe("Provider instance isolation", () => {
         issuer: issuerB,
         keyDirectory: join(stateDirectory, "b", "keys"),
         clientConfigFile: join(stateDirectory, "b", "clients.json"),
+        userConfigFile: join(stateDirectory, "b", "users.json"),
       }),
       { https: false },
     );

@@ -31,6 +31,7 @@ describe("fixed OIDC configuration", () => {
       trustProxy: false,
       keyDirectory: ".data/keys",
       clientConfigFile: ".data/clients.json",
+      userConfigFile: ".data/users.json",
       tlsCaCertificateFile: ".data/tls/ca.crt",
       tlsCertificateFile: ".data/tls/server.crt",
       tlsPrivateKeyFile: ".data/tls-private/server.key.pem",

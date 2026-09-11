@@ -17,11 +17,19 @@ describe("test configuration safety", () => {
       name: "key directory",
       keyDirectory: ".data/test-keys",
       clientConfigFile: join(tmpdir(), "safe-test-clients.json"),
+      userConfigFile: join(tmpdir(), "safe-test-users.json"),
     },
     {
       name: "client configuration",
       keyDirectory: join(tmpdir(), "safe-test-keys"),
       clientConfigFile: ".data/test-clients.json",
+      userConfigFile: join(tmpdir(), "safe-test-users.json"),
+    },
+    {
+      name: "user configuration",
+      keyDirectory: join(tmpdir(), "safe-test-keys"),
+      clientConfigFile: join(tmpdir(), "safe-test-clients.json"),
+      userConfigFile: ".data/test-users.json",
     },
   ])("rejects a $name below the repository .data directory", (paths) => {
     expect(() => testConfig(paths)).toThrow(
@@ -41,6 +49,7 @@ describe("admin API and UI", () => {
       issuer: "http://localhost",
       keyDirectory: join(stateDirectory, "keys"),
       clientConfigFile: join(stateDirectory, "clients.json"),
+      userConfigFile: join(stateDirectory, "users.json"),
     });
     context = await buildApp(appConfig, { https: false });
   });
@@ -298,10 +307,10 @@ describe("admin API and UI", () => {
 
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
-    expect(response.body).toContain("Mock OIDC Provider");
+    expect(response.body).toContain("Mock OIDC Provider 管理画面");
     expect(response.body).toContain("アプリ接続情報");
-    expect(response.body).toContain("Authority URL");
-    expect(response.body).toContain("Tenant ID");
+    expect(response.body).toContain("認可サーバー URL（Authority URL）");
+    expect(response.body).toContain("テナント ID（tid）");
     expect(response.body).toContain(mockTenantId);
     expect(response.body).toContain("http://localhost");
     expect(response.body).toContain('<html lang="ja">');
@@ -311,8 +320,31 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("設定した失敗回数");
     expect(response.body).toContain("残り失敗回数");
     expect(response.body).toContain("Retry-After（秒、任意）");
+    expect(response.body).toContain("label.required::after");
+    expect(response.body).toContain("＊は必須項目です");
+    for (const requiredFor of [
+      "clientId",
+      "clientSecret",
+      "redirectUris",
+      "audience",
+      "scope",
+      "userOid",
+      "userName",
+      "userPreferredUsername",
+      "userMail",
+      "retryAfterRequired",
+    ])
+      expect(response.body).toContain(`for="${requiredFor}" class="required"`);
+    for (const notRequiredFor of [
+      "userSub",
+      "logoutUris",
+      "userGroups",
+      "clientType",
+      "retryAfterOptional",
+    ])
+      expect(response.body).not.toContain(`for="${notRequiredFor}" class="required"`);
     expect(response.body).toContain(
-      "Client secretは平文で保存・表示されます。このAdmin APIには認証がないため、インターネットに公開しないでください。",
+      "クライアントシークレットは平文で保存・表示されます。このAdmin APIには認証がないため、インターネットに公開しないでください。",
     );
     for (const text of [
       "適用",
@@ -321,13 +353,25 @@ describe("admin API and UI", () => {
       "各シナリオの詳細は README の「シナリオ API」を参照してください。",
       "シナリオを停止します（履歴は残ります）",
       "履歴と鍵の状態を初期化します",
-      "OIDC Clientを登録",
-      "OIDC Clientを編集",
-      "保存",
+      "OIDC クライアントを登録",
+      "更新",
+      "保存中…",
       "キャンセル",
       "削除",
-      "登録済みのOIDC Clientはありません。",
-      "すべてのOIDC Clientを初期状態に戻しますか？",
+      "登録済みの OIDC クライアントはありません。",
+      "すべての OIDC クライアントを初期状態に戻しますか？",
+      "テストユーザー一覧",
+      "テストユーザーを登録",
+      "テストユーザーを初期状態に戻す",
+      "登録済みのテストユーザーはありません。",
+      "すべてのテストユーザーを初期状態に戻しますか？",
+      "ユーザー ID（sub）",
+      "オブジェクト ID（oid）",
+      "表示名（name）",
+      "優先ユーザー名（preferred_username）",
+      "メールアドレス（mail）",
+      "グループ（groups）",
+      "テナント ID（tid）は常にこの Mock の値になります。",
     ])
       expect(response.body).toContain(text);
     expect(response.body).not.toContain(
@@ -338,10 +382,14 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('id="tenantId"');
     expect(response.body).toContain('id="copyAuthority"');
     expect(response.body).toContain('id="copyTenantId"');
-    expect(response.body).toContain('aria-label="Authority URLをコピー"');
-    expect(response.body).toContain('title="Authority URLをコピー"');
-    expect(response.body).toContain('aria-label="Tenant IDをコピー"');
-    expect(response.body).toContain('title="Tenant IDをコピー"');
+    expect(response.body).toContain(
+      'aria-label="認可サーバー URL（Authority URL）をコピー"',
+    );
+    expect(response.body).toContain(
+      'title="認可サーバー URL（Authority URL）をコピー"',
+    );
+    expect(response.body).toContain('aria-label="テナント ID（tid）をコピー"');
+    expect(response.body).toContain('title="テナント ID（tid）をコピー"');
     expect(response.body).toContain('id="connectionMessage"');
     expect(response.body).toContain("copyConnectionValue");
     expect(response.body).toContain("navigator.clipboard");
@@ -383,14 +431,248 @@ describe("admin API and UI", () => {
     );
     expect(response.body).toContain("/__mock/api/scenario");
     expect(response.body).not.toContain("setInterval");
-    expect(response.body).toContain("OIDC Client");
+    expect(response.body).toContain("OIDC クライアント");
     expect(response.body).toContain("/__mock/api/clients");
     expect(response.body).toContain("body:'{}'");
     expect(response.body).not.toContain("Allowed scopes");
     expect(response.body).not.toContain("clientScope");
+    for (const id of [
+      "users",
+      "newUser",
+      "resetUsers",
+      "userError",
+      "userEditor",
+      "userForm",
+      "userSub",
+      "userOid",
+      "userName",
+      "userPreferredUsername",
+      "userMail",
+      "userGroups",
+      "cancelUser",
+      "userEditorError",
+    ])
+      expect(response.body).toContain(`id="${id}"`);
+    expect(response.body).toContain("/__mock/api/users");
+    expect(response.body).toContain("crypto.randomUUID");
+    expect(response.body).toContain('id="userMail" type="email" required');
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
     if (!inlineScript) throw new Error("Admin UI inline script was not found");
     expect(() => new Script(inlineScript)).not.toThrow();
+  });
+
+  it("serves accessible registration dialogs and persistent result notices", async () => {
+    const { body } = await context.app.inject("/__mock");
+    for (const kind of ["client", "user"]) {
+      const cap = kind[0]!.toUpperCase() + kind.slice(1);
+      const dialog = new RegExp(
+        `<dialog id="${kind}Editor"[^>]*>[\\s\\S]*?</dialog>`,
+      ).exec(body)?.[0];
+      expect(dialog).toBeDefined();
+      expect(dialog).toContain(`aria-labelledby="${kind}EditorTitle"`);
+      expect(dialog).not.toMatch(/<dialog[^>]*\bopen(?:\s|>)/);
+      expect(dialog).toContain(`<form id="${kind}Form">`);
+      expect(dialog).toContain(`id="close${cap}" type="button"`);
+      expect(dialog).toContain(`id="cancel${cap}" type="button"`);
+      expect(dialog).toContain(`id="save${cap}" class="primary" type="submit"`);
+      expect(dialog).toContain('role="alert" tabindex="-1"');
+      expect(body).toContain(
+        `<p id="${kind}Message" role="status" aria-atomic="true">`,
+      );
+      expect(body).toContain(`id="dismiss${cap}Notice" type="button"`);
+      expect(body).toContain(`id="retry${cap}s" class="hidden" type="button"`);
+      expect(body.indexOf(`id="${kind}Notice"`)).toBeLessThan(
+        body.indexOf(`id="${kind}s"`),
+      );
+    }
+  });
+
+  it("returns localized Admin API messages without changing error codes", async () => {
+    const scenario = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "NORMAL", mode: "CONTINUOUS" },
+    });
+    expect(scenario.statusCode).toBe(400);
+    expect(scenario.json()).toMatchObject({
+      error: "invalid_scenario",
+      message: "NORMAL では mode、failureCount、parameters を指定できません",
+    });
+
+    const user = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload: {
+        sub: "localized-message-user",
+        oid: "44444444-4444-4444-4444-444444444444",
+        name: "   ",
+        preferred_username: "localized-message@example.com",
+        mail: "localized-message@example.com",
+        groups: [],
+      },
+    });
+    expect(user.statusCode).toBe(400);
+    expect(user.json()).toMatchObject({
+      error: "invalid_user",
+      message: "表示名（name）：値が短すぎるか、少なすぎます",
+    });
+
+    const client = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients",
+      payload: {
+        clientId: "localized-message-client",
+        clientType: "PUBLIC",
+        clientSecret: "must-not-be-present",
+        tokenEndpointAuthMethod: "none",
+        redirectUris: ["http://localhost:3000/callback"],
+        postLogoutRedirectUris: [],
+        accessTokenAudience: "urn:localized-message",
+        accessTokenScope: "access_as_user",
+        emailOptionalClaim: false,
+      },
+    });
+    expect(client.statusCode).toBe(400);
+    expect(client.json()).toMatchObject({
+      error: "invalid_client",
+      message:
+        "クライアントシークレット（client_secret）：PUBLIC クライアントにはクライアントシークレットを指定できません",
+    });
+  });
+
+  it.each(["users", "clients"] as const)(
+    "keeps %s identifiers consistent across the UI, API, and persistence",
+    async (kind) => {
+      const idKey = kind === "users" ? "sub" : "clientId";
+      const inputId = kind === "users" ? "userSub" : "clientId";
+      const payload =
+        kind === "users"
+          ? {
+              oid: "44444444-4444-4444-4444-444444444444",
+              name: "境界値ユーザー",
+              preferred_username: "boundary@example.com",
+              mail: "boundary@example.com",
+              groups: ["日本語のグループ"],
+            }
+          : {
+              clientType: "PUBLIC",
+              tokenEndpointAuthMethod: "none",
+              redirectUris: ["http://localhost/callback"],
+              postLogoutRedirectUris: [],
+              accessTokenAudience: "urn:boundary",
+              accessTokenScope: "access_as_user",
+              emailOptionalClaim: false,
+            };
+      const url = "/__mock/api/" + kind;
+      const file =
+        kind === "users"
+          ? context.userStore.filePath
+          : context.clientStore.filePath;
+      const html = (await context.app.inject("/__mock")).body;
+      const pattern = new RegExp(
+        '<input id="' + inputId + '" pattern="([^"]+)"',
+      ).exec(html)?.[1];
+      expect(pattern).toBeTruthy();
+      const browserPattern = new RegExp("^(?:" + pattern + ")$", "v");
+
+      for (const id of [
+        "a".repeat(100),
+        "  " + "b".repeat(100) + "  ",
+        "a/b?c#d% e",
+        "...",
+      ]) {
+        expect(browserPattern.test(id), id).toBe(true);
+        const created = await context.app.inject({
+          method: "POST",
+          url,
+          payload: { ...payload, [idKey]: id },
+        });
+        expect(created.statusCode, created.body).toBe(201);
+        expect(created.json()[idKey]).toBe(id.trim());
+        const path = new URL(
+          url + "/" + encodeURIComponent(id.trim()),
+          "http://localhost",
+        ).pathname;
+        const updated = await context.app.inject({
+          method: "PUT",
+          url: path,
+          payload,
+        });
+        expect(updated.statusCode, updated.body).toBe(200);
+        expect(updated.json()[idKey]).toBe(id.trim());
+        const persisted = JSON.parse(await readFile(file, "utf8")) as Record<
+          string,
+          unknown
+        >[];
+        expect(persisted.find((item) => item[idKey] === id.trim())).toEqual(
+          updated.json(),
+        );
+        const deleted = await context.app.inject({
+          method: "DELETE",
+          url: path,
+        });
+        expect(deleted.statusCode, deleted.body).toBe(204);
+      }
+
+      const before = await readFile(file, "utf8");
+      for (const id of [
+        ".",
+        "..",
+        " . ",
+        "a".repeat(101),
+        " ",
+        "bad\nid",
+        "利用者",
+      ]) {
+        expect(browserPattern.test(id), id).toBe(false);
+        const response = await context.app.inject({
+          method: "POST",
+          url,
+          payload: { ...payload, [idKey]: id },
+        });
+        expect(response.statusCode, response.body).toBe(400);
+        expect(response.json().error).toBe(
+          kind === "users" ? "invalid_user" : "invalid_client",
+        );
+      }
+      expect(await readFile(file, "utf8")).toBe(before);
+    },
+  );
+
+  it("rejects multiline user fields on create and update without changing state", async () => {
+    const payload = {
+      oid: "44444444-4444-4444-4444-444444444444",
+      name: "名前",
+      preferred_username: "boundary@example.com",
+      mail: "boundary@example.com",
+      groups: ["グループ"],
+    };
+    const before = await readFile(context.userStore.filePath, "utf8");
+    for (const newline of ["\r", "\n", "\r\n"]) {
+      for (const changes of [
+        { name: "first" + newline + "last" },
+        { preferred_username: "first" + newline + "last" },
+        { groups: ["allowed" + newline + "admin"] },
+      ]) {
+        for (const method of ["POST", "PUT"] as const) {
+          const response = await context.app.inject({
+            method,
+            url:
+              method === "POST"
+                ? "/__mock/api/users"
+                : "/__mock/api/users/user-normal",
+            payload: {
+              ...payload,
+              ...changes,
+              ...(method === "POST" ? { sub: "multiline" } : {}),
+            },
+          });
+          expect(response.statusCode, response.body).toBe(400);
+          expect(response.json().error).toBe("invalid_user");
+        }
+      }
+    }
+    expect(await readFile(context.userStore.filePath, "utf8")).toBe(before);
   });
 
   it("creates, updates, deletes, and resets OIDC clients independently", async () => {
@@ -530,6 +812,200 @@ describe("admin API and UI", () => {
     expect(response.json().error).toBe("invalid_client");
   });
 
+  it("creates, updates, deletes, and resets test users independently", async () => {
+    const payload = {
+      sub: "admin-api-user",
+      oid: "ABCDEF01-2345-6789-ABCD-EF0123456789",
+      name: "API User",
+      preferred_username: "api@example.com",
+      mail: "api@example.com",
+      groups: ["g1", "g1", "g2"],
+    };
+    const created = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toEqual({
+      ...payload,
+      oid: payload.oid.toLowerCase(),
+      groups: ["g1", "g2"],
+    });
+    const duplicate = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload,
+    });
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json().error).toBe("user_conflict");
+    const oidTaken = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload: {
+        ...payload,
+        sub: "other",
+        preferred_username: "o@example.com",
+      },
+    });
+    expect(oidTaken.statusCode).toBe(409);
+    expect(oidTaken.json().message).toContain(
+      "同じユーザー ID、オブジェクト ID、または優先ユーザー名を持つテストユーザーが既に登録されています",
+    );
+
+    const { sub: _sub, ...update } = payload;
+    void _sub;
+    const updated = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/users/admin-api-user",
+      payload: { ...update, name: "Renamed", groups: [] },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      sub: "admin-api-user",
+      name: "Renamed",
+      groups: [],
+    });
+    const missing = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/users/nobody",
+      payload: update,
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json().error).toBe("user_not_found");
+    expect(
+      (await context.app.inject("/__mock/api/users"))
+        .json<{ sub: string }[]>()
+        .map((user) => user.sub),
+    ).toEqual([
+      "user-admin",
+      "user-normal",
+      "user-unauthorized",
+      "admin-api-user",
+    ]);
+
+    await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+    });
+    const extraClient = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients",
+      payload: {
+        clientId: "extra-client",
+        clientType: "PUBLIC",
+        tokenEndpointAuthMethod: "none",
+        redirectUris: ["http://localhost/cb"],
+        postLogoutRedirectUris: [],
+        accessTokenAudience: "urn:x",
+        accessTokenScope: "access_as_user",
+        emailOptionalClaim: false,
+      },
+    });
+    expect(extraClient.statusCode).toBe(201);
+    const badReset = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users/reset",
+      payload: { unexpected: true },
+    });
+    expect(badReset.statusCode).toBe(400);
+    expect(badReset.json().error).toBe("invalid_reset_body");
+    const reset = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users/reset",
+      payload: {},
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toHaveLength(3);
+    expect(
+      (await context.app.inject("/__mock/api/scenario")).json(),
+    ).toMatchObject({ scenario: "TOKEN_500", status: "ACTIVE" });
+    expect(
+      (await context.app.inject("/__mock/api/clients")).json(),
+    ).toHaveLength(3);
+
+    const deleteMissing = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/users/admin-api-user",
+    });
+    expect(deleteMissing.statusCode).toBe(404);
+    const deleted = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/users/user-unauthorized",
+    });
+    expect(deleted.statusCode).toBe(204);
+    expect(deleted.body).toBe("");
+
+    await context.app.close();
+    context = await buildApp(appConfig, { https: false });
+    expect(
+      (await context.app.inject("/__mock/api/users"))
+        .json<{ sub: string }[]>()
+        .map((user) => user.sub),
+    ).toEqual(["user-admin", "user-normal"]);
+    const clientReset = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/clients/reset",
+      payload: {},
+    });
+    expect(clientReset.statusCode).toBe(200);
+    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(
+      2,
+    );
+  });
+
+  it("generates and returns a persistent sub for a test user when omitted", async () => {
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload: {
+        oid: "ABCDEF01-2345-6789-ABCD-EF0123456789",
+        name: "Generated Subject User",
+        preferred_username: "generated-sub@example.com",
+        mail: "generated-sub@example.com",
+        groups: [],
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    const user = response.json<{ sub: string }>();
+    expect(user.sub).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(
+      (await context.app.inject("/__mock/api/users")).json(),
+    ).toContainEqual(expect.objectContaining({ sub: user.sub }));
+  });
+
+  it.each([
+    { oid: "not-a-guid" },
+    { mail: "nope" },
+    { name: "   " },
+    { tid: mockTenantId },
+    { unknown: true },
+    { groups: "g1" },
+    { sub: "" },
+  ])("rejects invalid test user %#", async (overrides) => {
+    const response = await context.app.inject({
+      method: "POST",
+      url: "/__mock/api/users",
+      payload: {
+        sub: "bad",
+        oid: "abcdef01-2345-6789-abcd-ef0123456789",
+        name: "Bad",
+        preferred_username: "bad@example.com",
+        mail: "bad@example.com",
+        groups: [],
+        ...overrides,
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_user");
+    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(
+      3,
+    );
+  });
+
   it("rejects provider-incompatible client metadata without changing persisted restart state", async () => {
     const clientFile = context.clientStore.filePath;
     const beforeFile = await readFile(clientFile, "utf8");
@@ -590,6 +1066,13 @@ describe("admin API and UI", () => {
       expect(response.statusCode).toBe(403);
       expect(response.json().error).toBe("invalid_admin_origin");
       expect(context.store.get()).toEqual(before);
+      const userDelete = await context.app.inject({
+        method: "DELETE",
+        url: "/__mock/api/users/user-admin",
+        headers: { origin },
+      });
+      expect(userDelete.statusCode).toBe(403);
+      expect(context.userStore.find("user-admin")).toBeDefined();
     },
   );
 
@@ -656,6 +1139,7 @@ describe("admin API and UI", () => {
     for (const response of [
       await context.app.inject("/__mock"),
       await context.app.inject("/__mock/api/clients"),
+      await context.app.inject("/__mock/api/users"),
     ]) {
       expect(response.headers["cache-control"]).toBe("no-store");
       expect(response.headers["content-security-policy"]).toBe(

@@ -9,7 +9,10 @@ import {
   type HttpFaultRouteTable,
 } from "../scenario/registry.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
-import { commonProbeContentType } from "../oidc/common-probe.js";
+import {
+  commonProbeContentType,
+  matchesCommonProbePath,
+} from "../oidc/common-probe.js";
 
 function matchesPath(pathname: string, routePathname: string): boolean {
   return pathname === routePathname || pathname === `${routePathname}/`;
@@ -159,7 +162,11 @@ export function createHttpFaultMiddleware(
   ): void => {
     try {
       const ticket = store.startRequest(req);
-      const pathname = new URL(req.url ?? "/", "http://local").pathname;
+      const rawPathname = new URL(req.url ?? "/", "http://local").pathname;
+      const probePath = routes["authorization-http"].pathname;
+      const pathname = matchesCommonProbePath(rawPathname, probePath)
+        ? probePath
+        : rawPathname;
 
       if (!isCorsPath(pathname, corsPathnames)) {
         safelyNext(next);

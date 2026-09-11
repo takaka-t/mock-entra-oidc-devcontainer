@@ -1,14 +1,11 @@
-import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { dirname } from "node:path";
 import { z } from "zod";
+import {
+  commitStagedFile,
+  discardStagedFile,
+  readJsonFile,
+  SerialQueue,
+  stageJsonFile,
+} from "../persistence/json-file.js";
 import type {
   CreateOidcClientInput,
   OidcClientConfig,
@@ -62,7 +59,7 @@ export type ValidateClient = (client: OidcClientConfig) => void | Promise<void>;
 
 export class OidcClientStore {
   #clients = new Map<string, OidcClientConfig>();
-  #queue: Promise<void> = Promise.resolve();
+  readonly #queue = new SerialQueue();
 
   constructor(
     readonly filePath: string,
@@ -75,8 +72,9 @@ export class OidcClientStore {
     let clients: OidcClientConfig[];
     let migrated = false;
     let missing = false;
-    try {
-      const raw: unknown = JSON.parse(await readFile(this.filePath, "utf8"));
+    const contents = await readJsonFile(this.filePath);
+    if (contents.exists) {
+      const raw = contents.value;
       migrated =
         Array.isArray(raw) &&
         raw.some(
@@ -84,8 +82,7 @@ export class OidcClientStore {
             typeof client === "object" && client !== null && "scopes" in client,
         );
       clients = z.array(persistedClientSchema).parse(raw) as OidcClientConfig[];
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } else {
       clients = defaultClients();
       missing = true;
     }
@@ -100,12 +97,14 @@ export class OidcClientStore {
     await this.validateClients(clients);
 
     const temporary =
-      missing || migrated ? await this.stage(clients) : undefined;
+      missing || migrated
+        ? await stageJsonFile(this.filePath, clients)
+        : undefined;
     try {
       await this.applyInitialClients(clients);
       if (temporary)
         try {
-          await rename(temporary, this.filePath);
+          await commitStagedFile(temporary, this.filePath);
         } catch (error) {
           await this.rollbackAndThrow(error, () =>
             this.removeProviderClients(
@@ -118,7 +117,7 @@ export class OidcClientStore {
         clients.map((client) => [client.clientId, client]),
       );
     } finally {
-      if (temporary) await this.discard(temporary);
+      if (temporary) await discardStagedFile(temporary);
     }
   }
 
@@ -128,7 +127,7 @@ export class OidcClientStore {
 
   async create(input: CreateOidcClientInput): Promise<OidcClientConfig> {
     const client = parseCreateClient(input);
-    return this.mutate(async () => {
+    return this.#queue.run(async () => {
       if (this.#clients.has(client.clientId))
         throw new ClientConflictError(
           `client already exists: ${client.clientId}`,
@@ -148,7 +147,7 @@ export class OidcClientStore {
     input: UpdateOidcClientInput,
   ): Promise<OidcClientConfig> {
     const update = parseUpdateClient(input);
-    return this.mutate(async () => {
+    return this.#queue.run(async () => {
       const previous = this.#clients.get(clientId);
       if (!previous)
         throw new ClientNotFoundError(`client not found: ${clientId}`);
@@ -164,7 +163,7 @@ export class OidcClientStore {
   }
 
   async delete(clientId: string): Promise<void> {
-    return this.mutate(async () => {
+    return this.#queue.run(async () => {
       const previous = this.#clients.get(clientId);
       if (!previous)
         throw new ClientNotFoundError(`client not found: ${clientId}`);
@@ -179,7 +178,7 @@ export class OidcClientStore {
   }
 
   async reset(): Promise<OidcClientConfig[]> {
-    return this.mutate(async () => {
+    return this.#queue.run(async () => {
       const clients = defaultClients();
       const previous = [...this.#clients.values()];
       const next = new Map(clients.map((client) => [client.clientId, client]));
@@ -237,7 +236,7 @@ export class OidcClientStore {
   ): Promise<void> {
     const clients = [...next.values()];
     await this.validateClients(clients);
-    const temporary = await this.stage(clients);
+    const temporary = await stageJsonFile(this.filePath, clients);
     try {
       try {
         await updateProvider();
@@ -245,13 +244,13 @@ export class OidcClientStore {
         await this.rollbackAndThrow(error, rollbackProvider);
       }
       try {
-        await rename(temporary, this.filePath);
+        await commitStagedFile(temporary, this.filePath);
       } catch (error) {
         await this.rollbackAndThrow(error, rollbackProvider);
       }
       this.#clients = next;
     } finally {
-      await this.discard(temporary);
+      await discardStagedFile(temporary);
     }
   }
 
@@ -305,53 +304,5 @@ export class OidcClientStore {
       );
     }
     throw operationError;
-  }
-
-  private async stage(clients: OidcClientConfig[]): Promise<string> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, `${JSON.stringify(clients, null, 2)}\n`, {
-        flag: "wx",
-        mode: 0o600,
-      });
-      await chmod(temporary, 0o600);
-      return temporary;
-    } catch (error) {
-      try {
-        await this.discard(temporary);
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          "failed to stage clients",
-          {
-            cause: error,
-          },
-        );
-      }
-      throw error;
-    }
-  }
-
-  private async discard(temporary: string): Promise<void> {
-    try {
-      await unlink(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-
-  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = this.#queue;
-    let release!: () => void;
-    this.#queue = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
   }
 }

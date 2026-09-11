@@ -5,31 +5,16 @@ import {
   type CreateOidcClientInput,
   type UpdateOidcClientInput,
 } from "./types.js";
+import { identifier, printableAscii, unique } from "../validation/common.js";
 
 const withoutFragment = (value: string): boolean => !value.includes("#");
 
-const printableAscii = z
-  .string()
-  .min(1)
-  .refine(
-    (value) =>
-      [...value].every((character) => {
-        const codePoint = character.codePointAt(0);
-        return (
-          codePoint !== undefined && codePoint >= 0x20 && codePoint <= 0x7e
-        );
-      }),
-    "must contain only printable ASCII characters",
-  );
-
-const clientId = printableAscii
-  .refine((value) => value.trim().length > 0, "must not be blank")
-  .transform((value) => value.trim());
+const clientId = identifier;
 
 const scopeName = printableAscii
-  .refine((value) => value.trim().length > 0, "must not be blank")
+  .refine((value) => value.trim().length > 0, "空白だけにはできません")
   .transform((value) => value.trim())
-  .refine((value) => !/\s/.test(value), "must not contain whitespace");
+  .refine((value) => !/\s/.test(value), "空白文字は使用できません");
 
 const absoluteUri = z
   .string()
@@ -42,8 +27,8 @@ const absoluteUri = z
     } catch {
       return false;
     }
-  }, "must be an absolute URI without credentials")
-  .refine(withoutFragment, "must not include a fragment");
+  }, "認証情報を含まない絶対 URI を指定してください")
+  .refine(withoutFragment, "フラグメントは指定できません");
 
 const webUri = absoluteUri.refine((value) => {
   try {
@@ -52,9 +37,7 @@ const webUri = absoluteUri.refine((value) => {
   } catch {
     return false;
   }
-}, "must use http or https");
-
-const unique = <T>(values: T[]): T[] => [...new Set(values)];
+}, "http または https を使用してください");
 
 const commonShape = {
   clientType: z.enum(clientTypes),
@@ -76,26 +59,29 @@ function refineClient(
       ctx.addIssue({
         code: "custom",
         path: ["clientSecret"],
-        message: "public clients must not have a client secret",
+        message:
+          "PUBLIC クライアントにはクライアントシークレットを指定できません",
       });
     if (value.tokenEndpointAuthMethod !== "none")
       ctx.addIssue({
         code: "custom",
         path: ["tokenEndpointAuthMethod"],
-        message: "public clients must use none",
+        message: "PUBLIC クライアントの認証方式は none にしてください",
       });
   } else {
     if (!value.clientSecret)
       ctx.addIssue({
         code: "custom",
         path: ["clientSecret"],
-        message: "confidential clients require a client secret",
+        message:
+          "CONFIDENTIAL クライアントにはクライアントシークレットが必要です",
       });
     if (value.tokenEndpointAuthMethod === "none")
       ctx.addIssue({
         code: "custom",
         path: ["tokenEndpointAuthMethod"],
-        message: "confidential clients must authenticate at the token endpoint",
+        message:
+          "CONFIDENTIAL クライアントにはトークンエンドポイント認証が必要です",
       });
   }
 }

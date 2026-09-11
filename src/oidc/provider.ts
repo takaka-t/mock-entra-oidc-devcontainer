@@ -18,25 +18,31 @@ import { authorizationFaultDefinitions } from "../faults/authorization-fault.js"
 import { mutateTokenResponse } from "../faults/token-generator.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { FaultDecision } from "../scenario/types.js";
-import { findUser, type MockUser } from "../users/users.js";
+import type { MockUserStore } from "../users/store.js";
+import type { MockUser } from "../users/types.js";
 import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
 import { oidcInternalRoutes } from "./routes.js";
 
+type UserClaims = Omit<MockUser, "groups" | "mail"> & {
+  tid: string;
+  groups?: string[];
+  email?: string;
+};
+
 function userClaims(
   user: MockUser,
+  tenantId: string,
   decision: FaultDecision | null | undefined,
   includeEmail: boolean,
-): Omit<MockUser, "groups" | "mail"> & { groups?: string[]; email?: string } {
-  const { mail, ...rest } = user;
-  const claims: Omit<MockUser, "groups" | "mail"> & {
-    groups?: string[];
-    email?: string;
-  } = {
+): UserClaims {
+  const { mail, groups, ...rest } = user;
+  const claims: UserClaims = {
     ...rest,
+    tid: tenantId,
     ...(includeEmail ? { email: mail } : {}),
-    groups: [...user.groups],
+    groups: [...groups],
   };
   if (decision?.scenario === "NO_GROUPS") delete claims.groups;
   return claims;
@@ -88,6 +94,7 @@ async function patchIdToken(
   idToken: string,
   ctx: KoaContextWithOIDC,
   keys: SigningKeys,
+  userStore: MockUserStore,
 ): Promise<string> {
   const payload = { ...decodeJwt(idToken) };
   const sid = sessionIdFor(ctx);
@@ -95,7 +102,7 @@ async function patchIdToken(
   const client = ctx.oidc.client;
   if (emailOptionalClaimFor(client) && payload.email === undefined) {
     const sub = typeof payload.sub === "string" ? payload.sub : undefined;
-    const user = sub ? findUser(sub) : undefined;
+    const user = sub ? userStore.find(sub) : undefined;
     if (user) payload.email = user.mail;
   }
   const header = decodeProtectedHeader(idToken) as JWTHeaderParameters;
@@ -107,6 +114,7 @@ async function patchIdToken(
 export function createProvider(
   config: AppConfig,
   store: InMemoryScenarioStore,
+  userStore: MockUserStore,
   keys: SigningKeys,
   rolloverState: SigningKeyRolloverState,
   logger: FastifyBaseLogger,
@@ -137,6 +145,18 @@ export function createProvider(
     return decision;
   };
   const policy = interactionPolicy.base();
+  // A session can outlive an Admin-managed user. The default no_session check
+  // only checks accountId, so it otherwise reaches consent without a Grant.
+  policy
+    .get("login")!
+    .checks.add(
+      new interactionPolicy.Check(
+        "account_missing",
+        "End-User authentication is required",
+        "login_required",
+        (ctx) => Boolean(ctx.oidc.session?.accountId && !ctx.oidc.account),
+      ),
+    );
   authorizationFaultDefinitions.forEach((definition, index) => {
     policy.add(
       new interactionPolicy.Prompt(
@@ -240,7 +260,7 @@ export function createProvider(
             "accountId" in token && typeof token.accountId === "string"
               ? token.accountId
               : undefined;
-          const user = accountId ? findUser(accountId) : undefined;
+          const user = accountId ? userStore.find(accountId) : undefined;
           const tokenScope = "scope" in token ? token.scope : undefined;
           const client = ctx.oidc.client;
           if (user)
@@ -248,6 +268,7 @@ export function createProvider(
               jwt.payload,
               userClaims(
                 user,
+                config.tenantId,
                 claimDecisionFor(ctx),
                 includesScope(tokenScope, "email") ||
                   emailOptionalClaimFor(client),
@@ -294,7 +315,7 @@ export function createProvider(
       },
     },
     findAccount: (ctx, sub) => {
-      const user = findUser(sub);
+      const user = userStore.find(sub);
       if (!user) return undefined;
       const scenario = claimDecisionFor(ctx);
       return {
@@ -304,6 +325,7 @@ export function createProvider(
           return {
             ...userClaims(
               user,
+              config.tenantId,
               scenario,
               includesScope(scope, "email") ||
                 emailOptionalClaimFor(ctx.oidc.client),
@@ -371,6 +393,7 @@ export function createProvider(
         responseBody.id_token as string,
         ctx,
         keys,
+        userStore,
       );
       ctx.body = responseBody;
     }
