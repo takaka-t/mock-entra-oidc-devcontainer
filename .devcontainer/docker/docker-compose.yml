@@ -15,7 +15,8 @@ services:
       mock-idp-network:
         aliases:
           - mock-idp.test
-    command: sleep infinity
+    working_dir: /workspace
+    command: sh -c "npm ci; exec sleep infinity"
     init: true
 
 volumes:

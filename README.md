@@ -69,7 +69,17 @@ hostsファイルはアプリケーションから自動変更しません。
 
 ### セットアップ手順
 
-1. **依存関係を導入する**（devcontainerを初めて起動したとき、または`node_modules`用named volumeを作り直したときに実行）
+1. **依存関係の導入（自動）**
+
+   コンテナを起動するたびに、`.devcontainer/docker/docker-compose.yml`の`command`が`npm ci`を自動で実行します。初回起動や`node_modules`用named volumeを作り直したときだけでなく、`package-lock.json`の更新も次回起動時に反映されます。
+
+   自動実行はVS Codeの接続と並行して進むため、接続直後はまだ導入中のことがあります。進行状況と結果はコンテナログで確認できます（コンテナ名は`docker ps`で確認）。
+
+   ```bash
+   docker logs <コンテナ名>
+   ```
+
+   自動実行が失敗した場合（コンテナ自体は利用できます）や、起動し直さずに依存関係を入れ直す場合は、コンテナ内のターミナルで手動実行してください。
 
    ```bash
    npm ci
