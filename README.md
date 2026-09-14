@@ -45,14 +45,12 @@ devcontainerを起動する前に、次の2点を準備してください。
 
 **1. 外部Docker networkの作成**
 
-Composeは外部Docker network `mock-idp-network`を使用します。初回起動前にnetworkの存在を確認し、存在しなければ作成してください。
+Composeは外部Docker network `mock-idp-network`を使用します。
+初回起動前にnetworkを作成してください。
 
 ```bash
-docker network inspect mock-idp-network
 docker network create mock-idp-network
 ```
-
-`inspect`が成功した場合（既にnetworkが存在する場合）、`create`は不要です。
 
 **2. hostsファイルへのエントリ追加**
 
@@ -292,7 +290,7 @@ OIDC endpointはMicrosoft Entra ID (v2.0 endpoint)の[公式仕様](https://lear
 
 LogoutはRP-Initiated Logoutの確認ページを経由します。確認ページの送信先とサインアウト完了ページはLogout pathのsub pathとして`/oauth2/v2.0/logout/confirm`、`/oauth2/v2.0/logout/success`に配置されます（クライアントが直接呼ぶpathではありません）。`post_logout_redirect_uri`は、そのクライアントのPost Logout Redirect URIに登録済みの場合だけ受け付けます。
 
-`common`はEntraのmulti-tenant aliasです。クライアントライブラリはsign-inを始める前に`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`で到達性を確認します。このMock IdPはこの接続性プローブだけをtenant直下ではなくorigin直下の`/common/oauth2/v2.0/authorize`で提供し、`HEAD`のみを受け付けます（他のmethodは404）。tenant aliasとしての`common`は実装していないため、このpathで認証フローは開始できません。
+`common`はEntraのmulti-tenant aliasです。クライアントライブラリはsign-inを始める前に`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`で到達性を確認します。このMock IdPはこの接続性プローブだけをtenant直下ではなくorigin直下の`/common/oauth2/v2.0/authorize`で提供し、`HEAD`のみを受け付けます（CORS preflightの`OPTIONS`は204、他のmethodは404）。tenant aliasとしての`common`は実装していないため、このpathで認証フローは開始できません。
 
 Microsoft Entra IDのDiscoveryドキュメントには`pushed_authorization_request_endpoint`（PAR）は含まれないため、このMock IdPでもPAR機能は無効化しています。
 
@@ -315,7 +313,7 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 
 これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC クライアント一覧」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
 
-登録・編集はダイアログで行います。保存中は入力・終了操作が無効になり、成功するとダイアログが閉じ、画面右上に対象と操作結果の通知が表示されます。通知は10秒後に自動的に消えます（マウスオーバー中・フォーカス中は消えません）。閉じるボタンで消すか、同じ一覧で次の変更操作を始めた場合もすぐに消えます。保存に失敗した場合は入力を保持し、ダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は保存完了を明示し、「一覧を再読み込み」で一覧取得だけを再試行できます。キャンセル・閉じる・Escで終了でき、未保存の変更がある場合だけ破棄を確認します。背景クリックでは閉じません。
+登録・編集はダイアログで行います。保存に成功するとダイアログが閉じて結果の通知が表示され、失敗した場合は入力を保持したままダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は「一覧を再読み込み」で一覧取得だけを再試行できます。未保存の変更がある状態で閉じるときは確認します。
 
 全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
@@ -574,22 +572,22 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 
 Mock IdPが受け付けたリクエストを、そのとき有効だったシナリオと紐づけて記録します。Admin UIの「アクセスログ」カードで新しい順に一覧でき、障害を注入した行は「適用」の表示と赤い背景で区別されます。アプリケーション側で認証を試した後にこの一覧を再読み込みすると、どの要求が届き、どのシナリオが実際に作用したかを確認できます。
 
-- 記録対象は`/__mock`配下（Admin UI/Admin API）、`/health`、およびブラウザが管理画面やサインイン画面を開いたときに自動的に要求する`/favicon.ico`以外のすべてのリクエストです。Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（旧pathやtypoによる404、`common`や`organizations`のauthorityでサインインやDiscoveryを試みた要求など）は`other`として残します。Host不一致で`400 invalid_request_origin`になった要求も記録されます。
+- 記録対象は`/__mock`配下（Admin UI/Admin API）、`/health`、およびブラウザが管理画面やサインイン画面を開いたときに自動的に要求する`/favicon.ico`以外のすべてのリクエストです。Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（旧path、typo、未対応の`common`/`organizations` authorityへの要求など）は`other`として残します。Host不一致で`400 invalid_request_origin`になった要求も記録されます。
 - 記録するのはpathnameだけです。query、リクエスト本文、ヘッダーは記録しません（`code`、`client_secret`、`code_verifier`などを残さないため）。
 - 最新200件をプロセスのメモリ上に保持し、超過分は古い順に破棄します。永続化せず、再起動で消えます。
 - Admin UIは自動更新しません。「アクセスログを再読み込み」で最新の状態を取得し、「アクセスログをクリア」で全件削除します。シナリオの「初期状態に戻す」（`POST /__mock/api/reset`）ではアクセスログは消えません。
-- Admin UIでは、シナリオ以外のカード（アプリ接続情報、アクセスログ、OIDC クライアント一覧、テストユーザー一覧）を見出しのクリックで折りたためます。初回表示ではすべて折りたたまれています。見出しには件数を表示し、開閉状態はブラウザの`localStorage`に保存されます。一覧の読み込みに失敗したカードはエラーを見せるため自動的に展開されます（この自動展開は開閉状態として保存されません）。
+- Admin UIでは、シナリオ以外のカードを見出しのクリックで折りたためます。初回表示では折りたたまれており、開閉状態はブラウザに保存されます。
 
 ```bash
 curl --cacert "$CURL_CA" "$MOCK_ORIGIN/__mock/api/access-log"
 curl --cacert "$CURL_CA" -X DELETE "$MOCK_ORIGIN/__mock/api/access-log"
 ```
 
-`GET`は新しい順の配列を返し、`DELETE`は204を返します。各エントリの項目は次のとおりです。
+`GET`は受付の新しい順の配列を返し、`DELETE`は204を返します。各エントリの項目は次のとおりです。
 
 | 項目         | 内容                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | プロセス内で単調増加する番号。クリアしてもリセットしない                                                                                           |
+| `id`         | 受付順にプロセス内で単調増加する番号（応答完了順ではない）。クリアしてもリセットしない                                                             |
 | `receivedAt` | 受付時刻（ISO 8601）                                                                                                                               |
 | `method`     | HTTP method                                                                                                                                        |
 | `path`       | pathname（queryを含まない）                                                                                                                        |
@@ -616,3 +614,5 @@ npm run lint
 npm run format:check
 npm run build:check
 ```
+
+整形の適用は`npm run format`です。

@@ -10,7 +10,10 @@ export type AccessLogEndpoint =
   "discovery" | "authorization" | "interaction" | "token" | "jwks" | "logout" | "connectivity-probe" | "other";
 
 export interface AccessLogEntry {
-  /** Monotonic across the process lifetime; clearing the log does not reset it. */
+  /**
+   * Arrival sequence, monotonic across the process lifetime; clearing the log
+   * does not reset it. Assigned when the request arrives, not when it settles.
+   */
   id: number;
   receivedAt: string;
   method: string;

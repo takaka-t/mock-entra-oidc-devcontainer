@@ -30,13 +30,29 @@ export class InMemoryAccessLog {
     return this.#capacity;
   }
 
-  record(input: AccessLogInput): AccessLogEntry {
-    const entry = copy({ ...input, id: this.#nextId++ });
-    this.#entries.push(entry);
+  /**
+   * Reserves the id for a request as it arrives. Entries are only recorded
+   * once the response settles, so a request held by a timeout scenario would
+   * otherwise be numbered after faster requests that arrived later. Ids are
+   * a monotonic arrival sequence, not wall-clock time, so the listing stays in
+   * arrival order even if the system clock moves.
+   */
+  nextId(): number {
+    return this.#nextId++;
+  }
+
+  record(input: AccessLogInput, id: number = this.nextId()): AccessLogEntry {
+    const entry = copy({ ...input, id });
+    // Entries usually settle in arrival order; a late settle walks back from
+    // the end to its slot so the array stays sorted by id.
+    let index = this.#entries.length;
+    while (index > 0 && (this.#entries[index - 1]?.id ?? 0) > id) index--;
+    this.#entries.splice(index, 0, entry);
     if (this.#entries.length > this.#capacity) this.#entries.splice(0, this.#entries.length - this.#capacity);
     return copy(entry);
   }
 
+  /** Newest arrival first. */
   list(): AccessLogEntry[] {
     return this.#entries.map(copy).reverse();
   }

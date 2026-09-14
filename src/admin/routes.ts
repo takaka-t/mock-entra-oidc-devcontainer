@@ -199,11 +199,14 @@ export async function registerRoutes(
   });
 
   app.get("/health", async () => ({ status: "ok" }));
-  app.get("/__mock", async (_request, reply) =>
+  const adminUi = async (_request: FastifyRequest, reply: FastifyReply) =>
     reply
       .type("text/html; charset=utf-8")
-      .send(renderAdminHtml(config.tenantId, config.issuer, `${config.issuerOrigin}${config.logoutPath}`)),
-  );
+      .send(renderAdminHtml(config.tenantId, config.issuer, `${config.issuerOrigin}${config.logoutPath}`));
+  // The Admin UI URL is typed by hand, so tolerate a trailing slash the way the
+  // OIDC endpoints do; the API paths stay exact.
+  app.get("/__mock", adminUi);
+  app.get("/__mock/", adminUi);
   app.get("/__mock/api/scenario", async () => store.get());
   app.put("/__mock/api/scenario", async (request, reply) => {
     try {

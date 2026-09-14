@@ -24,7 +24,8 @@ export function matchesCommonProbePath(pathname: string, routePathname: string):
  * `HEAD {origin}/common/oauth2/v2.0/authorize` is the reachability probe client
  * libraries send before starting a sign-in. It is not part of the tenant OIDC
  * surface, so it is served here rather than by oidc-provider, and only `HEAD`
- * is registered: every other method stays a 404.
+ * is registered: every other method stays a 404, except that the HTTP fault
+ * middleware answers a CORS preflight `OPTIONS` with 204 before this route.
  *
  * The HTTP fault middleware runs ahead of this route, so AUTH_429 / AUTH_500 /
  * AUTH_TIMEOUT answer first and this handler is reached only when the probe is

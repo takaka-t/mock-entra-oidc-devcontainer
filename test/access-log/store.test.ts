@@ -38,6 +38,32 @@ describe("InMemoryAccessLog", () => {
     ]);
   });
 
+  it("keeps arrival order when a slow request settles after later ones", () => {
+    const log = new InMemoryAccessLog();
+    // A timeout-delayed request reserves its id first but is recorded last.
+    const slow = log.nextId();
+    log.record(entry({ path: "/fast" }));
+    const later = log.nextId();
+    log.record(entry({ path: "/faster" }));
+    log.record(entry({ path: "/slow" }), slow);
+    log.record(entry({ path: "/later" }), later);
+    expect(log.list().map((item) => [item.id, item.path])).toEqual([
+      [4, "/faster"],
+      [3, "/later"],
+      [2, "/fast"],
+      [1, "/slow"],
+    ]);
+  });
+
+  it("evicts by arrival order, so a very late settle of the oldest request is dropped first", () => {
+    const log = new InMemoryAccessLog(2);
+    const oldest = log.nextId();
+    log.record(entry({ path: "/second" }));
+    log.record(entry({ path: "/third" }));
+    log.record(entry({ path: "/oldest" }), oldest);
+    expect(log.list().map((item) => item.path)).toEqual(["/third", "/second"]);
+  });
+
   it("drops the oldest entries once the capacity is exceeded", () => {
     const log = new InMemoryAccessLog(2);
     log.record(entry({ path: "/first" }));

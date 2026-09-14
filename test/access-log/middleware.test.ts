@@ -121,6 +121,20 @@ describe("createAccessLogMiddleware", () => {
     expect(() => new Date(entry!.receivedAt).toISOString()).not.toThrow();
   });
 
+  it("numbers entries by arrival even when a slow request settles last", () => {
+    const { accessLog, middleware } = harness();
+    const slow = response();
+    middleware(request("POST", mockTokenPath), slow.response, vi.fn());
+    const quick = response();
+    middleware(request("GET", mockJwksPath), quick.response, vi.fn());
+    quick.finish(200);
+    slow.finish(200);
+    expect(accessLog.list().map((entry) => [entry.id, entry.endpoint])).toEqual([
+      [2, "jwks"],
+      [1, "token"],
+    ]);
+  });
+
   it("records a client disconnect before the response as a null status", () => {
     const { accessLog, middleware } = harness();
     const res = response();

@@ -106,6 +106,7 @@ export function createAccessLogMiddleware(
       return;
     }
     const pathname = rawPathname(url);
+    const id = accessLog.nextId();
     const receivedAt = new Date().toISOString();
     const startedAt = performance.now();
     const scenario = store.get().scenario;
@@ -116,16 +117,19 @@ export function createAccessLogMiddleware(
       res.off("finish", onFinish);
       res.off("close", onClose);
       const method = (req.method ?? "GET").toUpperCase();
-      accessLog.record({
-        receivedAt,
-        method,
-        path: pathname,
-        endpoint: classifyAccessLogEndpoint(method, pathname, table),
-        statusCode,
-        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-        scenario,
-        fault: store.getRequestDecision(req),
-      });
+      accessLog.record(
+        {
+          receivedAt,
+          method,
+          path: pathname,
+          endpoint: classifyAccessLogEndpoint(method, pathname, table),
+          statusCode,
+          durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+          scenario,
+          fault: store.getRequestDecision(req),
+        },
+        id,
+      );
     };
     const onFinish = (): void => settle(res.statusCode);
     const onClose = (): void => settle(res.writableFinished ? res.statusCode : null);
