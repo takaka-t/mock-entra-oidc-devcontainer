@@ -1,4 +1,5 @@
 import type Provider from "oidc-provider";
+import type { InMemoryAccessLog } from "../access-log/store.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import {
@@ -211,6 +212,7 @@ export async function registerRoutes(
   store: InMemoryScenarioStore,
   clientStore: OidcClientStore,
   userStore: MockUserStore,
+  accessLog: InMemoryAccessLog,
   config: AppConfig,
 ): Promise<void> {
   app.addHook("onRequest", async (request, reply) => {
@@ -344,6 +346,11 @@ export async function registerRoutes(
     if (!resetBodySchema.safeParse(request.body).success)
       return invalidResetBody(reply);
     return reply.send(await userStore.reset());
+  });
+  app.get("/__mock/api/access-log", async () => accessLog.list());
+  app.delete("/__mock/api/access-log", async (_request, reply) => {
+    accessLog.clear();
+    return reply.code(204).send();
   });
 
   app.get<{ Params: { uid: string } }>(

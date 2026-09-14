@@ -24,6 +24,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
   - [OAuth redirect errorとConnectivity ProbeのHTTP fault](#oauth-redirect-errorとconnectivity-probeのhttp-fault)
   - [Parametersと回復試験](#parametersと回復試験)
   - [Provider標準機能との責務分離](#provider標準機能との責務分離)
+- [アクセスログ](#アクセスログ)
 - [鍵と状態](#鍵と状態)
 - [開発コマンド](#開発コマンド)
 
@@ -314,7 +315,7 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 
 これらは初回起動時に作成される初期クライアントです。Admin UIの「OIDC クライアント一覧」からクライアントを追加・編集・削除でき、変更は再起動なしで反映されます。設定は`.data/clients.json`へ0600で保存されます。
 
-登録・編集はダイアログで行います。保存中は入力・終了操作が無効になり、成功するとダイアログが閉じ、一覧上部に対象と操作結果が表示されます。通知は閉じるか、同じ一覧で次の変更操作を始めるまで残ります。保存に失敗した場合は入力を保持し、ダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は保存完了を明示し、「一覧を再読み込み」で一覧取得だけを再試行できます。キャンセル・閉じる・Escで終了でき、未保存の変更がある場合だけ破棄を確認します。背景クリックでは閉じません。
+登録・編集はダイアログで行います。保存中は入力・終了操作が無効になり、成功するとダイアログが閉じ、画面右上に対象と操作結果の通知が表示されます。通知は10秒後に自動的に消えます（マウスオーバー中・フォーカス中は消えません）。閉じるボタンで消すか、同じ一覧で次の変更操作を始めた場合もすぐに消えます。保存に失敗した場合は入力を保持し、ダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は保存完了を明示し、「一覧を再読み込み」で一覧取得だけを再試行できます。キャンセル・閉じる・Escで終了でき、未保存の変更がある場合だけ破棄を確認します。背景クリックでは閉じません。
 
 全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
@@ -569,11 +570,42 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 
 新しいシナリオを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
 
+## アクセスログ
+
+Mock IdPが受け付けたリクエストを、そのとき有効だったシナリオと紐づけて記録します。Admin UIの「アクセスログ」カードで新しい順に一覧でき、障害を注入した行は「適用」の表示と赤い背景で区別されます。アプリケーション側で認証を試した後にこの一覧を再読み込みすると、どの要求が届き、どのシナリオが実際に作用したかを確認できます。
+
+- 記録対象は`/__mock`配下（Admin UI/Admin API）、`/health`、およびブラウザが管理画面やサインイン画面を開いたときに自動的に要求する`/favicon.ico`以外のすべてのリクエストです。Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（旧pathやtypoによる404、`common`や`organizations`のauthorityでサインインやDiscoveryを試みた要求など）は`other`として残します。Host不一致で`400 invalid_request_origin`になった要求も記録されます。
+- 記録するのはpathnameだけです。query、リクエスト本文、ヘッダーは記録しません（`code`、`client_secret`、`code_verifier`などを残さないため）。
+- 最新200件をプロセスのメモリ上に保持し、超過分は古い順に破棄します。永続化せず、再起動で消えます。
+- Admin UIは自動更新しません。「アクセスログを再読み込み」で最新の状態を取得し、「アクセスログをクリア」で全件削除します。シナリオの「初期状態に戻す」（`POST /__mock/api/reset`）ではアクセスログは消えません。
+- Admin UIでは、シナリオ以外のカード（アプリ接続情報、アクセスログ、OIDC クライアント一覧、テストユーザー一覧）を見出しのクリックで折りたためます。初回表示ではすべて折りたたまれています。見出しには件数を表示し、開閉状態はブラウザの`localStorage`に保存されます。一覧の読み込みに失敗したカードはエラーを見せるため自動的に展開されます。
+
+```bash
+curl --cacert "$CURL_CA" "$MOCK_ORIGIN/__mock/api/access-log"
+curl --cacert "$CURL_CA" -X DELETE "$MOCK_ORIGIN/__mock/api/access-log"
+```
+
+`GET`は新しい順の配列を返し、`DELETE`は204を返します。各エントリの項目は次のとおりです。
+
+| 項目         | 内容                                                                                                                                               |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | プロセス内で単調増加する番号。クリアしてもリセットしない                                                                                           |
+| `receivedAt` | 受付時刻（ISO 8601）                                                                                                                               |
+| `method`     | HTTP method                                                                                                                                        |
+| `path`       | pathname（queryを含まない）                                                                                                                        |
+| `endpoint`   | `discovery`, `authorization`, `interaction`, `token`, `jwks`, `logout`, `connectivity-probe`, `other`のいずれか                                    |
+| `statusCode` | 返したHTTP status。応答を返す前にクライアントが切断した場合は`null`（Timeout系シナリオでクライアントが先に諦めたケースの確認に使える）             |
+| `durationMs` | 受付から応答完了（または切断）までのミリ秒                                                                                                         |
+| `scenario`   | 受付時に有効だったシナリオ名。`NORMAL`を含む。対象外endpointへの要求やHost不一致などで作用しなかった場合も、有効だったシナリオ名がそのまま入る     |
+| `fault`      | この要求が実際に消費したFault。`scenario`, `endpoint`, `mode`, `parameters`, `remainingBefore`, `remainingAfter`を含む。作用しなかった場合は`null` |
+
+`scenario`と`fault`の違いが「シナリオは有効だったが作用しなかった要求」の切り分けに役立ちます。たとえば`TOKEN_500`を有効にした状態でJWKSを取得すると`scenario: "TOKEN_500"`かつ`fault: null`になり、Tokenへ`POST`すると`fault.scenario: "TOKEN_500"`が入ります。`LIMITED`では`remainingBefore`と`remainingAfter`で消費されたcountを追えます。Authorization系のOAuth redirect errorは、最初の`GET .../authorize`の行にFaultが付き、続くサインイン画面と`.../authorize/{uid}`への再開要求は`fault: null`のまま記録されます。
+
 ## 鍵と状態
 
 署名鍵は通常鍵、rollover鍵、異常署名鍵の3種を初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。`.data/`はGit対象外です。JWKSには既定で通常鍵の公開部分だけを掲載し、`SIGNING_KEY_ROLLOVER`の適用後は通常鍵とrollover鍵の2つを掲載します。鍵ディレクトリを削除すると再生成されます。
 
-OIDC ClientとテストユーザーはそれぞれAdmin UI/Admin APIで管理し、`.data/clients.json`と`.data/users.json`へ永続化します。OIDC artifactとシナリオストアは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴は失われます。
+OIDC ClientとテストユーザーはそれぞれAdmin UI/Admin APIで管理し、`.data/clients.json`と`.data/users.json`へ永続化します。OIDC artifact、シナリオストア、アクセスログは単一プロセスのインメモリ実装です。再起動で認可コード、session、シナリオ履歴、アクセスログは失われます。
 
 ## 開発コマンド
 

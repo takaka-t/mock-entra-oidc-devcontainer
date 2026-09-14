@@ -228,6 +228,35 @@ describe("InMemoryScenarioStore", () => {
     expect(store.get().triggeredCount).toBe(1);
   });
 
+  it("remembers the decision each request consumed", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "TOKEN_500", mode: "LIMITED", failureCount: 2 });
+    const consumer = {};
+    const bystander = {};
+    const ticket = store.startRequest(consumer);
+    store.startRequest(bystander);
+
+    expect(store.getRequestDecision(consumer)).toBeNull();
+    const decision = store.consumeForRequest("token", ticket);
+    expect(decision).not.toBeNull();
+    expect(store.getRequestDecision(consumer)).toEqual(decision);
+    expect(store.getRequestDecision(bystander)).toBeNull();
+    expect(store.getRequestDecision({})).toBeNull();
+
+    // A later activation or reset must not rewrite what already happened.
+    store.reset();
+    expect(store.getRequestDecision(consumer)).toEqual(decision);
+  });
+
+  it("does not attribute test-only unbound consumption to any request", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "TOKEN_500", mode: "CONTINUOUS" });
+    const request = {};
+    store.startRequest(request);
+    expect(store.consume("token")?.scenario).toBe("TOKEN_500");
+    expect(store.getRequestDecision(request)).toBeNull();
+  });
+
   it("separates scenario activation and full reset lifecycle hooks", () => {
     const activated: string[] = [];
     let resetCount = 0;

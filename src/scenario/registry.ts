@@ -168,6 +168,7 @@ export const defaultRetryAfterSeconds = 60;
 export interface ScenarioUiMetadata {
   supportsMode: boolean;
   parameterKind: ScenarioParameterKind;
+  effect: ScenarioDefinition["effect"];
 }
 
 export const scenarioUiMetadata = Object.fromEntries(
@@ -177,6 +178,7 @@ export const scenarioUiMetadata = Object.fromEntries(
       {
         supportsMode: name !== "NORMAL",
         parameterKind: definition.parameterKind,
+        effect: definition.effect,
       },
     ],
   ),

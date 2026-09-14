@@ -32,6 +32,7 @@ export class InMemoryScenarioStore {
   #nextActivationId = 1;
   #requestTickets = new WeakMap<object, ScenarioRequestTicket>();
   #consumedTickets = new WeakSet<ScenarioRequestTicket>();
+  #requestDecisions = new WeakMap<ScenarioRequestTicket, FaultDecision>();
   readonly #hooks: ScenarioStoreHooks;
 
   constructor(hooks: ScenarioStoreHooks = {}) {
@@ -94,6 +95,17 @@ export class InMemoryScenarioStore {
   }
 
   /**
+   * The fault this request consumed, if any. Faults are consumed from several
+   * places (the HTTP fault middleware and the provider's claim, authorization
+   * and token hooks), but every one of them goes through consumeForRequest, so
+   * the store is the one place that can tie a decision back to its request.
+   */
+  getRequestDecision(request: object): FaultDecision | null {
+    const ticket = this.#requestTickets.get(request);
+    return ticket ? (this.#requestDecisions.get(ticket) ?? null) : null;
+  }
+
+  /**
    * Consumes a fault without binding to a specific in-flight request.
    *
    * Test-only. Every production caller goes through consumeForRequest so that
@@ -148,7 +160,10 @@ export class InMemoryScenarioStore {
       remainingBefore: before,
       remainingAfter: after,
     };
-    if (ticket) this.#consumedTickets.add(ticket);
+    if (ticket) {
+      this.#consumedTickets.add(ticket);
+      this.#requestDecisions.set(ticket, decision);
+    }
     if (current.mode === "LIMITED" && after === 0) {
       this.#lastCompleted = {
         ...current,

@@ -522,6 +522,43 @@ describe("OIDC provider", () => {
     expect(callback.searchParams.get("error")).toBe("access_denied");
     expect(callback.searchParams.get("state")).toBe("denied-state");
     expect(context.store.get().scenario).toBe("NORMAL");
+
+    // The redirect flow is three requests; only the first one consumed the
+    // fault, and none of them recorded the query string.
+    const entries = context.accessLog.list().slice(0, 3).reverse();
+    expect(entries).toMatchObject([
+      {
+        method: "GET",
+        path: authorizePath,
+        endpoint: "authorization",
+        statusCode: 303,
+        scenario: "ACCESS_DENIED",
+        fault: {
+          scenario: "ACCESS_DENIED",
+          endpoint: "authorization",
+          mode: "LIMITED",
+          remainingBefore: 1,
+          remainingAfter: 0,
+        },
+      },
+      {
+        method: "GET",
+        path: interaction.pathname,
+        endpoint: "interaction",
+        statusCode: 303,
+        scenario: "NORMAL",
+        fault: null,
+      },
+      {
+        method: "GET",
+        path: resume.pathname,
+        endpoint: "authorization",
+        statusCode: 303,
+        scenario: "NORMAL",
+        fault: null,
+      },
+    ]);
+    expect(entries.every((entry) => !entry.path.includes("?"))).toBe(true);
   });
 
   it("rejects missing, mismatched, and malformed PKCE data", async () => {

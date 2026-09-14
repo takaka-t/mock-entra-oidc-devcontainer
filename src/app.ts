@@ -4,10 +4,21 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import type { AppConfig } from "./config.js";
+import {
+  createAccessLogMiddleware,
+  resolveAccessLogEndpoints,
+} from "./access-log/middleware.js";
+import { InMemoryAccessLog } from "./access-log/store.js";
 import { OidcClientStore } from "./clients/store.js";
 import { registerRoutes } from "./admin/routes.js";
 import { createHttpFaultMiddleware } from "./faults/http-fault.js";
-import { decodeRoutingPath, rawPathname, routedPathname } from "./http-path.js";
+import {
+  adminPath,
+  decodeRoutingPath,
+  managementPath,
+  rawPathname,
+  routedPathname,
+} from "./http-path.js";
 import { loadSigningKeys } from "./oidc/keys.js";
 import { SigningKeyRolloverState } from "./oidc/key-rollover.js";
 import {
@@ -33,19 +44,12 @@ export interface AppContext {
   store: InMemoryScenarioStore;
   clientStore: OidcClientStore;
   userStore: MockUserStore;
+  accessLog: InMemoryAccessLog;
 }
 
 export interface BuildAppOptions {
   /** Use false only for in-process tests that do not open a network listener. */
   https: HttpsServerOptions | false;
-}
-
-function managementPath(pathname: string): boolean {
-  return pathname === "/health" || adminPath(pathname);
-}
-
-function adminPath(pathname: string): boolean {
-  return pathname === "/__mock" || pathname.startsWith("/__mock/");
 }
 
 /**
@@ -317,6 +321,14 @@ export async function buildApp(
   const routedIssuerPath = decodeRoutingPath(config.issuerPath);
   await app.register(middie);
   await app.register(formbody);
+  const accessLog = new InMemoryAccessLog();
+  app.use(
+    createAccessLogMiddleware(
+      accessLog,
+      store,
+      resolveAccessLogEndpoints(config),
+    ),
+  );
   app.use((request, response, next) => {
     const url = request.url ?? "/";
     const pathname = rawPathname(url);
@@ -390,6 +402,14 @@ export async function buildApp(
     }
   });
   registerCommonProbeRoute(app, config);
-  await registerRoutes(app, provider, store, clientStore, userStore, config);
-  return { app, store, clientStore, userStore };
+  await registerRoutes(
+    app,
+    provider,
+    store,
+    clientStore,
+    userStore,
+    accessLog,
+    config,
+  );
+  return { app, store, clientStore, userStore, accessLog };
 }

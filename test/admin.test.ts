@@ -128,6 +128,135 @@ describe("admin API and UI", () => {
     });
   });
 
+  it("records OIDC requests in the access log with the scenario that applied", async () => {
+    await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      payload: { scenario: "TOKEN_500", mode: "LIMITED", failureCount: 1 },
+    });
+    const faulted = await context.app.inject({
+      method: "POST",
+      url: tokenPath,
+      headers: {
+        host: "localhost",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      payload: "grant_type=authorization_code&code=invalid",
+    });
+    expect(faulted.statusCode).toBe(500);
+    const healthy = await context.app.inject({
+      url: jwksPath,
+      headers: { host: "localhost" },
+    });
+    expect(healthy.statusCode).toBe(200);
+    const wrongHost = await context.app.inject({
+      url: jwksPath,
+      headers: { host: "elsewhere.test" },
+    });
+    expect(wrongHost.statusCode).toBe(400);
+    await context.app.inject({ url: "/health" });
+    // Opening the Admin UI in a browser also requests the site icon.
+    expect(
+      (
+        await context.app.inject({
+          url: "/favicon.ico",
+          headers: { host: "localhost" },
+        })
+      ).statusCode,
+    ).toBe(404);
+
+    const listed = await context.app.inject("/__mock/api/access-log");
+    expect(listed.statusCode).toBe(200);
+    expect(listed.headers["cache-control"]).toBe("no-store");
+    const entries = listed.json<Array<Record<string, unknown>>>();
+    expect(entries).toHaveLength(3);
+    expect(entries.map((entry) => entry.id)).toEqual([3, 2, 1]);
+    expect(entries).toMatchObject([
+      {
+        method: "GET",
+        path: jwksPath,
+        endpoint: "jwks",
+        statusCode: 400,
+        scenario: "NORMAL",
+        fault: null,
+      },
+      {
+        method: "GET",
+        path: jwksPath,
+        endpoint: "jwks",
+        statusCode: 200,
+        scenario: "NORMAL",
+        fault: null,
+      },
+      {
+        method: "POST",
+        path: tokenPath,
+        endpoint: "token",
+        statusCode: 500,
+        scenario: "TOKEN_500",
+        fault: {
+          scenario: "TOKEN_500",
+          endpoint: "token",
+          mode: "LIMITED",
+          remainingBefore: 1,
+          remainingAfter: 0,
+        },
+      },
+    ]);
+    for (const entry of entries) {
+      expect(Object.keys(entry).sort()).toEqual([
+        "durationMs",
+        "endpoint",
+        "fault",
+        "id",
+        "method",
+        "path",
+        "receivedAt",
+        "scenario",
+        "statusCode",
+      ]);
+      expect(typeof entry.durationMs).toBe("number");
+      expect(() =>
+        new Date(String(entry.receivedAt)).toISOString(),
+      ).not.toThrow();
+    }
+    // Neither the admin API calls above nor /health appear in the log.
+    expect(
+      entries.some((entry) => String(entry.path).startsWith("/__mock")),
+    ).toBe(false);
+    expect(entries.some((entry) => entry.path === "/health")).toBe(false);
+    expect(entries.some((entry) => entry.path === "/favicon.ico")).toBe(false);
+
+    const cleared = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/access-log",
+    });
+    expect(cleared.statusCode).toBe(204);
+    expect((await context.app.inject("/__mock/api/access-log")).json()).toEqual(
+      [],
+    );
+    expect(
+      (await context.app.inject("/__mock/api/scenario")).json(),
+    ).toMatchObject({ lastCompleted: { scenario: "TOKEN_500" } });
+  });
+
+  it("rejects cross-site access log clears and leaves the log intact", async () => {
+    await context.app.inject({
+      url: jwksPath,
+      headers: { host: "localhost" },
+    });
+    const crossSite = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/access-log",
+      headers: { origin: "https://evil.test" },
+    });
+    expect(crossSite.statusCode).toBe(403);
+    expect(crossSite.json().error).toBe("invalid_admin_origin");
+    expect(
+      (await context.app.inject("/__mock/api/access-log")).json(),
+    ).toHaveLength(1);
+  });
+
   it("resets the active count and published signing key through the Reset API", async () => {
     const initialKeys = (
       await context.app.inject({
@@ -318,11 +447,28 @@ describe("admin API and UI", () => {
     );
     expect(response.body).toContain("ログアウトをテスト");
     expect(response.body).toContain(
-      "ブラウザに保持された Mock IdP のセッションでログアウト（RP-Initiated Logout）画面の動作を確認できます。",
+      'title="ブラウザに保持された Mock IdP のセッションでログアウト（RP-Initiated Logout）画面の動作を確認できます。"',
     );
+    // The logout test is something you click during a test, so it lives in
+    // the always-visible scenario header rather than a collapsible card.
+    const stateHeaderHtml =
+      /<div class="state-header">[\s\S]*?<\/div><\/div>/.exec(
+        response.body,
+      )?.[0];
+    if (!stateHeaderHtml) throw new Error("Scenario header was not found");
+    expect(stateHeaderHtml).toContain(
+      '<h2>シナリオ</h2><div class="state-tools">',
+    );
+    expect(stateHeaderHtml).toContain('id="testLogout"');
+    expect(stateHeaderHtml).toContain('id="refresh"');
+    expect(stateHeaderHtml.indexOf('id="testLogout"')).toBeLessThan(
+      stateHeaderHtml.indexOf('id="refresh"'),
+    );
+    expect(response.body.match(/id="testLogout"/g)).toHaveLength(1);
     expect(response.body).toContain('<html lang="ja">');
     expect(response.body).toContain("現在のシナリオ");
-    expect(response.body).toContain("シナリオの状態");
+    expect(response.body).toContain("シナリオの設定");
+    expect(response.body).not.toContain("<h2>シナリオの状態</h2>");
     expect(response.body).toContain("実行状況");
     expect(response.body).toContain("設定した失敗回数");
     expect(response.body).toContain("残り失敗回数");
@@ -340,8 +486,17 @@ describe("admin API and UI", () => {
       "userPreferredUsername",
       "userMail",
       "retryAfterRequired",
+      "failureCount",
     ])
       expect(response.body).toContain(`for="${requiredFor}" class="required"`);
+    // Like retryAfterRequired, failureCount is required only while its field
+    // is shown: a hidden required input would block submission silently.
+    expect(response.body).toContain(
+      '<input id="failureCount" type="number" min="1" step="1" value="1" required>',
+    );
+    expect(response.body).toContain(
+      "$('failureCount').disabled=!limited;$('failureCount').required=limited;",
+    );
     for (const notRequiredFor of [
       "userSub",
       "logoutUris",
@@ -349,7 +504,9 @@ describe("admin API and UI", () => {
       "clientType",
       "retryAfterOptional",
     ])
-      expect(response.body).not.toContain(`for="${notRequiredFor}" class="required"`);
+      expect(response.body).not.toContain(
+        `for="${notRequiredFor}" class="required"`,
+      );
     expect(response.body).toContain(
       "クライアントシークレットは平文で保存・表示されます。このAdmin APIには認証がないため、インターネットに公開しないでください。",
     );
@@ -414,7 +571,72 @@ describe("admin API and UI", () => {
     if (!stateHtml) throw new Error("State panel was not found");
     expect(stateHtml).toContain('id="refresh"');
     expect(stateHtml).toContain('id="history"');
+    // The state read-out and the scenario form share one card so the
+    // fault/normal border frames the whole control panel.
+    expect(stateHtml).toContain("<h2>シナリオ</h2>");
+    expect(stateHtml).toContain('<form id="form" class="scenario-form">');
+    expect(stateHtml).toContain(
+      '<h3 class="state-details-title">シナリオの設定</h3>',
+    );
+    expect(stateHtml).toContain('id="rolloverNote"');
+    expect(stateHtml).toContain('id="reset"');
+    expect(stateHtml).not.toContain("<details");
+    expect(response.body).not.toContain(
+      '<section class="card"><form id="form">',
+    );
     expect(response.body.match(/id="refresh"/g)).toHaveLength(1);
+    // Every other card collapses and starts collapsed (a saved preference
+    // reopens it); the scenario card never collapses.
+    for (const [panel, heading, count] of [
+      ["connectionPanel", "アプリ接続情報", null],
+      ["accessLogPanel", "アクセスログ", "accessLogCount"],
+      ["clientPanel", "OIDC クライアント一覧", "clientCount"],
+      ["userPanel", "テストユーザー一覧", "userCount"],
+    ] as const) {
+      const details = new RegExp(
+        `<details class="card" id="${panel}"><summary>([\\s\\S]*?)</summary>`,
+      ).exec(response.body);
+      if (!details) throw new Error(`${panel} was not found`);
+      expect(details[1]).toContain(`<h2>${heading}`);
+      expect(details[1]).not.toContain("<button");
+      if (count)
+        expect(details[1]).toContain(`<span id="${count}" class="count">`);
+      else expect(details[1]).not.toContain('class="count"');
+    }
+    expect(response.body.match(/<details class="card"/g)).toHaveLength(4);
+    expect(response.body.match(/<\/details>/g)).toHaveLength(4);
+    expect(response.body).not.toMatch(/<details[^>]* open[ >]/);
+    const connectionHtml =
+      /<details class="card" id="connectionPanel">[\s\S]*?<\/details>/.exec(
+        response.body,
+      )?.[0];
+    if (!connectionHtml) throw new Error("Connection panel was not found");
+    expect(connectionHtml).not.toContain('id="testLogout"');
+    expect(connectionHtml).not.toContain('class="actions"');
+    const order = [
+      'id="connectionPanel"',
+      '<section id="state"',
+      'id="accessLogPanel"',
+      'id="clientPanel"',
+      'id="userPanel"',
+    ].map((marker) => response.body.indexOf(marker));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    for (const text of [
+      "mock-idp-admin-panels",
+      "localStorage.getItem(panelStorageKey)",
+      "localStorage.setItem(panelStorageKey",
+      "addEventListener('toggle'",
+      "revealPanel(kind + 'Panel')",
+      "revealPanel('accessLogPanel')",
+      "'autoOpen' in panel.dataset",
+      "Count').textContent='（'",
+      "details.card>summary",
+      "details.card[open]>summary",
+      "max-height:min(28rem,55vh)",
+      "position:sticky",
+    ])
+      expect(response.body).toContain(text);
     expect(response.body).toContain('max="300000"');
     expect(response.body).toContain('id="retryAfterRequired"');
     expect(response.body).toContain('value="60" required');
@@ -430,7 +652,10 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("新しい署名鍵はJWKSで公開され続けます");
     expect(response.body).toContain('class="grid state-grid"');
     expect(response.body).toContain('class="state-current"');
-    expect(response.body).toContain('class="state-details"');
+    expect(response.body).toContain('class="state-now"');
+    expect(response.body).toContain('aria-label="実行状況"');
+    expect(response.body).toContain('id="modeFields" class="contents"');
+    expect(response.body).toContain('class="fields"><div id="scenarioField">');
     expect(response.body).toContain('class="history"');
     expect(response.body).toContain("overflow-wrap:anywhere");
     expect(response.body).not.toContain(
@@ -461,6 +686,66 @@ describe("admin API and UI", () => {
     ])
       expect(response.body).toContain(`id="${id}"`);
     expect(response.body).toContain("/__mock/api/users");
+    for (const id of [
+      "accessLog",
+      "accessLogRows",
+      "accessLogError",
+      "refreshAccessLog",
+      "clearAccessLog",
+    ])
+      expect(response.body).toContain(`id="${id}"`);
+    for (const text of [
+      "アクセスログ",
+      "/__mock/api/access-log",
+      "アクセスログはありません。",
+      "アクセスログをクリアしますか？",
+      "アクセスログをクリア",
+      'id="refreshAccessLog" type="button">アクセスログを再読み込み</button>',
+      "最新 200 件",
+      "管理画面・管理 API へのアクセス（ブラウザが自動的に要求する /favicon.ico を含む）と、query・本文・ヘッダーは記録しません。",
+      '<th scope="col">シナリオ</th>',
+      "未適用",
+      "中断",
+      "tr.injected",
+      ".log-wrap{max-height:min(28rem,55vh);overflow:auto",
+    ])
+      expect(response.body).toContain(text);
+    expect(response.body).toContain(
+      'id="accessLogError" class="error" role="alert"',
+    );
+    expect(response.body).toContain(
+      'id="clearAccessLog" class="danger" type="button"',
+    );
+    const accessLogHtml =
+      /<details class="card" id="accessLogPanel">[\s\S]*?<\/details>/.exec(
+        response.body,
+      )?.[0];
+    if (!accessLogHtml) throw new Error("Access log panel was not found");
+    expect(accessLogHtml).toContain('<table id="accessLog"');
+    expect(accessLogHtml).not.toContain("innerHTML");
+    expect(response.body.indexOf('id="accessLog"')).toBeGreaterThan(
+      response.body.indexOf('id="rolloverNote"'),
+    );
+    expect(response.body.indexOf('id="accessLog"')).toBeLessThan(
+      response.body.indexOf("OIDC クライアント一覧"),
+    );
+    // Lists only carry identifying columns; the rest lives in the dialogs.
+    expect(response.body).toContain(
+      "listTable(root,['クライアント ID（client_id）','種別（clientType）','リダイレクト URI（redirectUris）','操作'])",
+    );
+    expect(response.body).toContain(
+      "listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作'])",
+    );
+    expect(response.body).toContain("table.className='data-table list-table'");
+    expect(response.body).not.toContain(
+      "'クライアントシークレット（client_secret）：'",
+    );
+    expect(response.body).not.toContain(
+      "'ユーザー ID（sub）：'+user.sub+' ｜ ",
+    );
+    expect(response.body).toContain(
+      '<table id="accessLog" class="data-table log-table">',
+    );
     expect(response.body).toContain("crypto.randomUUID");
     expect(response.body).toContain('id="userMail" type="email" required');
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
