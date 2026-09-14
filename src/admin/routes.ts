@@ -239,7 +239,13 @@ export async function registerRoutes(
   app.get("/__mock", async (_request, reply) =>
     reply
       .type("text/html; charset=utf-8")
-      .send(renderAdminHtml(config.tenantId, config.issuer)),
+      .send(
+        renderAdminHtml(
+          config.tenantId,
+          config.issuer,
+          `${config.issuerOrigin}${config.logoutPath}`,
+        ),
+      ),
   );
   app.get("/__mock/api/scenario", async () => store.get());
   app.put("/__mock/api/scenario", async (request, reply) => {

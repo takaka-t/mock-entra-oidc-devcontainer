@@ -313,6 +313,13 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("テナント ID（tid）");
     expect(response.body).toContain(mockTenantId);
     expect(response.body).toContain("http://localhost");
+    expect(response.body).toContain(
+      `id="testLogout" href="${appConfig.issuerOrigin}${appConfig.logoutPath}" target="_blank" rel="noopener noreferrer"`,
+    );
+    expect(response.body).toContain("ログアウトをテスト");
+    expect(response.body).toContain(
+      "ブラウザに保持された Mock IdP のセッションでログアウト（RP-Initiated Logout）画面の動作を確認できます。",
+    );
     expect(response.body).toContain('<html lang="ja">');
     expect(response.body).toContain("現在のシナリオ");
     expect(response.body).toContain("シナリオの状態");
