@@ -2,36 +2,24 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type AppConfig } from "../src/config.js";
 
-type TestStatePaths = Pick<
-  AppConfig,
-  "keyDirectory" | "clientConfigFile" | "userConfigFile"
->;
-type TestConfigOverrides = TestStatePaths &
-  Partial<Omit<AppConfig, keyof TestStatePaths>>;
+type TestStatePaths = Pick<AppConfig, "keyDirectory" | "clientConfigFile" | "userConfigFile">;
+type TestConfigOverrides = TestStatePaths & Partial<Omit<AppConfig, keyof TestStatePaths>>;
 
-const repositoryDataDirectory = fileURLToPath(
-  new URL("../.data", import.meta.url),
-);
+const repositoryDataDirectory = fileURLToPath(new URL("../.data", import.meta.url));
 
 function assertOutsideRepositoryData(name: string, value: string): void {
   const relativePath = relative(repositoryDataDirectory, resolve(value));
   if (
     relativePath === "" ||
-    (!relativePath.startsWith(`..${sep}`) &&
-      relativePath !== ".." &&
-      !isAbsolute(relativePath))
+    (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath))
   )
-    throw new Error(
-      `${name} must not resolve inside the repository .data directory`,
-    );
+    throw new Error(`${name} must not resolve inside the repository .data directory`);
 }
 
 function tenantBasePathFor(issuerPath: string): string {
   if (!issuerPath) return "";
   if (!issuerPath.endsWith("/v2.0"))
-    throw new Error(
-      `testConfig issuer path must end with "/v2.0", got "${issuerPath}"`,
-    );
+    throw new Error(`testConfig issuer path must end with "/v2.0", got "${issuerPath}"`);
   return issuerPath.slice(0, -"/v2.0".length);
 }
 
@@ -42,8 +30,7 @@ export function testConfig(overrides: TestConfigOverrides): AppConfig {
   assertOutsideRepositoryData("userConfigFile", overrides.userConfigFile);
   const issuer = overrides.issuer ?? defaults.issuer;
   const url = new URL(issuer);
-  const issuerPath =
-    url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  const issuerPath = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
   const tenantBasePath = tenantBasePathFor(issuerPath);
   return {
     ...defaults,

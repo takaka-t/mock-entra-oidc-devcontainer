@@ -7,14 +7,7 @@ import type { FaultDecision, ScenarioName } from "../scenario/types.js";
  * `other` so an unexpected 404 still shows up in the log.
  */
 export type AccessLogEndpoint =
-  | "discovery"
-  | "authorization"
-  | "interaction"
-  | "token"
-  | "jwks"
-  | "logout"
-  | "connectivity-probe"
-  | "other";
+  "discovery" | "authorization" | "interaction" | "token" | "jwks" | "logout" | "connectivity-probe" | "other";
 
 export interface AccessLogEntry {
   /** Monotonic across the process lifetime; clearing the log does not reset it. */

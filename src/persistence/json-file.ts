@@ -1,21 +1,11 @@
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export type JsonFileContents =
-  { exists: true; value: unknown } | { exists: false };
+export type JsonFileContents = { exists: true; value: unknown } | { exists: false };
 
 /** Reads and parses a JSON file. A missing file is reported, not thrown. */
-export async function readJsonFile(
-  filePath: string,
-): Promise<JsonFileContents> {
+export async function readJsonFile(filePath: string): Promise<JsonFileContents> {
   let raw: string;
   try {
     raw = await readFile(filePath, "utf8");
@@ -31,10 +21,7 @@ export async function readJsonFile(
  * caller can finish other work before making it visible with
  * commitStagedFile(). The temporary file is removed again on failure.
  */
-export async function stageJsonFile(
-  filePath: string,
-  value: unknown,
-): Promise<string> {
+export async function stageJsonFile(filePath: string, value: unknown): Promise<string> {
   await mkdir(dirname(filePath), { recursive: true });
   const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -48,20 +35,13 @@ export async function stageJsonFile(
     try {
       await discardStagedFile(temporary);
     } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        `failed to stage ${filePath}`,
-        { cause: error },
-      );
+      throw new AggregateError([error, cleanupError], `failed to stage ${filePath}`, { cause: error });
     }
     throw error;
   }
 }
 
-export function commitStagedFile(
-  temporary: string,
-  filePath: string,
-): Promise<void> {
+export function commitStagedFile(temporary: string, filePath: string): Promise<void> {
   return rename(temporary, filePath);
 }
 

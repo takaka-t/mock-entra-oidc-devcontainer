@@ -101,11 +101,7 @@ describe("createAccessLogMiddleware", () => {
     const { accessLog, middleware } = harness();
     const next = vi.fn();
     const res = response();
-    middleware(
-      request("post", `${mockTokenPath}?grant_type=x`),
-      res.response,
-      next,
-    );
+    middleware(request("post", `${mockTokenPath}?grant_type=x`), res.response, next);
     expect(next).toHaveBeenCalledOnce();
     expect(accessLog.list()).toEqual([]);
     res.finish(500);
@@ -130,9 +126,7 @@ describe("createAccessLogMiddleware", () => {
     const res = response();
     middleware(request("GET", mockJwksPath), res.response, vi.fn());
     res.abort();
-    expect(accessLog.list()).toMatchObject([
-      { endpoint: "jwks", statusCode: null },
-    ]);
+    expect(accessLog.list()).toMatchObject([{ endpoint: "jwks", statusCode: null }]);
   });
 
   it("records each request exactly once even when close follows finish", () => {
@@ -204,8 +198,6 @@ describe("createAccessLogMiddleware", () => {
     middleware(req, res.response, vi.fn());
     expect(store.consumeForRequest("jwks", store.startRequest(req))).toBeNull();
     res.finish(200);
-    expect(accessLog.list()).toMatchObject([
-      { scenario: "TOKEN_500", fault: null },
-    ]);
+    expect(accessLog.list()).toMatchObject([{ scenario: "TOKEN_500", fault: null }]);
   });
 });

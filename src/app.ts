@@ -4,38 +4,18 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerOptions as HttpsServerOptions } from "node:https";
 import type { AppConfig } from "./config.js";
-import {
-  createAccessLogMiddleware,
-  resolveAccessLogEndpoints,
-} from "./access-log/middleware.js";
+import { createAccessLogMiddleware, resolveAccessLogEndpoints } from "./access-log/middleware.js";
 import { InMemoryAccessLog } from "./access-log/store.js";
 import { OidcClientStore } from "./clients/store.js";
 import { registerRoutes } from "./admin/routes.js";
 import { createHttpFaultMiddleware } from "./faults/http-fault.js";
-import {
-  adminPath,
-  decodeRoutingPath,
-  managementPath,
-  rawPathname,
-  routedPathname,
-} from "./http-path.js";
+import { adminPath, decodeRoutingPath, managementPath, rawPathname, routedPathname } from "./http-path.js";
 import { loadSigningKeys } from "./oidc/keys.js";
 import { SigningKeyRolloverState } from "./oidc/key-rollover.js";
-import {
-  applyProviderClient,
-  createProvider,
-  removeProviderClient,
-  validateProviderClient,
-} from "./oidc/provider.js";
-import {
-  matchesCommonProbePath,
-  registerCommonProbeRoute,
-} from "./oidc/common-probe.js";
+import { applyProviderClient, createProvider, removeProviderClient, validateProviderClient } from "./oidc/provider.js";
+import { matchesCommonProbePath, registerCommonProbeRoute } from "./oidc/common-probe.js";
 import { oidcInternalRoutes } from "./oidc/routes.js";
-import {
-  resolveCorsPathnames,
-  resolveHttpFaultEndpoints,
-} from "./scenario/registry.js";
+import { resolveCorsPathnames, resolveHttpFaultEndpoints } from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 import { MockUserStore } from "./users/store.js";
 
@@ -60,13 +40,10 @@ export interface BuildAppOptions {
  * route — otherwise the non-compliant shape this change was meant to retire
  * would still work.
  */
-const legacyOidcRouteNames: readonly string[] =
-  Object.values(oidcInternalRoutes);
+const legacyOidcRouteNames: readonly string[] = Object.values(oidcInternalRoutes);
 
 function isLegacyOidcRoutePath(remainder: string): boolean {
-  return legacyOidcRouteNames.some(
-    (route) => remainder === route || remainder.startsWith(`${route}/`),
-  );
+  return legacyOidcRouteNames.some((route) => remainder === route || remainder.startsWith(`${route}/`));
 }
 
 function issuerScopedPath(pathname: string, issuerPath: string): boolean {
@@ -110,11 +87,7 @@ function oidcMounts(config: AppConfig): readonly OidcMount[] {
 
 function matchOidcMount(pathname: string, config: AppConfig): OidcMount | null {
   for (const mount of oidcMounts(config)) {
-    if (
-      pathname === mount.external ||
-      pathname.startsWith(`${mount.external}/`)
-    )
-      return mount;
+    if (pathname === mount.external || pathname.startsWith(`${mount.external}/`)) return mount;
   }
   return null;
 }
@@ -127,10 +100,7 @@ function matchOidcMount(pathname: string, config: AppConfig): OidcMount | null {
  * mounts get.
  */
 function logoutPagePath(pathname: string, config: AppConfig): boolean {
-  return (
-    matchOidcMount(pathname, config)?.internal ===
-    oidcInternalRoutes.end_session
-  );
+  return matchOidcMount(pathname, config)?.internal === oidcInternalRoutes.end_session;
 }
 
 /**
@@ -147,10 +117,7 @@ function oidcPath(pathname: string, config: AppConfig): boolean {
   // An empty issuerPath makes every root-level path issuer-scoped, so the probe
   // has to be excluded explicitly or it would be dispatched to oidc-provider.
   if (commonProbePath(pathname, config)) return false;
-  return (
-    matchOidcMount(pathname, config) !== null ||
-    issuerScopedPath(pathname, config.issuerPath)
-  );
+  return matchOidcMount(pathname, config) !== null || issuerScopedPath(pathname, config.issuerPath);
 }
 
 function interactionPath(pathname: string, issuerPath: string): boolean {
@@ -163,20 +130,14 @@ function interactionRequestPath(
   issuerPath: string,
   routedIssuerPath: string,
 ): boolean {
-  return (
-    interactionPath(pathname, issuerPath) ||
-    interactionPath(routedPath, routedIssuerPath)
-  );
+  return interactionPath(pathname, issuerPath) || interactionPath(routedPath, routedIssuerPath);
 }
 
 const forbiddenAuthorityCharacters = new Set(["@", "/", "\\", "?", "#", ","]);
 
 type OriginHeaderName = "host" | "x-forwarded-host" | "x-forwarded-proto";
 
-function singleHeaderValue(
-  request: IncomingMessage,
-  name: OriginHeaderName,
-): string | null | undefined {
+function singleHeaderValue(request: IncomingMessage, name: OriginHeaderName): string | null | undefined {
   let occurrences = 0;
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
     if (request.rawHeaders[index]?.toLowerCase() !== name) continue;
@@ -187,9 +148,7 @@ function singleHeaderValue(
   return Array.isArray(value) ? null : value;
 }
 
-function authorityHeader(
-  value: string | null | undefined,
-): string | null | undefined {
+function authorityHeader(value: string | null | undefined): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
   const authority = value.trim();
@@ -208,47 +167,29 @@ function authorityHeader(
     return null;
   try {
     const parsed = new URL(`http://${authority}`);
-    if (
-      parsed.username ||
-      parsed.password ||
-      parsed.pathname !== "/" ||
-      parsed.search ||
-      parsed.hash
-    )
-      return null;
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) return null;
   } catch {
     return null;
   }
   return authority;
 }
 
-function protocolHeader(
-  value: string | null | undefined,
-): "http" | "https" | null | undefined {
+function protocolHeader(value: string | null | undefined): "http" | "https" | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
   const protocol = value.trim().toLowerCase();
   return protocol === "http" || protocol === "https" ? protocol : null;
 }
 
-function requestOrigin(
-  request: IncomingMessage,
-  trustProxy: boolean,
-): string | null {
+function requestOrigin(request: IncomingMessage, trustProxy: boolean): string | null {
   const directHost = authorityHeader(singleHeaderValue(request, "host"));
   if (directHost === null) return null;
-  const forwardedHost = trustProxy
-    ? authorityHeader(singleHeaderValue(request, "x-forwarded-host"))
-    : undefined;
+  const forwardedHost = trustProxy ? authorityHeader(singleHeaderValue(request, "x-forwarded-host")) : undefined;
   if (forwardedHost === null) return null;
   const host = forwardedHost ?? directHost;
-  const forwardedProtocol = trustProxy
-    ? protocolHeader(singleHeaderValue(request, "x-forwarded-proto"))
-    : undefined;
+  const forwardedProtocol = trustProxy ? protocolHeader(singleHeaderValue(request, "x-forwarded-proto")) : undefined;
   if (forwardedProtocol === null) return null;
-  const protocol =
-    forwardedProtocol ??
-    ((request.socket as { encrypted?: boolean }).encrypted ? "https" : "http");
+  const protocol = forwardedProtocol ?? ((request.socket as { encrypted?: boolean }).encrypted ? "https" : "http");
   if (!host) return null;
   try {
     return new URL(`${protocol}://${host}`).origin;
@@ -281,10 +222,7 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error("OIDC middleware failed");
 }
 
-export async function buildApp(
-  config: AppConfig,
-  options: BuildAppOptions,
-): Promise<AppContext> {
+export async function buildApp(config: AppConfig, options: BuildAppOptions): Promise<AppContext> {
   const commonOptions = {
     logger: config.logger,
     trustProxy: config.trustProxy,
@@ -302,14 +240,7 @@ export async function buildApp(
   const keys = await loadSigningKeys(config.keyDirectory);
   const userStore = new MockUserStore(config.userConfigFile);
   await userStore.initialize();
-  const provider = createProvider(
-    config,
-    store,
-    userStore,
-    keys,
-    rolloverState,
-    app.log,
-  );
+  const provider = createProvider(config, store, userStore, keys, rolloverState, app.log);
   const clientStore = new OidcClientStore(
     config.clientConfigFile,
     (client) => applyProviderClient(provider, client),
@@ -322,28 +253,16 @@ export async function buildApp(
   await app.register(middie);
   await app.register(formbody);
   const accessLog = new InMemoryAccessLog();
-  app.use(
-    createAccessLogMiddleware(
-      accessLog,
-      store,
-      resolveAccessLogEndpoints(config),
-    ),
-  );
+  app.use(createAccessLogMiddleware(accessLog, store, resolveAccessLogEndpoints(config)));
   app.use((request, response, next) => {
     const url = request.url ?? "/";
     const pathname = rawPathname(url);
     const routedPath = routedPathname(url);
     const isAdmin = adminPath(routedPath);
     const isOidc = !managementPath(routedPath) && oidcPath(pathname, config);
-    const isInteraction = interactionRequestPath(
-      pathname,
-      routedPath,
-      config.issuerPath,
-      routedIssuerPath,
-    );
+    const isInteraction = interactionRequestPath(pathname, routedPath, config.issuerPath, routedIssuerPath);
     const isCommonProbe = commonProbePath(pathname, config);
-    if (isAdmin || isInteraction || logoutPagePath(pathname, config))
-      setSensitiveResponseHeaders(response);
+    if (isAdmin || isInteraction || logoutPagePath(pathname, config)) setSensitiveResponseHeaders(response);
     if (!isAdmin && !isOidc && !isInteraction && !isCommonProbe) return next();
     if (requestOrigin(request, config.trustProxy) !== config.issuerOrigin) {
       sendOriginError(response);
@@ -351,25 +270,13 @@ export async function buildApp(
     }
     next();
   });
-  app.use(
-    createHttpFaultMiddleware(
-      store,
-      app.log,
-      resolveHttpFaultEndpoints(config),
-      resolveCorsPathnames(config),
-    ),
-  );
+  app.use(createHttpFaultMiddleware(store, app.log, resolveHttpFaultEndpoints(config), resolveCorsPathnames(config)));
   app.use((req, res, next) => {
     const url = req.url ?? "/";
     const pathname = rawPathname(url);
     const routedPath = routedPathname(url);
     const isOidc = !managementPath(routedPath) && oidcPath(pathname, config);
-    const isInteraction = interactionRequestPath(
-      pathname,
-      routedPath,
-      config.issuerPath,
-      routedIssuerPath,
-    );
+    const isInteraction = interactionRequestPath(pathname, routedPath, config.issuerPath, routedIssuerPath);
     if (!isOidc || isInteraction) return next();
     const originalUrl = req.url ?? "/";
     const mount = matchOidcMount(pathname, config);
@@ -377,39 +284,20 @@ export async function buildApp(
     if (mount) {
       mountedUrl = `${mount.internal}${originalUrl.slice(mount.external.length)}`;
     } else {
-      const stripped = config.issuerPath
-        ? originalUrl.slice(config.issuerPath.length)
-        : originalUrl;
-      mountedUrl =
-        !stripped || stripped.startsWith("?") ? `/${stripped}` : stripped;
+      const stripped = config.issuerPath ? originalUrl.slice(config.issuerPath.length) : originalUrl;
+      mountedUrl = !stripped || stripped.startsWith("?") ? `/${stripped}` : stripped;
     }
-    (req as IncomingMessage & { originalUrl?: string }).originalUrl =
-      originalUrl;
+    (req as IncomingMessage & { originalUrl?: string }).originalUrl = originalUrl;
     req.url = mountedUrl;
     try {
       const result: unknown = providerHandler(req, res);
-      if (
-        typeof result === "object" &&
-        result !== null &&
-        "then" in result &&
-        typeof result.then === "function"
-      )
-        void Promise.resolve(result).catch((error: unknown) =>
-          next(asError(error)),
-        );
+      if (typeof result === "object" && result !== null && "then" in result && typeof result.then === "function")
+        void Promise.resolve(result).catch((error: unknown) => next(asError(error)));
     } catch (error) {
       next(asError(error));
     }
   });
   registerCommonProbeRoute(app, config);
-  await registerRoutes(
-    app,
-    provider,
-    store,
-    clientStore,
-    userStore,
-    accessLog,
-    config,
-  );
+  await registerRoutes(app, provider, store, clientStore, userStore, accessLog, config);
   return { app, store, clientStore, userStore, accessLog };
 }

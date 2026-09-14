@@ -32,9 +32,7 @@ describe("test configuration safety", () => {
       userConfigFile: ".data/test-users.json",
     },
   ])("rejects a $name below the repository .data directory", (paths) => {
-    expect(() => testConfig(paths)).toThrow(
-      "must not resolve inside the repository .data directory",
-    );
+    expect(() => testConfig(paths)).toThrow("must not resolve inside the repository .data directory");
   });
 });
 
@@ -72,9 +70,7 @@ describe("admin API and UI", () => {
       remainingFailures: 2,
       status: "ACTIVE",
     });
-    expect(
-      (await context.app.inject("/__mock/api/scenario")).json().scenario,
-    ).toBe("TOKEN_500");
+    expect((await context.app.inject("/__mock/api/scenario")).json().scenario).toBe("TOKEN_500");
     expect(
       (
         await context.app.inject({
@@ -113,9 +109,7 @@ describe("admin API and UI", () => {
         })
       ).statusCode,
     ).toBe(500);
-    expect(
-      (await context.app.inject("/__mock/api/scenario")).json(),
-    ).toMatchObject({
+    expect((await context.app.inject("/__mock/api/scenario")).json()).toMatchObject({
       scenario: "NORMAL",
       status: "NORMAL",
       lastCompleted: {
@@ -216,14 +210,10 @@ describe("admin API and UI", () => {
         "statusCode",
       ]);
       expect(typeof entry.durationMs).toBe("number");
-      expect(() =>
-        new Date(String(entry.receivedAt)).toISOString(),
-      ).not.toThrow();
+      expect(() => new Date(String(entry.receivedAt)).toISOString()).not.toThrow();
     }
     // Neither the admin API calls above nor /health appear in the log.
-    expect(
-      entries.some((entry) => String(entry.path).startsWith("/__mock")),
-    ).toBe(false);
+    expect(entries.some((entry) => String(entry.path).startsWith("/__mock"))).toBe(false);
     expect(entries.some((entry) => entry.path === "/health")).toBe(false);
     expect(entries.some((entry) => entry.path === "/favicon.ico")).toBe(false);
 
@@ -232,12 +222,10 @@ describe("admin API and UI", () => {
       url: "/__mock/api/access-log",
     });
     expect(cleared.statusCode).toBe(204);
-    expect((await context.app.inject("/__mock/api/access-log")).json()).toEqual(
-      [],
-    );
-    expect(
-      (await context.app.inject("/__mock/api/scenario")).json(),
-    ).toMatchObject({ lastCompleted: { scenario: "TOKEN_500" } });
+    expect((await context.app.inject("/__mock/api/access-log")).json()).toEqual([]);
+    expect((await context.app.inject("/__mock/api/scenario")).json()).toMatchObject({
+      lastCompleted: { scenario: "TOKEN_500" },
+    });
   });
 
   it("rejects cross-site access log clears and leaves the log intact", async () => {
@@ -252,9 +240,7 @@ describe("admin API and UI", () => {
     });
     expect(crossSite.statusCode).toBe(403);
     expect(crossSite.json().error).toBe("invalid_admin_origin");
-    expect(
-      (await context.app.inject("/__mock/api/access-log")).json(),
-    ).toHaveLength(1);
+    expect((await context.app.inject("/__mock/api/access-log")).json()).toHaveLength(1);
   });
 
   it("resets the active count and published signing key through the Reset API", async () => {
@@ -379,12 +365,7 @@ describe("admin API and UI", () => {
   });
 
   it("normalizes every 429 and preserves optional Retry-After for every 500", async () => {
-    for (const scenario of [
-      "AUTH_429",
-      "TOKEN_429",
-      "JWKS_429",
-      "DISCOVERY_429",
-    ] as const) {
+    for (const scenario of ["AUTH_429", "TOKEN_429", "JWKS_429", "DISCOVERY_429"] as const) {
       const defaulted = await context.app.inject({
         method: "PUT",
         url: "/__mock/api/scenario",
@@ -406,12 +387,7 @@ describe("admin API and UI", () => {
       expect(configured.json().parameters).toEqual({ retryAfterSeconds: 15 });
     }
 
-    for (const scenario of [
-      "AUTH_500",
-      "TOKEN_500",
-      "JWKS_500",
-      "DISCOVERY_500",
-    ] as const) {
+    for (const scenario of ["AUTH_500", "TOKEN_500", "JWKS_500", "DISCOVERY_500"] as const) {
       const configured = await context.app.inject({
         method: "PUT",
         url: "/__mock/api/scenario",
@@ -451,19 +427,12 @@ describe("admin API and UI", () => {
     );
     // The logout test is something you click during a test, so it lives in
     // the always-visible scenario header rather than a collapsible card.
-    const stateHeaderHtml =
-      /<div class="state-header">[\s\S]*?<\/div><\/div>/.exec(
-        response.body,
-      )?.[0];
+    const stateHeaderHtml = /<div class="state-header">[\s\S]*?<\/div><\/div>/.exec(response.body)?.[0];
     if (!stateHeaderHtml) throw new Error("Scenario header was not found");
-    expect(stateHeaderHtml).toContain(
-      '<h2>シナリオ</h2><div class="state-tools">',
-    );
+    expect(stateHeaderHtml).toContain('<h2>シナリオ</h2><div class="state-tools">');
     expect(stateHeaderHtml).toContain('id="testLogout"');
     expect(stateHeaderHtml).toContain('id="refresh"');
-    expect(stateHeaderHtml.indexOf('id="testLogout"')).toBeLessThan(
-      stateHeaderHtml.indexOf('id="refresh"'),
-    );
+    expect(stateHeaderHtml.indexOf('id="testLogout"')).toBeLessThan(stateHeaderHtml.indexOf('id="refresh"'));
     expect(response.body.match(/id="testLogout"/g)).toHaveLength(1);
     expect(response.body).toContain('<html lang="ja">');
     expect(response.body).toContain("現在のシナリオ");
@@ -491,22 +460,10 @@ describe("admin API and UI", () => {
       expect(response.body).toContain(`for="${requiredFor}" class="required"`);
     // Like retryAfterRequired, failureCount is required only while its field
     // is shown: a hidden required input would block submission silently.
-    expect(response.body).toContain(
-      '<input id="failureCount" type="number" min="1" step="1" value="1" required>',
-    );
-    expect(response.body).toContain(
-      "$('failureCount').disabled=!limited;$('failureCount').required=limited;",
-    );
-    for (const notRequiredFor of [
-      "userSub",
-      "logoutUris",
-      "userGroups",
-      "clientType",
-      "retryAfterOptional",
-    ])
-      expect(response.body).not.toContain(
-        `for="${notRequiredFor}" class="required"`,
-      );
+    expect(response.body).toContain('<input id="failureCount" type="number" min="1" step="1" value="1" required>');
+    expect(response.body).toContain("$('failureCount').disabled=!limited;$('failureCount').required=limited;");
+    for (const notRequiredFor of ["userSub", "logoutUris", "userGroups", "clientType", "retryAfterOptional"])
+      expect(response.body).not.toContain(`for="${notRequiredFor}" class="required"`);
     expect(response.body).toContain(
       "クライアントシークレットは平文で保存・表示されます。このAdmin APIには認証がないため、インターネットに公開しないでください。",
     );
@@ -538,20 +495,14 @@ describe("admin API and UI", () => {
       "テナント ID（tid）は常にこの Mock の値になります。",
     ])
       expect(response.body).toContain(text);
-    expect(response.body).not.toContain(
-      "Never expose this unauthenticated Admin API to the internet.",
-    );
+    expect(response.body).not.toContain("Never expose this unauthenticated Admin API to the internet.");
     expect(response.body).toContain('id="scenario"');
     expect(response.body).toContain('id="authorityUrl"');
     expect(response.body).toContain('id="tenantId"');
     expect(response.body).toContain('id="copyAuthority"');
     expect(response.body).toContain('id="copyTenantId"');
-    expect(response.body).toContain(
-      'aria-label="認可サーバー URL（Authority URL）をコピー"',
-    );
-    expect(response.body).toContain(
-      'title="認可サーバー URL（Authority URL）をコピー"',
-    );
+    expect(response.body).toContain('aria-label="認可サーバー URL（Authority URL）をコピー"');
+    expect(response.body).toContain('title="認可サーバー URL（Authority URL）をコピー"');
     expect(response.body).toContain('aria-label="テナント ID（tid）をコピー"');
     expect(response.body).toContain('title="テナント ID（tid）をコピー"');
     expect(response.body).toContain('id="connectionMessage"');
@@ -565,9 +516,7 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('id="reset"');
     expect(response.body).toContain('aria-label="状態を再読み込み"');
     expect(response.body).toContain('title="状態を再読み込み"');
-    const stateHtml = /<section id="state"[\s\S]*?<\/section>/.exec(
-      response.body,
-    )?.[0];
+    const stateHtml = /<section id="state"[\s\S]*?<\/section>/.exec(response.body)?.[0];
     if (!stateHtml) throw new Error("State panel was not found");
     expect(stateHtml).toContain('id="refresh"');
     expect(stateHtml).toContain('id="history"');
@@ -575,15 +524,11 @@ describe("admin API and UI", () => {
     // fault/normal border frames the whole control panel.
     expect(stateHtml).toContain("<h2>シナリオ</h2>");
     expect(stateHtml).toContain('<form id="form" class="scenario-form">');
-    expect(stateHtml).toContain(
-      '<h3 class="state-details-title">シナリオの設定</h3>',
-    );
+    expect(stateHtml).toContain('<h3 class="state-details-title">シナリオの設定</h3>');
     expect(stateHtml).toContain('id="rolloverNote"');
     expect(stateHtml).toContain('id="reset"');
     expect(stateHtml).not.toContain("<details");
-    expect(response.body).not.toContain(
-      '<section class="card"><form id="form">',
-    );
+    expect(response.body).not.toContain('<section class="card"><form id="form">');
     expect(response.body.match(/id="refresh"/g)).toHaveLength(1);
     // Every other card collapses and starts collapsed (a saved preference
     // reopens it); the scenario card never collapses.
@@ -593,23 +538,19 @@ describe("admin API and UI", () => {
       ["clientPanel", "OIDC クライアント一覧", "clientCount"],
       ["userPanel", "テストユーザー一覧", "userCount"],
     ] as const) {
-      const details = new RegExp(
-        `<details class="card" id="${panel}"><summary>([\\s\\S]*?)</summary>`,
-      ).exec(response.body);
+      const details = new RegExp(`<details class="card" id="${panel}"><summary>([\\s\\S]*?)</summary>`).exec(
+        response.body,
+      );
       if (!details) throw new Error(`${panel} was not found`);
       expect(details[1]).toContain(`<h2>${heading}`);
       expect(details[1]).not.toContain("<button");
-      if (count)
-        expect(details[1]).toContain(`<span id="${count}" class="count">`);
+      if (count) expect(details[1]).toContain(`<span id="${count}" class="count">`);
       else expect(details[1]).not.toContain('class="count"');
     }
     expect(response.body.match(/<details class="card"/g)).toHaveLength(4);
     expect(response.body.match(/<\/details>/g)).toHaveLength(4);
     expect(response.body).not.toMatch(/<details[^>]* open[ >]/);
-    const connectionHtml =
-      /<details class="card" id="connectionPanel">[\s\S]*?<\/details>/.exec(
-        response.body,
-      )?.[0];
+    const connectionHtml = /<details class="card" id="connectionPanel">[\s\S]*?<\/details>/.exec(response.body)?.[0];
     if (!connectionHtml) throw new Error("Connection panel was not found");
     expect(connectionHtml).not.toContain('id="testLogout"');
     expect(connectionHtml).not.toContain('class="actions"');
@@ -644,8 +585,7 @@ describe("admin API and UI", () => {
     expect(response.body).toContain("retryAfterRequired");
     expect(response.body).toContain("retryAfterOptional");
     expect(scenarioNames).toHaveLength(28);
-    for (const scenario of scenarioNames)
-      expect(response.body).toContain(`value="${scenario}"`);
+    for (const scenario of scenarioNames) expect(response.body).toContain(`value="${scenario}"`);
     expect(response.body).not.toContain('value="UNKNOWN_GROUPS"');
     expect(response.body).not.toContain('value="DISCOVERY_INVALID"');
     expect(response.body).toContain('<p id="rolloverNote" class="warning">');
@@ -658,9 +598,7 @@ describe("admin API and UI", () => {
     expect(response.body).toContain('class="fields"><div id="scenarioField">');
     expect(response.body).toContain('class="history"');
     expect(response.body).toContain("overflow-wrap:anywhere");
-    expect(response.body).not.toContain(
-      '<section class="card"><div class="label">直近で完了したシナリオ</div>',
-    );
+    expect(response.body).not.toContain('<section class="card"><div class="label">直近で完了したシナリオ</div>');
     expect(response.body).toContain("/__mock/api/scenario");
     expect(response.body).not.toContain("setInterval");
     expect(response.body).toContain("OIDC クライアント");
@@ -686,13 +624,7 @@ describe("admin API and UI", () => {
     ])
       expect(response.body).toContain(`id="${id}"`);
     expect(response.body).toContain("/__mock/api/users");
-    for (const id of [
-      "accessLog",
-      "accessLogRows",
-      "accessLogError",
-      "refreshAccessLog",
-      "clearAccessLog",
-    ])
+    for (const id of ["accessLog", "accessLogRows", "accessLogError", "refreshAccessLog", "clearAccessLog"])
       expect(response.body).toContain(`id="${id}"`);
     for (const text of [
       "アクセスログ",
@@ -710,25 +642,14 @@ describe("admin API and UI", () => {
       ".log-wrap{max-height:min(28rem,55vh);overflow:auto",
     ])
       expect(response.body).toContain(text);
-    expect(response.body).toContain(
-      'id="accessLogError" class="error" role="alert"',
-    );
-    expect(response.body).toContain(
-      'id="clearAccessLog" class="danger" type="button"',
-    );
-    const accessLogHtml =
-      /<details class="card" id="accessLogPanel">[\s\S]*?<\/details>/.exec(
-        response.body,
-      )?.[0];
+    expect(response.body).toContain('id="accessLogError" class="error" role="alert"');
+    expect(response.body).toContain('id="clearAccessLog" class="danger" type="button"');
+    const accessLogHtml = /<details class="card" id="accessLogPanel">[\s\S]*?<\/details>/.exec(response.body)?.[0];
     if (!accessLogHtml) throw new Error("Access log panel was not found");
     expect(accessLogHtml).toContain('<table id="accessLog"');
     expect(accessLogHtml).not.toContain("innerHTML");
-    expect(response.body.indexOf('id="accessLog"')).toBeGreaterThan(
-      response.body.indexOf('id="rolloverNote"'),
-    );
-    expect(response.body.indexOf('id="accessLog"')).toBeLessThan(
-      response.body.indexOf("OIDC クライアント一覧"),
-    );
+    expect(response.body.indexOf('id="accessLog"')).toBeGreaterThan(response.body.indexOf('id="rolloverNote"'));
+    expect(response.body.indexOf('id="accessLog"')).toBeLessThan(response.body.indexOf("OIDC クライアント一覧"));
     // Lists only carry identifying columns; the rest lives in the dialogs.
     expect(response.body).toContain(
       "listTable(root,['クライアント ID（client_id）','種別（clientType）','リダイレクト URI（redirectUris）','操作'])",
@@ -737,15 +658,9 @@ describe("admin API and UI", () => {
       "listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作'])",
     );
     expect(response.body).toContain("table.className='data-table list-table'");
-    expect(response.body).not.toContain(
-      "'クライアントシークレット（client_secret）：'",
-    );
-    expect(response.body).not.toContain(
-      "'ユーザー ID（sub）：'+user.sub+' ｜ ",
-    );
-    expect(response.body).toContain(
-      '<table id="accessLog" class="data-table log-table">',
-    );
+    expect(response.body).not.toContain("'クライアントシークレット（client_secret）：'");
+    expect(response.body).not.toContain("'ユーザー ID（sub）：'+user.sub+' ｜ ");
+    expect(response.body).toContain('<table id="accessLog" class="data-table log-table">');
     expect(response.body).toContain("crypto.randomUUID");
     expect(response.body).toContain('id="userMail" type="email" required');
     const inlineScript = /<script>([\s\S]+)<\/script>/.exec(response.body)?.[1];
@@ -757,9 +672,7 @@ describe("admin API and UI", () => {
     const { body } = await context.app.inject("/__mock");
     for (const kind of ["client", "user"]) {
       const cap = kind[0]!.toUpperCase() + kind.slice(1);
-      const dialog = new RegExp(
-        `<dialog id="${kind}Editor"[^>]*>[\\s\\S]*?</dialog>`,
-      ).exec(body)?.[0];
+      const dialog = new RegExp(`<dialog id="${kind}Editor"[^>]*>[\\s\\S]*?</dialog>`).exec(body)?.[0];
       expect(dialog).toBeDefined();
       expect(dialog).toContain(`aria-labelledby="${kind}EditorTitle"`);
       expect(dialog).not.toMatch(/<dialog[^>]*\bopen(?:\s|>)/);
@@ -768,14 +681,10 @@ describe("admin API and UI", () => {
       expect(dialog).toContain(`id="cancel${cap}" type="button"`);
       expect(dialog).toContain(`id="save${cap}" class="primary" type="submit"`);
       expect(dialog).toContain('role="alert" tabindex="-1"');
-      expect(body).toContain(
-        `<p id="${kind}Message" role="status" aria-atomic="true">`,
-      );
+      expect(body).toContain(`<p id="${kind}Message" role="status" aria-atomic="true">`);
       expect(body).toContain(`id="dismiss${cap}Notice" type="button"`);
       expect(body).toContain(`id="retry${cap}s" class="hidden" type="button"`);
-      expect(body.indexOf(`id="${kind}Notice"`)).toBeLessThan(
-        body.indexOf(`id="${kind}s"`),
-      );
+      expect(body.indexOf(`id="${kind}Notice"`)).toBeLessThan(body.indexOf(`id="${kind}s"`));
     }
   });
 
@@ -856,23 +765,13 @@ describe("admin API and UI", () => {
               emailOptionalClaim: false,
             };
       const url = "/__mock/api/" + kind;
-      const file =
-        kind === "users"
-          ? context.userStore.filePath
-          : context.clientStore.filePath;
+      const file = kind === "users" ? context.userStore.filePath : context.clientStore.filePath;
       const html = (await context.app.inject("/__mock")).body;
-      const pattern = new RegExp(
-        '<input id="' + inputId + '" pattern="([^"]+)"',
-      ).exec(html)?.[1];
+      const pattern = new RegExp('<input id="' + inputId + '" pattern="([^"]+)"').exec(html)?.[1];
       expect(pattern).toBeTruthy();
       const browserPattern = new RegExp("^(?:" + pattern + ")$", "v");
 
-      for (const id of [
-        "a".repeat(100),
-        "  " + "b".repeat(100) + "  ",
-        "a/b?c#d% e",
-        "...",
-      ]) {
+      for (const id of ["a".repeat(100), "  " + "b".repeat(100) + "  ", "a/b?c#d% e", "..."]) {
         expect(browserPattern.test(id), id).toBe(true);
         const created = await context.app.inject({
           method: "POST",
@@ -881,10 +780,7 @@ describe("admin API and UI", () => {
         });
         expect(created.statusCode, created.body).toBe(201);
         expect(created.json()[idKey]).toBe(id.trim());
-        const path = new URL(
-          url + "/" + encodeURIComponent(id.trim()),
-          "http://localhost",
-        ).pathname;
+        const path = new URL(url + "/" + encodeURIComponent(id.trim()), "http://localhost").pathname;
         const updated = await context.app.inject({
           method: "PUT",
           url: path,
@@ -892,13 +788,8 @@ describe("admin API and UI", () => {
         });
         expect(updated.statusCode, updated.body).toBe(200);
         expect(updated.json()[idKey]).toBe(id.trim());
-        const persisted = JSON.parse(await readFile(file, "utf8")) as Record<
-          string,
-          unknown
-        >[];
-        expect(persisted.find((item) => item[idKey] === id.trim())).toEqual(
-          updated.json(),
-        );
+        const persisted = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>[];
+        expect(persisted.find((item) => item[idKey] === id.trim())).toEqual(updated.json());
         const deleted = await context.app.inject({
           method: "DELETE",
           url: path,
@@ -907,15 +798,7 @@ describe("admin API and UI", () => {
       }
 
       const before = await readFile(file, "utf8");
-      for (const id of [
-        ".",
-        "..",
-        " . ",
-        "a".repeat(101),
-        " ",
-        "bad\nid",
-        "利用者",
-      ]) {
+      for (const id of [".", "..", " . ", "a".repeat(101), " ", "bad\nid", "利用者"]) {
         expect(browserPattern.test(id), id).toBe(false);
         const response = await context.app.inject({
           method: "POST",
@@ -923,9 +806,7 @@ describe("admin API and UI", () => {
           payload: { ...payload, [idKey]: id },
         });
         expect(response.statusCode, response.body).toBe(400);
-        expect(response.json().error).toBe(
-          kind === "users" ? "invalid_user" : "invalid_client",
-        );
+        expect(response.json().error).toBe(kind === "users" ? "invalid_user" : "invalid_client");
       }
       expect(await readFile(file, "utf8")).toBe(before);
     },
@@ -949,10 +830,7 @@ describe("admin API and UI", () => {
         for (const method of ["POST", "PUT"] as const) {
           const response = await context.app.inject({
             method,
-            url:
-              method === "POST"
-                ? "/__mock/api/users"
-                : "/__mock/api/users/user-normal",
+            url: method === "POST" ? "/__mock/api/users" : "/__mock/api/users/user-normal",
             payload: {
               ...payload,
               ...changes,
@@ -1025,12 +903,8 @@ describe("admin API and UI", () => {
       url: "/__mock/api/clients/reset",
       payload: {},
     });
-    expect(
-      (await context.app.inject("/__mock/api/scenario")).json().scenario,
-    ).toBe("TOKEN_500");
-    expect(
-      (await context.app.inject("/__mock/api/clients")).json(),
-    ).toHaveLength(2);
+    expect((await context.app.inject("/__mock/api/scenario")).json().scenario).toBe("TOKEN_500");
+    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(2);
     expect(
       (
         await context.app.inject({
@@ -1165,11 +1039,7 @@ describe("admin API and UI", () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(missing.json().error).toBe("user_not_found");
-    expect(
-      (await context.app.inject("/__mock/api/users"))
-        .json<{ sub: string }[]>()
-        .map((user) => user.sub),
-    ).toEqual([
+    expect((await context.app.inject("/__mock/api/users")).json<{ sub: string }[]>().map((user) => user.sub)).toEqual([
       "user-admin",
       "user-normal",
       "user-unauthorized",
@@ -1210,12 +1080,11 @@ describe("admin API and UI", () => {
     });
     expect(reset.statusCode).toBe(200);
     expect(reset.json()).toHaveLength(3);
-    expect(
-      (await context.app.inject("/__mock/api/scenario")).json(),
-    ).toMatchObject({ scenario: "TOKEN_500", status: "ACTIVE" });
-    expect(
-      (await context.app.inject("/__mock/api/clients")).json(),
-    ).toHaveLength(3);
+    expect((await context.app.inject("/__mock/api/scenario")).json()).toMatchObject({
+      scenario: "TOKEN_500",
+      status: "ACTIVE",
+    });
+    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(3);
 
     const deleteMissing = await context.app.inject({
       method: "DELETE",
@@ -1231,20 +1100,17 @@ describe("admin API and UI", () => {
 
     await context.app.close();
     context = await buildApp(appConfig, { https: false });
-    expect(
-      (await context.app.inject("/__mock/api/users"))
-        .json<{ sub: string }[]>()
-        .map((user) => user.sub),
-    ).toEqual(["user-admin", "user-normal"]);
+    expect((await context.app.inject("/__mock/api/users")).json<{ sub: string }[]>().map((user) => user.sub)).toEqual([
+      "user-admin",
+      "user-normal",
+    ]);
     const clientReset = await context.app.inject({
       method: "POST",
       url: "/__mock/api/clients/reset",
       payload: {},
     });
     expect(clientReset.statusCode).toBe(200);
-    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(
-      2,
-    );
+    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(2);
   });
 
   it("generates and returns a persistent sub for a test user when omitted", async () => {
@@ -1261,12 +1127,10 @@ describe("admin API and UI", () => {
     });
     expect(response.statusCode).toBe(201);
     const user = response.json<{ sub: string }>();
-    expect(user.sub).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    expect(user.sub).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect((await context.app.inject("/__mock/api/users")).json()).toContainEqual(
+      expect.objectContaining({ sub: user.sub }),
     );
-    expect(
-      (await context.app.inject("/__mock/api/users")).json(),
-    ).toContainEqual(expect.objectContaining({ sub: user.sub }));
   });
 
   it.each([
@@ -1293,9 +1157,7 @@ describe("admin API and UI", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_user");
-    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(
-      3,
-    );
+    expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(3);
   });
 
   it("rejects provider-incompatible client metadata without changing persisted restart state", async () => {
@@ -1333,40 +1195,33 @@ describe("admin API and UI", () => {
       expect(response.statusCode).toBe(400);
       expect(response.json().error).toBe("invalid_client");
     }
-    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
-      before,
-    );
+    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(before);
     expect(await readFile(clientFile, "utf8")).toBe(beforeFile);
 
     await context.app.close();
     context = await buildApp(appConfig, { https: false });
-    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(
-      before,
-    );
+    expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(before);
   });
 
-  it.each(["https://evil.test", "null"])(
-    "rejects Admin mutations from Origin %s",
-    async (origin) => {
-      const before = context.store.get();
-      const response = await context.app.inject({
-        method: "PUT",
-        url: "/__mock/api/scenario",
-        headers: { origin },
-        payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
-      });
-      expect(response.statusCode).toBe(403);
-      expect(response.json().error).toBe("invalid_admin_origin");
-      expect(context.store.get()).toEqual(before);
-      const userDelete = await context.app.inject({
-        method: "DELETE",
-        url: "/__mock/api/users/user-admin",
-        headers: { origin },
-      });
-      expect(userDelete.statusCode).toBe(403);
-      expect(context.userStore.find("user-admin")).toBeDefined();
-    },
-  );
+  it.each(["https://evil.test", "null"])("rejects Admin mutations from Origin %s", async (origin) => {
+    const before = context.store.get();
+    const response = await context.app.inject({
+      method: "PUT",
+      url: "/__mock/api/scenario",
+      headers: { origin },
+      payload: { scenario: "TOKEN_500", mode: "CONTINUOUS" },
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error).toBe("invalid_admin_origin");
+    expect(context.store.get()).toEqual(before);
+    const userDelete = await context.app.inject({
+      method: "DELETE",
+      url: "/__mock/api/users/user-admin",
+      headers: { origin },
+    });
+    expect(userDelete.statusCode).toBe(403);
+    expect(context.userStore.find("user-admin")).toBeDefined();
+  });
 
   it("allows same-origin and Origin-less JSON mutations", async () => {
     const sameOrigin = await context.app.inject({
@@ -1434,9 +1289,7 @@ describe("admin API and UI", () => {
       await context.app.inject("/__mock/api/users"),
     ]) {
       expect(response.headers["cache-control"]).toBe("no-store");
-      expect(response.headers["content-security-policy"]).toBe(
-        "frame-ancestors 'none'",
-      );
+      expect(response.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
       expect(response.headers["referrer-policy"]).toBe("no-referrer");
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["x-frame-options"]).toBe("DENY");

@@ -1,13 +1,4 @@
-import {
-  mkdir,
-  rename,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, rename, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,15 +80,11 @@ describe("OIDC client store", () => {
     expect(store.list()).toEqual(defaultClients());
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     await store.create(publicClient);
-    expect(store.list().at(-1)?.redirectUris).toEqual([
-      "http://localhost/callback",
-    ]);
+    expect(store.list().at(-1)?.redirectUris).toEqual(["http://localhost/callback"]);
 
     const reloaded = new OidcClientStore(file, apply, remove);
     await reloaded.initialize();
-    expect(reloaded.list().some((client) => client.clientId === "app")).toBe(
-      true,
-    );
+    expect(reloaded.list().some((client) => client.clientId === "app")).toBe(true);
     await reloaded.reset();
     expect(reloaded.list()).toEqual(defaultClients());
   });
@@ -110,16 +97,10 @@ describe("OIDC client store", () => {
     );
     await store.initialize();
     await store.create(publicClient);
-    await expect(store.create(publicClient)).rejects.toBeInstanceOf(
-      ClientConflictError,
-    );
+    await expect(store.create(publicClient)).rejects.toBeInstanceOf(ClientConflictError);
     const { clientId, ...update } = publicClient;
-    await expect(
-      store.update(`${clientId}-missing`, update),
-    ).rejects.toBeInstanceOf(ClientNotFoundError);
-    await expect(store.delete("missing")).rejects.toBeInstanceOf(
-      ClientNotFoundError,
-    );
+    await expect(store.update(`${clientId}-missing`, update)).rejects.toBeInstanceOf(ClientNotFoundError);
+    await expect(store.delete("missing")).rejects.toBeInstanceOf(ClientNotFoundError);
   });
 
   it("fails startup for malformed persisted data", async () => {
@@ -173,10 +154,7 @@ describe("OIDC client store", () => {
 
   it("migrates legacy scopes out of persisted clients", async () => {
     const file = join(directory, "clients.json");
-    await writeFile(
-      file,
-      JSON.stringify([{ ...publicClient, scopes: ["openid", "email"] }]),
-    );
+    await writeFile(file, JSON.stringify([{ ...publicClient, scopes: ["openid", "email"] }]));
     const store = new OidcClientStore(
       file,
       async () => {},
@@ -193,12 +171,7 @@ describe("OIDC client store", () => {
 
   it("rejects unknown persisted client fields during legacy migration", async () => {
     const file = join(directory, "clients.json");
-    await writeFile(
-      file,
-      JSON.stringify([
-        { ...publicClient, scopes: ["openid"], unexpected: true },
-      ]),
-    );
+    await writeFile(file, JSON.stringify([{ ...publicClient, scopes: ["openid"], unexpected: true }]));
     const store = new OidcClientStore(
       file,
       async () => {},
@@ -295,9 +268,7 @@ describe("OIDC client store", () => {
       async () => undefined,
     );
     await store.initialize();
-    await expect(
-      store.create({ ...publicClient, clientId: value }),
-    ).rejects.toBeInstanceOf(ZodError);
+    await expect(store.create({ ...publicClient, clientId: value })).rejects.toBeInstanceOf(ZodError);
   });
 
   it.each(["bad\tsecret", "bad\u007fsecret", "秘密"])(
@@ -329,27 +300,19 @@ describe("OIDC client store", () => {
     );
     await store.initialize();
 
-    await expect(
-      store.create({ ...publicClient, clientId: "   " }),
-    ).rejects.toBeInstanceOf(ZodError);
-    await expect(
-      store.create({ ...publicClient, clientId: "  spaced-id  " }),
-    ).resolves.toMatchObject({ clientId: "spaced-id" });
+    await expect(store.create({ ...publicClient, clientId: "   " })).rejects.toBeInstanceOf(ZodError);
+    await expect(store.create({ ...publicClient, clientId: "  spaced-id  " })).resolves.toMatchObject({
+      clientId: "spaced-id",
+    });
   });
 
   it("preflights defaults before writing or applying them", async () => {
     const file = join(directory, "clients.json");
     const apply = vi.fn(async () => undefined);
     const validate = vi.fn((client: OidcClientConfig) => {
-      if (client.clientType === "CONFIDENTIAL")
-        throw new Error("provider metadata rejected");
+      if (client.clientType === "CONFIDENTIAL") throw new Error("provider metadata rejected");
     });
-    const store = new OidcClientStore(
-      file,
-      apply,
-      async () => undefined,
-      validate,
-    );
+    const store = new OidcClientStore(file, apply, async () => undefined, validate);
 
     await expect(store.initialize()).rejects.toMatchObject({
       name: "ClientValidationError",
@@ -366,15 +329,9 @@ describe("OIDC client store", () => {
     const apply = vi.fn(async () => undefined);
     const rejectClientId = publicClient.clientId;
     const validate = vi.fn((client: OidcClientConfig) => {
-      if (client.clientId === rejectClientId)
-        throw new Error("provider metadata rejected");
+      if (client.clientId === rejectClientId) throw new Error("provider metadata rejected");
     });
-    const store = new OidcClientStore(
-      file,
-      apply,
-      async () => undefined,
-      validate,
-    );
+    const store = new OidcClientStore(file, apply, async () => undefined, validate);
     await store.initialize();
     const beforeFile = await readFile(file, "utf8");
     const beforeClients = store.list();
@@ -398,13 +355,9 @@ describe("OIDC client store", () => {
     await store.initialize();
     const beforeFile = await readFile(file, "utf8");
     const beforeClients = store.list();
-    provider.failApplyOnce(
-      (client) => client.clientId === publicClient.clientId,
-    );
+    provider.failApplyOnce((client) => client.clientId === publicClient.clientId);
 
-    await expect(store.create(publicClient)).rejects.toThrow(
-      "provider apply failed",
-    );
+    await expect(store.create(publicClient)).rejects.toThrow("provider apply failed");
 
     expect(store.list()).toEqual(beforeClients);
     expect(await readFile(file, "utf8")).toBe(beforeFile);
@@ -421,9 +374,7 @@ describe("OIDC client store", () => {
     const beforeFile = await readFile(file, "utf8");
     const beforeClients = store.list();
     const { clientId, ...update } = publicClient;
-    provider.failApplyOnce(
-      (client) => client.accessTokenAudience === "urn:changed",
-    );
+    provider.failApplyOnce((client) => client.accessTokenAudience === "urn:changed");
 
     await expect(
       store.update(clientId, {
@@ -448,16 +399,12 @@ describe("OIDC client store", () => {
     const beforeClients = store.list();
     provider.failRemoveOnce((clientId) => clientId === publicClient.clientId);
 
-    await expect(store.delete(publicClient.clientId)).rejects.toThrow(
-      "provider remove failed",
-    );
+    await expect(store.delete(publicClient.clientId)).rejects.toThrow("provider remove failed");
 
     expect(store.list()).toEqual(beforeClients);
     expect(await readFile(file, "utf8")).toBe(beforeFile);
     expect(await temporaryFiles(directory)).toEqual([]);
-    expect(provider.clients.get(publicClient.clientId)).toEqual(
-      beforeClients.at(-1),
-    );
+    expect(provider.clients.get(publicClient.clientId)).toEqual(beforeClients.at(-1));
   });
 
   it("restores the full provider snapshot when reset fails partway", async () => {

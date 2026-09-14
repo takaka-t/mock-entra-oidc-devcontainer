@@ -9,10 +9,7 @@ import {
   type HttpFaultRouteTable,
 } from "../scenario/registry.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
-import {
-  commonProbeContentType,
-  matchesCommonProbePath,
-} from "../oidc/common-probe.js";
+import { commonProbeContentType, matchesCommonProbePath } from "../oidc/common-probe.js";
 
 function matchesPath(pathname: string, routePathname: string): boolean {
   return pathname === routePathname || pathname === `${routePathname}/`;
@@ -25,14 +22,8 @@ function endpointFor(
 ): HttpFaultEndpoint | null {
   const normalizedMethod = method?.toUpperCase();
   return (
-    (
-      Object.entries(routes) as Array<
-        [HttpFaultEndpoint, HttpFaultRouteTable[HttpFaultEndpoint]]
-      >
-    ).find(
-      ([, route]) =>
-        matchesPath(pathname, route.pathname) &&
-        route.method === normalizedMethod,
+    (Object.entries(routes) as Array<[HttpFaultEndpoint, HttpFaultRouteTable[HttpFaultEndpoint]]>).find(
+      ([, route]) => matchesPath(pathname, route.pathname) && route.method === normalizedMethod,
     )?.[0] ?? null
   );
 }
@@ -42,13 +33,8 @@ function endpointFor(
  * tenant Authorization endpoint keeps its browser-facing behavior even though
  * its HTTP faults moved to the `common` connectivity probe.
  */
-function isCorsPath(
-  pathname: string,
-  corsPathnames: readonly string[],
-): boolean {
-  return corsPathnames.some((corsPathname) =>
-    matchesPath(pathname, corsPathname),
-  );
+function isCorsPath(pathname: string, corsPathnames: readonly string[]): boolean {
+  return corsPathnames.some((corsPathname) => matchesPath(pathname, corsPathname));
 }
 
 function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
@@ -60,8 +46,7 @@ function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    if (!values.some((value) => value.toLowerCase() === "origin"))
-      values.push("Origin");
+    if (!values.some((value) => value.toLowerCase() === "origin")) values.push("Origin");
     res.setHeader("vary", values.join(", "));
   }
   res.setHeader("access-control-allow-methods", "GET, HEAD, POST, OPTIONS");
@@ -73,25 +58,18 @@ function setNoStoreHeaders(res: ServerResponse): void {
   res.setHeader("pragma", "no-cache");
 }
 
-function setRetryAfterHeaders(
-  res: ServerResponse,
-  retryAfterSeconds: number,
-): void {
+function setRetryAfterHeaders(res: ServerResponse, retryAfterSeconds: number): void {
   res.setHeader("retry-after", String(retryAfterSeconds));
   const current = res.getHeader("access-control-expose-headers");
   const values = String(current ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
-  if (!values.some((value) => value.toLowerCase() === "retry-after"))
-    values.push("Retry-After");
+  if (!values.some((value) => value.toLowerCase() === "retry-after")) values.push("Retry-After");
   res.setHeader("access-control-expose-headers", values.join(", "));
 }
 
-function responseUnavailable(
-  req: IncomingMessage,
-  res: ServerResponse,
-): boolean {
+function responseUnavailable(req: IncomingMessage, res: ServerResponse): boolean {
   return req.destroyed || res.destroyed || res.writableEnded;
 }
 
@@ -100,11 +78,7 @@ function safelyNext(next: (error?: Error) => void, error?: unknown): void {
     next();
     return;
   }
-  next(
-    error instanceof Error
-      ? error
-      : new Error("Unknown HTTP fault middleware error"),
-  );
+  next(error instanceof Error ? error : new Error("Unknown HTTP fault middleware error"));
 }
 
 function delayThenContinue(
@@ -155,18 +129,12 @@ export function createHttpFaultMiddleware(
   routes: HttpFaultRouteTable,
   corsPathnames: readonly string[],
 ) {
-  return (
-    req: IncomingMessage,
-    res: ServerResponse,
-    next: (error?: Error) => void,
-  ): void => {
+  return (req: IncomingMessage, res: ServerResponse, next: (error?: Error) => void): void => {
     try {
       const ticket = store.startRequest(req);
       const rawPathname = new URL(req.url ?? "/", "http://local").pathname;
       const probePath = routes["authorization-http"].pathname;
-      const pathname = matchesCommonProbePath(rawPathname, probePath)
-        ? probePath
-        : rawPathname;
+      const pathname = matchesCommonProbePath(rawPathname, probePath) ? probePath : rawPathname;
 
       if (!isCorsPath(pathname, corsPathnames)) {
         safelyNext(next);
@@ -207,12 +175,7 @@ export function createHttpFaultMiddleware(
 
       const effect = scenarios[decision.scenario].effect;
       if (effect === "http-timeout") {
-        delayThenContinue(
-          req,
-          res,
-          next,
-          decision.parameters.delayMs ?? defaultDelayMs,
-        );
+        delayThenContinue(req, res, next, decision.parameters.delayMs ?? defaultDelayMs);
         return;
       }
 
@@ -223,10 +186,7 @@ export function createHttpFaultMiddleware(
        */
       const bodyless = req.method?.toUpperCase() === "HEAD";
       setNoStoreHeaders(res);
-      res.setHeader(
-        "content-type",
-        bodyless ? commonProbeContentType : "application/json; charset=utf-8",
-      );
+      res.setHeader("content-type", bodyless ? commonProbeContentType : "application/json; charset=utf-8");
       const respond = (statusCode: number, body: object): void => {
         res.statusCode = statusCode;
         res.end(bodyless ? undefined : JSON.stringify(body));
@@ -242,10 +202,7 @@ export function createHttpFaultMiddleware(
           });
           return;
         case "http-429":
-          setRetryAfterHeaders(
-            res,
-            decision.parameters.retryAfterSeconds ?? defaultRetryAfterSeconds,
-          );
+          setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds ?? defaultRetryAfterSeconds);
           respond(429, {
             error: "temporarily_unavailable",
             error_description: `Injected ${decision.scenario} fault`,
@@ -264,9 +221,7 @@ export function createHttpFaultMiddleware(
           respond(200, { keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
           return;
         default:
-          throw new Error(
-            `Unexpected HTTP fault effect for ${decision.scenario}: ${effect}`,
-          );
+          throw new Error(`Unexpected HTTP fault effect for ${decision.scenario}: ${effect}`);
       }
     } catch (error) {
       safelyNext(next, error);

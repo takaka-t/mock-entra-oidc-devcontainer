@@ -23,9 +23,7 @@ const commonShape = {
   groups,
 };
 
-export const createUserSchema = z
-  .object({ sub: sub.optional(), ...commonShape })
-  .strict();
+export const createUserSchema = z.object({ sub: sub.optional(), ...commonShape }).strict();
 export const updateUserSchema = z.object(commonShape).strict();
 // Stored users must always have a subject. Omitting it is only supported at
 // creation time, before the store generates and persists one.

@@ -10,9 +10,7 @@ import { loadTlsServerOptions } from "./tls.js";
  * guidance from being buried in an unhandled-rejection stack trace.
  */
 function reportFatal(error: unknown): never {
-  console.error(
-    `[MOCK-IDP] failed to start: ${error instanceof Error ? error.message : String(error)}`,
-  );
+  console.error(`[MOCK-IDP] failed to start: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
 }
 

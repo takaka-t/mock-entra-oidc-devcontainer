@@ -7,9 +7,7 @@ export const printableAscii = z
     (value) =>
       [...value].every((character) => {
         const codePoint = character.codePointAt(0);
-        return (
-          codePoint !== undefined && codePoint >= 0x20 && codePoint <= 0x7e
-        );
+        return codePoint !== undefined && codePoint >= 0x20 && codePoint <= 0x7e;
       }),
     "印字可能な ASCII 文字だけを使用してください",
   );
@@ -25,10 +23,7 @@ export const identifier = printableAscii
     z
       .string()
       .max(maxIdentifierLength)
-      .refine(
-        (value) => value !== "." && value !== "..",
-        "「.」および「..」は使用できません",
-      ),
+      .refine((value) => value !== "." && value !== "..", "「.」および「..」は使用できません"),
   );
 
 export const unique = <T>(values: T[]): T[] => [...new Set(values)];

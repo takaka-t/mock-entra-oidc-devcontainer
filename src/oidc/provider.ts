@@ -6,12 +6,7 @@ import Provider, {
   type KoaContextWithOIDC,
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
-import {
-  decodeJwt,
-  decodeProtectedHeader,
-  SignJWT,
-  type JWTHeaderParameters,
-} from "jose";
+import { decodeJwt, decodeProtectedHeader, SignJWT, type JWTHeaderParameters } from "jose";
 import type { AppConfig } from "../config.js";
 import type { OidcClientConfig } from "../clients/types.js";
 import { authorizationFaultDefinitions } from "../faults/authorization-fault.js";
@@ -106,9 +101,7 @@ async function patchIdToken(
     if (user) payload.email = user.mail;
   }
   const header = decodeProtectedHeader(idToken) as JWTHeaderParameters;
-  return new SignJWT(payload)
-    .setProtectedHeader(header)
-    .sign(keys.normal.privateKey);
+  return new SignJWT(payload).setProtectedHeader(header).sign(keys.normal.privateKey);
 }
 
 export function createProvider(
@@ -120,15 +113,9 @@ export function createProvider(
   logger: FastifyBaseLogger,
 ): Provider {
   const claimDecisions = new WeakMap<object, FaultDecision | null>();
-  const claimDecisionFor = (ctx: {
-    req: object;
-    path: string;
-  }): FaultDecision | null => {
+  const claimDecisionFor = (ctx: { req: object; path: string }): FaultDecision | null => {
     if (claimDecisions.has(ctx.req)) return claimDecisions.get(ctx.req) ?? null;
-    const decision =
-      ctx.path === "/token"
-        ? store.consumeForRequest("claims", store.getRequestTicket(ctx.req))
-        : null;
+    const decision = ctx.path === "/token" ? store.consumeForRequest("claims", store.getRequestTicket(ctx.req)) : null;
     claimDecisions.set(ctx.req, decision);
     if (decision)
       logger.warn(
@@ -150,44 +137,33 @@ export function createProvider(
   policy
     .get("login")!
     .checks.add(
-      new interactionPolicy.Check(
-        "account_missing",
-        "End-User authentication is required",
-        "login_required",
-        (ctx) => Boolean(ctx.oidc.session?.accountId && !ctx.oidc.account),
+      new interactionPolicy.Check("account_missing", "End-User authentication is required", "login_required", (ctx) =>
+        Boolean(ctx.oidc.session?.accountId && !ctx.oidc.account),
       ),
     );
   authorizationFaultDefinitions.forEach((definition, index) => {
     policy.add(
       new interactionPolicy.Prompt(
         { name: definition.promptName, requestable: false },
-        new interactionPolicy.Check(
-          definition.promptName,
-          definition.errorDescription,
-          definition.error,
-          (ctx) => {
-            if (ctx.method !== "GET") return false;
-            if (store.get().scenario !== definition.scenario) return false;
-            const decision = store.consumeForRequest(
-              "authorization",
-              store.getRequestTicket(ctx.req),
-            );
-            if (!decision) return false;
-            logger.warn(
-              {
-                scenario: decision.scenario,
-                endpoint: decision.endpoint,
-                mode: decision.mode,
-                oauthError: definition.error,
-                faultInjected: true,
-                remainingBefore: decision.remainingBefore,
-                remainingAfter: decision.remainingAfter,
-              },
-              "[MOCK-IDP] authorization fault injected",
-            );
-            return true;
-          },
-        ),
+        new interactionPolicy.Check(definition.promptName, definition.errorDescription, definition.error, (ctx) => {
+          if (ctx.method !== "GET") return false;
+          if (store.get().scenario !== definition.scenario) return false;
+          const decision = store.consumeForRequest("authorization", store.getRequestTicket(ctx.req));
+          if (!decision) return false;
+          logger.warn(
+            {
+              scenario: decision.scenario,
+              endpoint: decision.endpoint,
+              mode: decision.mode,
+              oauthError: definition.error,
+              faultInjected: true,
+              remainingBefore: decision.remainingBefore,
+              remainingAfter: decision.remainingAfter,
+            },
+            "[MOCK-IDP] authorization fault injected",
+          );
+          return true;
+        }),
       ),
       index,
     );
@@ -204,39 +180,21 @@ export function createProvider(
     adapter: createInMemoryAdapterFactory(),
     jwks: { keys: [keys.normal.privateJwk] },
     claims: {
-      openid: [
-        "sub",
-        "oid",
-        "tid",
-        "name",
-        "preferred_username",
-        "groups",
-        "iat",
-        "nbf",
-        "ver",
-        "sid",
-      ],
+      openid: ["sub", "oid", "tid", "name", "preferred_username", "groups", "iat", "nbf", "ver", "sid"],
       email: ["email"],
     },
     scopes: supportedScopes,
     responseTypes: ["code"],
     pkce: { required: () => true },
     extraClientMetadata: {
-      properties: [
-        "mock_access_token_audience",
-        "mock_access_token_scope",
-        "mock_email_optional_claim",
-      ],
+      properties: ["mock_access_token_audience", "mock_access_token_scope", "mock_email_optional_claim"],
       validator: (_ctx, key, value) => {
         if (key === "mock_access_token_audience") {
           if (typeof value !== "string")
-            throw new errors.InvalidClientMetadata(
-              "mock_access_token_audience must be a string",
-            );
+            throw new errors.InvalidClientMetadata("mock_access_token_audience must be a string");
           try {
             const resource = new URL(value);
-            if (resource.username || resource.password || value.includes("#"))
-              throw new Error("invalid resource URI");
+            if (resource.username || resource.password || value.includes("#")) throw new Error("invalid resource URI");
           } catch {
             throw new errors.InvalidClientMetadata(
               "mock_access_token_audience must be an absolute URI without credentials or a fragment",
@@ -244,22 +202,15 @@ export function createProvider(
           }
         }
         if (key === "mock_access_token_scope" && typeof value !== "string")
-          throw new errors.InvalidClientMetadata(
-            "mock_access_token_scope must be a string",
-          );
+          throw new errors.InvalidClientMetadata("mock_access_token_scope must be a string");
         if (key === "mock_email_optional_claim" && typeof value !== "boolean")
-          throw new errors.InvalidClientMetadata(
-            "mock_email_optional_claim must be a boolean",
-          );
+          throw new errors.InvalidClientMetadata("mock_email_optional_claim must be a boolean");
       },
     },
     formats: {
       customizers: {
         jwt: (ctx, token, jwt) => {
-          const accountId =
-            "accountId" in token && typeof token.accountId === "string"
-              ? token.accountId
-              : undefined;
+          const accountId = "accountId" in token && typeof token.accountId === "string" ? token.accountId : undefined;
           const user = accountId ? userStore.find(accountId) : undefined;
           const tokenScope = "scope" in token ? token.scope : undefined;
           const client = ctx.oidc.client;
@@ -270,22 +221,19 @@ export function createProvider(
                 user,
                 config.tenantId,
                 claimDecisionFor(ctx),
-                includesScope(tokenScope, "email") ||
-                  emailOptionalClaimFor(client),
+                includesScope(tokenScope, "email") || emailOptionalClaimFor(client),
               ),
             );
           jwt.payload.ver = "2.0";
           if (client) {
             jwt.payload.azp = client.clientId;
-            jwt.payload.azpacr =
-              client.tokenEndpointAuthMethod === "none" ? "0" : "1";
+            jwt.payload.azpacr = client.tokenEndpointAuthMethod === "none" ? "0" : "1";
             const scope = client.metadata().mock_access_token_scope;
             if (typeof scope === "string" && scope) jwt.payload.scp = scope;
           }
           const sid = sessionIdFor(ctx);
           if (sid) jwt.payload.sid = sid;
-          if (typeof jwt.payload.iat === "number")
-            jwt.payload.nbf = jwt.payload.iat;
+          if (typeof jwt.payload.iat === "number") jwt.payload.nbf = jwt.payload.iat;
           return jwt;
         },
       },
@@ -298,8 +246,7 @@ export function createProvider(
       pushedAuthorizationRequests: { enabled: false },
       resourceIndicators: {
         enabled: true,
-        defaultResource: (_ctx, client) =>
-          String(client.metadata().mock_access_token_audience),
+        defaultResource: (_ctx, client) => String(client.metadata().mock_access_token_audience),
         useGrantedResource: () => true,
         getResourceServerInfo: (_ctx, resource, client) => {
           const metadata = client.metadata();
@@ -327,8 +274,7 @@ export function createProvider(
               user,
               config.tenantId,
               scenario,
-              includesScope(scope, "email") ||
-                emailOptionalClaimFor(ctx.oidc.client),
+              includesScope(scope, "email") || emailOptionalClaimFor(ctx.oidc.client),
             ),
             iat: issuedAt,
             nbf: issuedAt,
@@ -339,14 +285,10 @@ export function createProvider(
     },
     interactions: {
       policy,
-      url: (_ctx, interaction) =>
-        `${config.issuerPath}/interaction/${interaction.uid}`,
+      url: (_ctx, interaction) => `${config.issuerPath}/interaction/${interaction.uid}`,
     },
     cookies: {
-      keys: [
-        "mock-cookie-key-one-at-least-32-bytes",
-        "mock-cookie-key-two-at-least-32-bytes",
-      ],
+      keys: ["mock-cookie-key-one-at-least-32-bytes", "mock-cookie-key-two-at-least-32-bytes"],
     },
     ttl: {
       AccessToken: 3600,
@@ -389,12 +331,7 @@ export function createProvider(
       typeof (ctx.body as Record<string, unknown>).id_token === "string"
     ) {
       const responseBody = ctx.body as Record<string, unknown>;
-      responseBody.id_token = await patchIdToken(
-        responseBody.id_token as string,
-        ctx,
-        keys,
-        userStore,
-      );
+      responseBody.id_token = await patchIdToken(responseBody.id_token as string, ctx, keys, userStore);
       ctx.body = responseBody;
     }
     const ticket = store.getRequestTicket(ctx.req);
@@ -468,27 +405,18 @@ function providerClientModel(provider: Provider): ProviderClientModel {
  * adapter state. The store uses this before staging a configuration change so
  * an input accepted by our API cannot fail only after it has been persisted.
  */
-export function validateProviderClient(
-  provider: Provider,
-  client: OidcClientConfig,
-): void {
+export function validateProviderClient(provider: Provider, client: OidcClientConfig): void {
   const Client = providerClientModel(provider);
   new Client(clientMetadata(client));
 }
 
-export async function applyProviderClient(
-  provider: Provider,
-  client: OidcClientConfig,
-): Promise<void> {
+export async function applyProviderClient(provider: Provider, client: OidcClientConfig): Promise<void> {
   const Client = providerClientModel(provider);
   const validated = new Client(clientMetadata(client));
   await Client.adapter.upsert(client.clientId, validated.metadata());
 }
 
-export async function removeProviderClient(
-  provider: Provider,
-  clientId: string,
-): Promise<void> {
+export async function removeProviderClient(provider: Provider, clientId: string): Promise<void> {
   const Client = providerClientModel(provider);
   await Client.adapter.destroy(clientId);
 }

@@ -26,11 +26,7 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
       .map((part) => [part.split("=")[0]!, part]),
   );
   const values = headers["set-cookie"];
-  for (const cookie of Array.isArray(values)
-    ? values
-    : values
-      ? [values]
-      : []) {
+  for (const cookie of Array.isArray(values) ? values : values ? [values] : []) {
     const pair = cookie.split(";")[0]!;
     jar.set(pair.split("=")[0]!, pair);
   }
@@ -169,11 +165,7 @@ describe("official Entra resilience scenarios", () => {
     return `${parsed.pathname}${"/".repeat(trailingSlashes)}${parsed.search}`;
   }
 
-  async function requestEndpoint(
-    endpoint: HttpEndpoint,
-    origin?: string,
-    trailingSlashes = 0,
-  ) {
+  async function requestEndpoint(endpoint: HttpEndpoint, origin?: string, trailingSlashes = 0) {
     switch (endpoint) {
       case "authorization-http":
         return context.app.inject({
@@ -199,10 +191,7 @@ describe("official Entra resilience scenarios", () => {
         });
       case "discovery":
         return context.app.inject({
-          url: withTrailingSlashes(
-            "/.well-known/openid-configuration",
-            trailingSlashes,
-          ),
+          url: withTrailingSlashes("/.well-known/openid-configuration", trailingSlashes),
           headers: { host, ...(origin ? { origin } : {}) },
         });
     }
@@ -213,79 +202,69 @@ describe("official Entra resilience scenarios", () => {
     ["TOKEN_429", "token"],
     ["JWKS_429", "jwks"],
     ["DISCOVERY_429", "discovery"],
-  ] as const)(
-    "returns %s with the documented Retry-After contract",
-    async (scenario, endpoint) => {
-      context.store.set({
-        scenario,
-        mode: "CONTINUOUS",
-      });
-      const response = await requestEndpoint(endpoint, "http://localhost:3000");
+  ] as const)("returns %s with the documented Retry-After contract", async (scenario, endpoint) => {
+    context.store.set({
+      scenario,
+      mode: "CONTINUOUS",
+    });
+    const response = await requestEndpoint(endpoint, "http://localhost:3000");
 
-      expect(response.statusCode).toBe(429);
-      expect(response.headers["retry-after"]).toBe("60");
-      expect(response.headers["access-control-expose-headers"]).toContain(
-        "Retry-After",
-      );
-      expect(response.headers["cache-control"]).toBe("no-store");
-      if (endpoint === "authorization-http") {
-        // A HEAD probe fault is status and headers only.
-        expect(response.body).toBe("");
-        expect(response.headers["content-type"]).toBe(probeContentType);
-        expect(response.headers.location).toBeUndefined();
-      } else {
-        expect(response.json()).toEqual({
-          error: "temporarily_unavailable",
-          error_description: `Injected ${scenario} fault`,
-        });
-      }
-      expect(context.store.get()).toMatchObject({
-        scenario,
-        status: "ACTIVE",
-        triggeredCount: 1,
+    expect(response.statusCode).toBe(429);
+    expect(response.headers["retry-after"]).toBe("60");
+    expect(response.headers["access-control-expose-headers"]).toContain("Retry-After");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    if (endpoint === "authorization-http") {
+      // A HEAD probe fault is status and headers only.
+      expect(response.body).toBe("");
+      expect(response.headers["content-type"]).toBe(probeContentType);
+      expect(response.headers.location).toBeUndefined();
+    } else {
+      expect(response.json()).toEqual({
+        error: "temporarily_unavailable",
+        error_description: `Injected ${scenario} fault`,
       });
-    },
-  );
+    }
+    expect(context.store.get()).toMatchObject({
+      scenario,
+      status: "ACTIVE",
+      triggeredCount: 1,
+    });
+  });
 
   it.each([
     ["AUTH_500", "authorization-http"],
     ["TOKEN_500", "token"],
     ["JWKS_500", "jwks"],
     ["DISCOVERY_500", "discovery"],
-  ] as const)(
-    "adds Retry-After to %s only when requested",
-    async (scenario, endpoint) => {
-      context.store.set({
-        scenario,
-        mode: "CONTINUOUS",
-        parameters: { retryAfterSeconds: 7 },
+  ] as const)("adds Retry-After to %s only when requested", async (scenario, endpoint) => {
+    context.store.set({
+      scenario,
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 7 },
+    });
+    let response = await requestEndpoint(endpoint, "http://localhost:3000");
+    expect(response.statusCode).toBe(500);
+    expect(response.headers["retry-after"]).toBe("7");
+    expect(response.headers["access-control-expose-headers"]).toContain("Retry-After");
+    if (endpoint === "authorization-http") {
+      expect(response.body).toBe("");
+      expect(response.headers["content-type"]).toBe(probeContentType);
+      expect(response.headers.location).toBeUndefined();
+    } else {
+      expect(response.json()).toEqual({
+        error: "server_error",
+        error_description: `Injected ${scenario} fault`,
       });
-      let response = await requestEndpoint(endpoint, "http://localhost:3000");
-      expect(response.statusCode).toBe(500);
-      expect(response.headers["retry-after"]).toBe("7");
-      expect(response.headers["access-control-expose-headers"]).toContain(
-        "Retry-After",
-      );
-      if (endpoint === "authorization-http") {
-        expect(response.body).toBe("");
-        expect(response.headers["content-type"]).toBe(probeContentType);
-        expect(response.headers.location).toBeUndefined();
-      } else {
-        expect(response.json()).toEqual({
-          error: "server_error",
-          error_description: `Injected ${scenario} fault`,
-        });
-      }
+    }
 
-      context.store.set({
-        scenario,
-        mode: "CONTINUOUS",
-      });
-      response = await requestEndpoint(endpoint);
-      expect(response.statusCode).toBe(500);
-      expect(response.headers["retry-after"]).toBeUndefined();
-    },
-  );
+    context.store.set({
+      scenario,
+      mode: "CONTINUOUS",
+    });
+    response = await requestEndpoint(endpoint);
+    expect(response.statusCode).toBe(500);
+    expect(response.headers["retry-after"]).toBeUndefined();
+  });
 
   it.each([
     ["AUTH_429", "authorization-http", 429, 200],
@@ -296,77 +275,62 @@ describe("official Entra resilience scenarios", () => {
     ["JWKS_500", "jwks", 500, 200],
     ["DISCOVERY_429", "discovery", 429, 200],
     ["DISCOVERY_500", "discovery", 500, 200],
-  ] as const)(
-    "returns two %s faults before recovering",
-    async (scenario, endpoint, faultStatus, normalStatus) => {
-      context.store.set({
-        scenario,
-        mode: "LIMITED",
-        failureCount: 2,
-      });
+  ] as const)("returns two %s faults before recovering", async (scenario, endpoint, faultStatus, normalStatus) => {
+    context.store.set({
+      scenario,
+      mode: "LIMITED",
+      failureCount: 2,
+    });
 
-      expect((await requestEndpoint(endpoint)).statusCode).toBe(faultStatus);
-      expect(context.store.get()).toMatchObject({
-        scenario,
-        remainingFailures: 1,
-      });
-      expect((await requestEndpoint(endpoint)).statusCode).toBe(faultStatus);
-      expect(context.store.get().scenario).toBe("NORMAL");
-      expect((await requestEndpoint(endpoint)).statusCode).toBe(normalStatus);
-    },
-  );
+    expect((await requestEndpoint(endpoint)).statusCode).toBe(faultStatus);
+    expect(context.store.get()).toMatchObject({
+      scenario,
+      remainingFailures: 1,
+    });
+    expect((await requestEndpoint(endpoint)).statusCode).toBe(faultStatus);
+    expect(context.store.get().scenario).toBe("NORMAL");
+    expect((await requestEndpoint(endpoint)).statusCode).toBe(normalStatus);
+  });
 
   it.each([
     ["AUTH_500", "authorization-http", 200],
     ["TOKEN_500", "token", 400],
     ["JWKS_500", "jwks", 200],
     ["DISCOVERY_500", "discovery", 200],
-  ] as const)(
-    "injects %s for one provider-compatible trailing slash",
-    async (scenario, endpoint, normalStatus) => {
-      context.store.set({
-        scenario,
-        mode: "LIMITED",
-        failureCount: 1,
-      });
+  ] as const)("injects %s for one provider-compatible trailing slash", async (scenario, endpoint, normalStatus) => {
+    context.store.set({
+      scenario,
+      mode: "LIMITED",
+      failureCount: 1,
+    });
 
-      expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(
-        500,
-      );
-      expect(context.store.get()).toMatchObject({
-        scenario: "NORMAL",
-        lastCompleted: { scenario, triggeredCount: 1 },
-      });
-      expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(
-        normalStatus,
-      );
-    },
-  );
+    expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(500);
+    expect(context.store.get()).toMatchObject({
+      scenario: "NORMAL",
+      lastCompleted: { scenario, triggeredCount: 1 },
+    });
+    expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(normalStatus);
+  });
 
   it.each([
     ["AUTH_500", "authorization-http"],
     ["TOKEN_500", "token"],
     ["JWKS_500", "jwks"],
     ["DISCOVERY_500", "discovery"],
-  ] as const)(
-    "does not consume %s for two trailing slashes rejected by the provider",
-    async (scenario, endpoint) => {
-      context.store.set({
-        scenario,
-        mode: "LIMITED",
-        failureCount: 1,
-      });
+  ] as const)("does not consume %s for two trailing slashes rejected by the provider", async (scenario, endpoint) => {
+    context.store.set({
+      scenario,
+      mode: "LIMITED",
+      failureCount: 1,
+    });
 
-      expect((await requestEndpoint(endpoint, undefined, 2)).statusCode).toBe(
-        404,
-      );
-      expect(context.store.get()).toMatchObject({
-        scenario,
-        remainingFailures: 1,
-        triggeredCount: 0,
-      });
-    },
-  );
+    expect((await requestEndpoint(endpoint, undefined, 2)).statusCode).toBe(404);
+    expect(context.store.get()).toMatchObject({
+      scenario,
+      remainingFailures: 1,
+      triggeredCount: 0,
+    });
+  });
 
   it("delays two AUTH_TIMEOUT probes and then answers them normally", async () => {
     context.store.set({
@@ -381,10 +345,8 @@ describe("official Entra resilience scenarios", () => {
       const response = await requestEndpoint("authorization-http");
       expect(response.statusCode, response.body).toBe(200);
       expect(Date.now() - started).toBeGreaterThanOrEqual(30);
-      if (remainingFailures === 0)
-        expect(context.store.get().scenario).toBe("NORMAL");
-      else
-        expect(context.store.get().remainingFailures).toBe(remainingFailures);
+      if (remainingFailures === 0) expect(context.store.get().scenario).toBe("NORMAL");
+      else expect(context.store.get().remainingFailures).toBe(remainingFailures);
     }
 
     expect((await requestEndpoint("authorization-http")).statusCode).toBe(200);
@@ -481,21 +443,18 @@ describe("official Entra resilience scenarios", () => {
     },
   );
 
-  it.each(["", "/"] as const)(
-    "answers a healthy connectivity probe at the path with '%s' appended",
-    async (suffix) => {
-      const response = await context.app.inject({
-        method: "HEAD",
-        url: `${commonProbePath}${suffix}`,
-        headers: { host },
-      });
+  it.each(["", "/"] as const)("answers a healthy connectivity probe at the path with '%s' appended", async (suffix) => {
+    const response = await context.app.inject({
+      method: "HEAD",
+      url: `${commonProbePath}${suffix}`,
+      headers: { host },
+    });
 
-      expect(response.statusCode).toBe(200);
-      expect(response.body).toBe("");
-      expect(response.headers["content-type"]).toBe(probeContentType);
-      expect(response.headers["cache-control"]).toBe("no-store");
-    },
-  );
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("");
+    expect(response.headers["content-type"]).toBe(probeContentType);
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
 
   it.each(["GET", "POST"] as const)(
     "leaves the connectivity probe path a 404 for %s and consumes no count",
@@ -603,9 +562,9 @@ describe("official Entra resilience scenarios", () => {
   });
 
   it("supports successful signing-key rollover and keeps both public keys until reset", async () => {
-    const initialJwks = (
-      await context.app.inject({ url: jwksPath, headers: { host } })
-    ).json<{ keys: Array<{ kid?: string }> }>();
+    const initialJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
+      keys: Array<{ kid?: string }>;
+    }>();
     expect(initialJwks.keys).toHaveLength(1);
     const initialKid = initialJwks.keys[0]?.kid;
     const flow = await authorize();
@@ -615,13 +574,10 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-    const publishedJwks = (
-      await context.app.inject({ url: jwksPath, headers: { host } })
-    ).json<{ keys: Array<{ kid?: string }> }>();
-    expect(publishedJwks.keys.map(({ kid }) => kid)).toEqual([
-      initialKid,
-      "mock-rollover-key",
-    ]);
+    const publishedJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
+      keys: Array<{ kid?: string }>;
+    }>();
+    expect(publishedJwks.keys.map(({ kid }) => kid)).toEqual([initialKid, "mock-rollover-key"]);
 
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
@@ -652,9 +608,9 @@ describe("official Entra resilience scenarios", () => {
     ).toHaveLength(2);
 
     context.store.reset();
-    const resetJwks = (
-      await context.app.inject({ url: jwksPath, headers: { host } })
-    ).json<{ keys: Array<{ kid?: string }> }>();
+    const resetJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
+      keys: Array<{ kid?: string }>;
+    }>();
     expect(resetJwks.keys.map(({ kid }) => kid)).toEqual([initialKid]);
 
     const normalFlow = await authorize();
@@ -680,10 +636,7 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-    expect(
-      (await context.app.inject({ url: jwksPath, headers: { host } }))
-        .statusCode,
-    ).toBe(429);
+    expect((await context.app.inject({ url: jwksPath, headers: { host } })).statusCode).toBe(429);
     expect(
       (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
@@ -695,9 +648,9 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-    expect(
-      (await context.app.inject({ url: jwksPath, headers: { host } })).json(),
-    ).toEqual({ keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
+    expect((await context.app.inject({ url: jwksPath, headers: { host } })).json()).toEqual({
+      keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }],
+    });
     expect(
       (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
@@ -709,10 +662,7 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-    expect(
-      (await context.app.inject({ url: jwksPath, headers: { host } }))
-        .statusCode,
-    ).toBe(500);
+    expect((await context.app.inject({ url: jwksPath, headers: { host } })).statusCode).toBe(500);
     expect(
       (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
         keys: unknown[];
@@ -733,9 +683,7 @@ describe("official Entra resilience scenarios", () => {
   });
 
   it("starts with only the original public key after a restart", async () => {
-    const restartDirectory = await mkdtemp(
-      join(tmpdir(), "mock-idp-rollover-restart-"),
-    );
+    const restartDirectory = await mkdtemp(join(tmpdir(), "mock-idp-rollover-restart-"));
     const restartConfig = testConfig({
       issuer,
       keyDirectory: join(restartDirectory, "keys"),
@@ -759,9 +707,9 @@ describe("official Entra resilience scenarios", () => {
       original = undefined;
 
       restarted = await buildApp(restartConfig, { https: false });
-      const restartedKeys = (
-        await restarted.app.inject({ url: jwksPath, headers: { host } })
-      ).json<{ keys: Array<{ kid?: string }> }>().keys;
+      const restartedKeys = (await restarted.app.inject({ url: jwksPath, headers: { host } })).json<{
+        keys: Array<{ kid?: string }>;
+      }>().keys;
       expect(restartedKeys.map(({ kid }) => kid)).toEqual(["mock-normal-key"]);
     } finally {
       try {

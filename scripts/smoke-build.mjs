@@ -8,12 +8,7 @@ import process from "node:process";
 import { promisify } from "node:util";
 import { fileURLToPath, URL } from "node:url";
 import { buildApp } from "../dist/app.js";
-import {
-  loadConfig,
-  mockIssuer,
-  mockIssuerPath,
-  mockOrigin,
-} from "../dist/config.js";
+import { loadConfig, mockIssuer, mockIssuerPath, mockOrigin } from "../dist/config.js";
 import { loadTlsServerOptions } from "../dist/tls.js";
 
 const listenHost = "127.0.0.1";
@@ -22,9 +17,7 @@ const issuerHost = issuerUrl.host;
 const stateDirectory = await mkdtemp(join(tmpdir(), "mock-entra-startup-"));
 const tlsDirectory = join(stateDirectory, "tls");
 const tlsPrivateDirectory = join(stateDirectory, "tls-private");
-const setupTlsScript = fileURLToPath(
-  new URL("./setup-tls.mjs", import.meta.url),
-);
+const setupTlsScript = fileURLToPath(new URL("./setup-tls.mjs", import.meta.url));
 const execFileAsync = promisify(execFile);
 let context;
 let ca;
@@ -83,21 +76,14 @@ try {
   context = await buildApp(config, { https: httpsOptions });
   await context.app.listen({ host: listenHost, port: 0 });
   const address = context.app.server.address();
-  if (!address || typeof address === "string")
-    throw new Error("Compiled server did not expose a TCP address");
+  if (!address || typeof address === "string") throw new Error("Compiled server did not expose a TCP address");
 
   const healthResponse = await requestJson(address.port, "/health");
   if (healthResponse.statusCode !== 200 || healthResponse.body?.status !== "ok")
     throw new Error("Compiled server returned an invalid health response");
 
-  const discoveryResponse = await requestJson(
-    address.port,
-    `${mockIssuerPath}/.well-known/openid-configuration`,
-  );
-  if (
-    discoveryResponse.statusCode !== 200 ||
-    discoveryResponse.body?.issuer !== mockIssuer
-  )
+  const discoveryResponse = await requestJson(address.port, `${mockIssuerPath}/.well-known/openid-configuration`);
+  if (discoveryResponse.statusCode !== 200 || discoveryResponse.body?.issuer !== mockIssuer)
     throw new Error("Compiled server returned invalid discovery metadata");
 
   process.stdout.write("Compiled server startup smoke test passed.\n");

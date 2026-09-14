@@ -1,8 +1,5 @@
 import { accessLogCapacity } from "../access-log/store.js";
-import {
-  scenarioUiDefaults,
-  scenarioUiMetadata,
-} from "../scenario/registry.js";
+import { scenarioUiDefaults, scenarioUiMetadata } from "../scenario/registry.js";
 import { escapeHtml } from "./html.js";
 import { maxIdentifierLength } from "../validation/common.js";
 
@@ -13,17 +10,10 @@ const identifierHint = `前後の空白を除いて1〜${maxIdentifierLength}文
 const options = Object.keys(scenarioUiMetadata)
   .map((name) => `<option value="${name}">${name}</option>`)
   .join("");
-const uiMetadata = JSON.stringify(scenarioUiMetadata).replaceAll(
-  "<",
-  "\\u003c",
-);
+const uiMetadata = JSON.stringify(scenarioUiMetadata).replaceAll("<", "\\u003c");
 const uiDefaults = JSON.stringify(scenarioUiDefaults);
 
-export function renderAdminHtml(
-  tenantId: string,
-  issuer: string,
-  logoutUrl: string,
-): string {
+export function renderAdminHtml(tenantId: string, issuer: string, logoutUrl: string): string {
   const connectionValues = JSON.stringify({
     authorityUrl: issuer,
     tenantId,

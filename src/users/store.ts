@@ -7,16 +7,8 @@ import {
   SerialQueue,
   stageJsonFile,
 } from "../persistence/json-file.js";
-import type {
-  CreateMockUserInput,
-  MockUser,
-  UpdateMockUserInput,
-} from "./types.js";
-import {
-  parseCreateUser,
-  parseUpdateUser,
-  persistedUserSchema,
-} from "./validation.js";
+import type { CreateMockUserInput, MockUser, UpdateMockUserInput } from "./types.js";
+import { parseCreateUser, parseUpdateUser, persistedUserSchema } from "./validation.js";
 
 export class UserConflictError extends Error {}
 export class UserNotFoundError extends Error {}
@@ -56,9 +48,7 @@ const uniqueFields: readonly [UniqueField, (value: string) => string][] = [
   ["preferred_username", (value) => value.toLowerCase()],
 ];
 
-function duplicateField(
-  users: readonly MockUser[],
-): { field: UniqueField; value: string } | undefined {
+function duplicateField(users: readonly MockUser[]): { field: UniqueField; value: string } | undefined {
   for (const [field, normalize] of uniqueFields) {
     const seen = new Set<string>();
     for (const user of users) {
@@ -78,14 +68,9 @@ export class MockUserStore {
 
   async initialize(): Promise<void> {
     const contents = await readJsonFile(this.filePath);
-    const users = contents.exists
-      ? z.array(persistedUserSchema).parse(contents.value)
-      : defaultUsers();
+    const users = contents.exists ? z.array(persistedUserSchema).parse(contents.value) : defaultUsers();
     const duplicate = duplicateField(users);
-    if (duplicate)
-      throw new Error(
-        `duplicate ${duplicate.field} in ${this.filePath}: ${duplicate.value}`,
-      );
+    if (duplicate) throw new Error(`duplicate ${duplicate.field} in ${this.filePath}: ${duplicate.value}`);
     if (!contents.exists) {
       const temporary = await stageJsonFile(this.filePath, users);
       try {
@@ -127,8 +112,7 @@ export class MockUserStore {
   async update(sub: string, input: UpdateMockUserInput): Promise<MockUser> {
     const update = parseUpdateUser(input);
     return this.#queue.run(async () => {
-      if (!this.#users.has(sub))
-        throw new UserNotFoundError(`user not found: ${sub}`);
+      if (!this.#users.has(sub)) throw new UserNotFoundError(`user not found: ${sub}`);
       const user = { sub, ...update };
       await this.commit(new Map(this.#users).set(sub, user));
       return structuredClone(user);
@@ -137,8 +121,7 @@ export class MockUserStore {
 
   async delete(sub: string): Promise<void> {
     return this.#queue.run(async () => {
-      if (!this.#users.has(sub))
-        throw new UserNotFoundError(`user not found: ${sub}`);
+      if (!this.#users.has(sub)) throw new UserNotFoundError(`user not found: ${sub}`);
       const next = new Map(this.#users);
       next.delete(sub);
       await this.commit(next);
@@ -147,9 +130,7 @@ export class MockUserStore {
 
   async reset(): Promise<MockUser[]> {
     return this.#queue.run(async () => {
-      await this.commit(
-        new Map(defaultUsers().map((user) => [user.sub, user])),
-      );
+      await this.commit(new Map(defaultUsers().map((user) => [user.sub, user])));
       return this.list();
     });
   }
@@ -157,10 +138,7 @@ export class MockUserStore {
   private async commit(next: Map<string, MockUser>): Promise<void> {
     const users = [...next.values()];
     const duplicate = duplicateField(users);
-    if (duplicate)
-      throw new UserConflictError(
-        `${duplicate.field} already in use: ${duplicate.value}`,
-      );
+    if (duplicate) throw new UserConflictError(`${duplicate.field} already in use: ${duplicate.value}`);
     const temporary = await stageJsonFile(this.filePath, users);
     try {
       await commitStagedFile(temporary, this.filePath);

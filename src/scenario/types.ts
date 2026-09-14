@@ -38,13 +38,7 @@ export type ScenarioMode = "CONTINUOUS" | "LIMITED";
  * separate failure from a sign-in and never affects one.
  */
 export type FaultEndpoint =
-  | "authorization"
-  | "authorization-http"
-  | "claims"
-  | "token-jwt"
-  | "token"
-  | "jwks"
-  | "discovery";
+  "authorization" | "authorization-http" | "claims" | "token-jwt" | "token" | "jwks" | "discovery";
 
 export interface ScenarioParameters {
   delayMs?: number;
@@ -88,18 +82,12 @@ export interface NormalScenarioInput {
   parameters?: never;
 }
 
-type TimeoutScenarioName =
-  "AUTH_TIMEOUT" | "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
-type RetryAfterRequiredScenarioName =
-  "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429";
-type RetryAfterOptionalScenarioName =
-  "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
+type TimeoutScenarioName = "AUTH_TIMEOUT" | "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
+type RetryAfterRequiredScenarioName = "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429";
+type RetryAfterOptionalScenarioName = "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
 type ParameterlessScenarioName = Exclude<
   FaultScenarioName,
-  | TimeoutScenarioName
-  | "TOKEN_400"
-  | RetryAfterRequiredScenarioName
-  | RetryAfterOptionalScenarioName
+  TimeoutScenarioName | "TOKEN_400" | RetryAfterRequiredScenarioName | RetryAfterOptionalScenarioName
 >;
 
 interface NoScenarioParameters {
@@ -158,8 +146,7 @@ export type LimitedScenarioInput = ScenarioSpecificInput & {
   failureCount: number;
 };
 
-export type SetScenarioInput =
-  NormalScenarioInput | ContinuousScenarioInput | LimitedScenarioInput;
+export type SetScenarioInput = NormalScenarioInput | ContinuousScenarioInput | LimitedScenarioInput;
 
 /**
  * Captures which scenario activation was current when an HTTP request entered

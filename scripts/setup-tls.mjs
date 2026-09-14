@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 
 import { Buffer } from "node:buffer";
-import {
-  randomBytes,
-  randomUUID,
-  X509Certificate,
-  createPrivateKey,
-} from "node:crypto";
+import { randomBytes, randomUUID, X509Certificate, createPrivateKey } from "node:crypto";
 import { spawn } from "node:child_process";
 import { writeSync } from "node:fs";
 import {
@@ -47,12 +42,8 @@ const privateFileNames = Object.freeze({
   caPrivateKey: "ca.key.pem",
   serverPrivateKey: "server.key.pem",
 });
-const expectedPublicFileNames = Object.freeze(
-  Object.values(publicFileNames).sort(),
-);
-const expectedPrivateFileNames = Object.freeze(
-  Object.values(privateFileNames).sort(),
-);
+const expectedPublicFileNames = Object.freeze(Object.values(publicFileNames).sort());
+const expectedPrivateFileNames = Object.freeze(Object.values(privateFileNames).sort());
 
 function writeStandardOutput(message) {
   writeSync(process.stdout.fd, message);
@@ -78,26 +69,17 @@ function usage() {
   ].join("\n");
 }
 
-function parseDirectoryOption(
-  arguments_,
-  index,
-  flagName,
-  seenFlags,
-  currentValue,
-) {
+function parseDirectoryOption(arguments_, index, flagName, seenFlags, currentValue) {
   const argument = arguments_[index];
   if (argument === flagName) {
-    if (seenFlags.has(flagName))
-      throw new Error(`${flagName} may only be specified once`);
+    if (seenFlags.has(flagName)) throw new Error(`${flagName} may only be specified once`);
     const value = arguments_[index + 1];
-    if (!value || value.startsWith("--"))
-      throw new Error(`${flagName} requires a directory`);
+    if (!value || value.startsWith("--")) throw new Error(`${flagName} requires a directory`);
     seenFlags.add(flagName);
     return { value: resolve(value), consumed: 2 };
   }
   if (argument?.startsWith(`${flagName}=`)) {
-    if (seenFlags.has(flagName))
-      throw new Error(`${flagName} may only be specified once`);
+    if (seenFlags.has(flagName)) throw new Error(`${flagName} may only be specified once`);
     const value = argument.slice(`${flagName}=`.length);
     if (!value) throw new Error(`${flagName} requires a directory`);
     seenFlags.add(flagName);
@@ -108,10 +90,7 @@ function parseDirectoryOption(
 
 function containsDirectory(parent, directory) {
   const path = relative(parent, directory);
-  return (
-    path === "" ||
-    (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))
-  );
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
 function parseArguments(arguments_) {
@@ -122,34 +101,21 @@ function parseArguments(arguments_) {
 
   for (let index = 0; index < arguments_.length; index++) {
     const argument = arguments_[index];
-    if (argument === "--help")
-      return { help: true, outputDirectory, privateDirectory, rotateCa };
+    if (argument === "--help") return { help: true, outputDirectory, privateDirectory, rotateCa };
     if (argument === "--rotate-ca") {
       if (rotateCa) throw new Error("--rotate-ca may only be specified once");
       rotateCa = true;
       continue;
     }
 
-    const outputResult = parseDirectoryOption(
-      arguments_,
-      index,
-      "--output-dir",
-      seenFlags,
-      outputDirectory,
-    );
+    const outputResult = parseDirectoryOption(arguments_, index, "--output-dir", seenFlags, outputDirectory);
     if (outputResult.consumed > 0) {
       outputDirectory = outputResult.value;
       index += outputResult.consumed - 1;
       continue;
     }
 
-    const privateResult = parseDirectoryOption(
-      arguments_,
-      index,
-      "--private-dir",
-      seenFlags,
-      privateDirectory,
-    );
+    const privateResult = parseDirectoryOption(arguments_, index, "--private-dir", seenFlags, privateDirectory);
     if (privateResult.consumed > 0) {
       privateDirectory = privateResult.value;
       index += privateResult.consumed - 1;
@@ -159,10 +125,7 @@ function parseArguments(arguments_) {
     throw new Error(`Unknown argument: ${argument}`);
   }
 
-  if (
-    containsDirectory(outputDirectory, privateDirectory) ||
-    containsDirectory(privateDirectory, outputDirectory)
-  )
+  if (containsDirectory(outputDirectory, privateDirectory) || containsDirectory(privateDirectory, outputDirectory))
     throw new Error(
       "TLS public and private directories must be separate: neither may equal or contain the other. No files were changed.",
     );
@@ -181,11 +144,7 @@ function runOpenSsl(arguments_) {
     child.stderr.on("data", (chunk) => standardError.push(chunk));
     child.on("error", (error) => {
       if (error.code === "ENOENT") {
-        rejectPromise(
-          new Error(
-            "OpenSSL was not found. Install OpenSSL and retry TLS setup.",
-          ),
-        );
+        rejectPromise(new Error("OpenSSL was not found. Install OpenSSL and retry TLS setup."));
         return;
       }
       rejectPromise(error);
@@ -220,15 +179,11 @@ async function pathState(path) {
 async function inspectDirectory(directory, expectedNames) {
   const state = await pathState(directory);
   if (!state) return "empty";
-  if (!state.isDirectory())
-    throw new Error(`TLS output path is not a directory: ${directory}`);
+  if (!state.isDirectory()) throw new Error(`TLS output path is not a directory: ${directory}`);
 
   const entries = (await readdir(directory)).sort();
   if (entries.length === 0) return "empty-directory";
-  if (
-    entries.length !== expectedNames.length ||
-    entries.some((entry, index) => entry !== expectedNames[index])
-  ) {
+  if (entries.length !== expectedNames.length || entries.some((entry, index) => entry !== expectedNames[index])) {
     const expected = expectedNames.join(", ");
     const actual = entries.join(", ");
     throw new Error(
@@ -251,9 +206,7 @@ async function inspectDirectory(directory, expectedNames) {
 // while the bind-mounted .data/tls may not exist yet ("empty"). Both mean
 // "nothing installed yet", so they must not be treated as an inconsistency.
 function normalizeUninitializedState(state) {
-  return state === "empty" || state === "empty-directory"
-    ? "uninitialized"
-    : state;
+  return state === "empty" || state === "empty-directory" ? "uninitialized" : state;
 }
 
 async function inspectBundleDirectories(publicDirectory, privateDirectory) {
@@ -261,10 +214,7 @@ async function inspectBundleDirectories(publicDirectory, privateDirectory) {
     inspectDirectory(publicDirectory, expectedPublicFileNames),
     inspectDirectory(privateDirectory, expectedPrivateFileNames),
   ]);
-  if (
-    normalizeUninitializedState(publicState) ===
-    normalizeUninitializedState(privateState)
-  )
+  if (normalizeUninitializedState(publicState) === normalizeUninitializedState(privateState))
     return normalizeUninitializedState(publicState);
   throw new Error(
     `TLS setup is inconsistent: ${publicDirectory} is ${publicState} but ${privateDirectory} is ${privateState}. No files were changed; resolve manually before regenerating.`,
@@ -275,26 +225,16 @@ function assertCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function assertCertificateValidity(
-  certificate,
-  label,
-  { allowExpired = false } = {},
-) {
+function assertCertificateValidity(certificate, label, { allowExpired = false } = {}) {
   const now = Date.now();
-  assertCondition(
-    certificate.validFromDate.getTime() <= now,
-    `${label} is not valid yet`,
-  );
+  assertCondition(certificate.validFromDate.getTime() <= now, `${label} is not valid yet`);
   const expired = certificate.validToDate.getTime() <= now;
   assertCondition(allowExpired || !expired, `${label} has expired`);
   return expired;
 }
 
 function assertRsa2048(publicOrPrivateKey, label) {
-  assertCondition(
-    publicOrPrivateKey.asymmetricKeyType === "rsa",
-    `${label} must use RSA`,
-  );
+  assertCondition(publicOrPrivateKey.asymmetricKeyType === "rsa", `${label} must use RSA`);
   assertCondition(
     publicOrPrivateKey.asymmetricKeyDetails?.modulusLength === 2048,
     `${label} must use a 2048-bit RSA key`,
@@ -304,10 +244,7 @@ function assertRsa2048(publicOrPrivateKey, label) {
 async function assertPrivateDirectoryPermissions(path) {
   if (process.platform === "win32") return;
   const mode = (await lstat(path)).mode & 0o777;
-  assertCondition(
-    mode === 0o700,
-    "TLS private key directory permissions must be 0700",
-  );
+  assertCondition(mode === 0o700, "TLS private key directory permissions must be 0700");
 }
 
 async function assertPrivateFilePermissions(path, label) {
@@ -338,36 +275,23 @@ function assertExpectedExtensions(caText, serverText) {
     "Server certificate must have critical CA:FALSE constraints",
   );
   assertCondition(
-    /X509v3 Key Usage: critical\s+Digital Signature, Key Encipherment/.test(
-      serverText,
-    ),
+    /X509v3 Key Usage: critical\s+Digital Signature, Key Encipherment/.test(serverText),
     "Server certificate has invalid key usage",
   );
   assertCondition(
-    /X509v3 Extended Key Usage:\s+TLS Web Server Authentication/.test(
-      serverText,
-    ),
+    /X509v3 Extended Key Usage:\s+TLS Web Server Authentication/.test(serverText),
     "Server certificate must be valid for TLS server authentication",
   );
 }
 
-async function validateBundle(
-  publicDirectory,
-  privateDirectory,
-  { allowExpiredServer = false } = {},
-) {
+async function validateBundle(publicDirectory, privateDirectory, { allowExpiredServer = false } = {}) {
   const paths = {
     caCertificate: join(publicDirectory, publicFileNames.caCertificate),
     serverCertificate: join(publicDirectory, publicFileNames.serverCertificate),
     caPrivateKey: join(privateDirectory, privateFileNames.caPrivateKey),
     serverPrivateKey: join(privateDirectory, privateFileNames.serverPrivateKey),
   };
-  const [
-    caCertificatePem,
-    serverCertificatePem,
-    caPrivateKeyPem,
-    serverPrivateKeyPem,
-  ] = await Promise.all([
+  const [caCertificatePem, serverCertificatePem, caPrivateKeyPem, serverPrivateKeyPem] = await Promise.all([
     readFile(paths.caCertificate),
     readFile(paths.serverCertificate),
     readFile(paths.caPrivateKey),
@@ -380,21 +304,17 @@ async function validateBundle(
   const serverPrivateKey = createPrivateKey(serverPrivateKeyPem);
 
   assertCertificateValidity(caCertificate, "CA certificate");
-  const serverExpired = assertCertificateValidity(
-    serverCertificate,
-    "Server certificate",
-    { allowExpired: allowExpiredServer },
-  );
+  const serverExpired = assertCertificateValidity(serverCertificate, "Server certificate", {
+    allowExpired: allowExpiredServer,
+  });
   assertCondition(caCertificate.ca, "CA certificate must be a CA");
   assertCondition(!serverCertificate.ca, "Server certificate must not be a CA");
   assertCondition(
-    caCertificate.subject === caCertificate.issuer &&
-      caCertificate.verify(caCertificate.publicKey),
+    caCertificate.subject === caCertificate.issuer && caCertificate.verify(caCertificate.publicKey),
     "CA certificate must be self-signed",
   );
   assertCondition(
-    serverCertificate.checkIssued(caCertificate) &&
-      serverCertificate.verify(caCertificate.publicKey),
+    serverCertificate.checkIssued(caCertificate) && serverCertificate.verify(caCertificate.publicKey),
     "Server certificate was not issued by the configured CA",
   );
   assertCondition(
@@ -409,10 +329,7 @@ async function validateBundle(
   assertRsa2048(serverCertificate.publicKey, "Server certificate public key");
   assertRsa2048(caPrivateKey, "CA private key");
   assertRsa2048(serverPrivateKey, "Server private key");
-  assertCondition(
-    caCertificate.checkPrivateKey(caPrivateKey),
-    "CA certificate and private key do not match",
-  );
+  assertCondition(caCertificate.checkPrivateKey(caPrivateKey), "CA certificate and private key do not match");
   assertCondition(
     serverCertificate.checkPrivateKey(serverPrivateKey),
     "Server certificate and private key do not match",
@@ -491,28 +408,10 @@ async function writeGenerationConfiguration(scratchDirectory) {
   ]);
 }
 
-async function generateCa(
-  privateStagingDirectory,
-  publicStagingDirectory,
-  scratchDirectory,
-) {
-  const caPrivateKeyPath = join(
-    privateStagingDirectory,
-    privateFileNames.caPrivateKey,
-  );
-  const caCertificatePath = join(
-    publicStagingDirectory,
-    publicFileNames.caCertificate,
-  );
-  await runOpenSsl([
-    "genpkey",
-    "-algorithm",
-    "RSA",
-    "-pkeyopt",
-    "rsa_keygen_bits:2048",
-    "-out",
-    caPrivateKeyPath,
-  ]);
+async function generateCa(privateStagingDirectory, publicStagingDirectory, scratchDirectory) {
+  const caPrivateKeyPath = join(privateStagingDirectory, privateFileNames.caPrivateKey);
+  const caCertificatePath = join(publicStagingDirectory, publicFileNames.caCertificate);
+  await runOpenSsl(["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", caPrivateKeyPath]);
   await runOpenSsl([
     "req",
     "-new",
@@ -536,24 +435,10 @@ async function generateServerCertificate(
   caCertificatePath,
   caPrivateKeyPath,
 ) {
-  const serverPrivateKeyPath = join(
-    privateStagingDirectory,
-    privateFileNames.serverPrivateKey,
-  );
-  const serverCertificatePath = join(
-    publicStagingDirectory,
-    publicFileNames.serverCertificate,
-  );
+  const serverPrivateKeyPath = join(privateStagingDirectory, privateFileNames.serverPrivateKey);
+  const serverCertificatePath = join(publicStagingDirectory, publicFileNames.serverCertificate);
   const csrPath = join(scratchDirectory, "server.csr.pem");
-  await runOpenSsl([
-    "genpkey",
-    "-algorithm",
-    "RSA",
-    "-pkeyopt",
-    "rsa_keygen_bits:2048",
-    "-out",
-    serverPrivateKeyPath,
-  ]);
+  await runOpenSsl(["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", serverPrivateKeyPath]);
   await runOpenSsl([
     "req",
     "-new",
@@ -595,30 +480,14 @@ async function prepareBundle(
   includeNewCa,
 ) {
   await writeGenerationConfiguration(scratchDirectory);
-  const caCertificatePath = join(
-    publicStagingDirectory,
-    publicFileNames.caCertificate,
-  );
-  const caPrivateKeyPath = join(
-    privateStagingDirectory,
-    privateFileNames.caPrivateKey,
-  );
+  const caCertificatePath = join(publicStagingDirectory, publicFileNames.caCertificate);
+  const caPrivateKeyPath = join(privateStagingDirectory, privateFileNames.caPrivateKey);
   if (includeNewCa) {
-    await generateCa(
-      privateStagingDirectory,
-      publicStagingDirectory,
-      scratchDirectory,
-    );
+    await generateCa(privateStagingDirectory, publicStagingDirectory, scratchDirectory);
   } else {
     await Promise.all([
-      copyFile(
-        join(existingPublicDirectory, publicFileNames.caCertificate),
-        caCertificatePath,
-      ),
-      copyFile(
-        join(existingPrivateDirectory, privateFileNames.caPrivateKey),
-        caPrivateKeyPath,
-      ),
+      copyFile(join(existingPublicDirectory, publicFileNames.caCertificate), caCertificatePath),
+      copyFile(join(existingPrivateDirectory, privateFileNames.caPrivateKey), caPrivateKeyPath),
     ]);
   }
   await generateServerCertificate(
@@ -632,14 +501,8 @@ async function prepareBundle(
   await Promise.all([
     chmod(caCertificatePath, 0o644),
     chmod(caPrivateKeyPath, 0o600),
-    chmod(
-      join(publicStagingDirectory, publicFileNames.serverCertificate),
-      0o644,
-    ),
-    chmod(
-      join(privateStagingDirectory, privateFileNames.serverPrivateKey),
-      0o600,
-    ),
+    chmod(join(publicStagingDirectory, publicFileNames.serverCertificate), 0o644),
+    chmod(join(privateStagingDirectory, privateFileNames.serverPrivateKey), 0o600),
   ]);
 
   await validateBundle(publicStagingDirectory, privateStagingDirectory);
@@ -660,9 +523,7 @@ async function prepareBundle(
  */
 async function installStagedFile(stagingPath, finalPath) {
   const existing = await pathState(finalPath);
-  const backupPath = existing
-    ? `${finalPath}.backup-${process.pid}-${randomUUID()}`
-    : undefined;
+  const backupPath = existing ? `${finalPath}.backup-${process.pid}-${randomUUID()}` : undefined;
   if (backupPath) await rename(finalPath, backupPath);
   try {
     await rename(stagingPath, finalPath);
@@ -683,9 +544,7 @@ async function discardBackupFile(backupPath) {
   try {
     await rm(backupPath, { force: true });
   } catch (error) {
-    writeStandardError(
-      `TLS setup succeeded, but the backup could not be removed (${backupPath}): ${error.message}\n`,
-    );
+    writeStandardError(`TLS setup succeeded, but the backup could not be removed (${backupPath}): ${error.message}\n`);
   }
 }
 
@@ -699,10 +558,7 @@ async function installBundleFiles(stagingDirectory, directory, fileNames) {
   const installed = [];
   try {
     for (const fileName of fileNames) {
-      const backupPath = await installStagedFile(
-        join(stagingDirectory, fileName),
-        join(directory, fileName),
-      );
+      const backupPath = await installStagedFile(join(stagingDirectory, fileName), join(directory, fileName));
       installed.push({ fileName, backupPath });
     }
   } catch (error) {
@@ -719,60 +575,30 @@ async function installBundleFiles(stagingDirectory, directory, fileNames) {
  * bundle is rolled back so the two directories never end up holding a
  * mismatched cert/key pair on disk.
  */
-async function installBundlePair(
-  publicStagingDirectory,
-  publicDirectory,
-  privateStagingDirectory,
-  privateDirectory,
-) {
-  const publicInstalled = await installBundleFiles(
-    publicStagingDirectory,
-    publicDirectory,
-    expectedPublicFileNames,
-  );
+async function installBundlePair(publicStagingDirectory, publicDirectory, privateStagingDirectory, privateDirectory) {
+  const publicInstalled = await installBundleFiles(publicStagingDirectory, publicDirectory, expectedPublicFileNames);
   let privateInstalled;
   try {
-    privateInstalled = await installBundleFiles(
-      privateStagingDirectory,
-      privateDirectory,
-      expectedPrivateFileNames,
-    );
+    privateInstalled = await installBundleFiles(privateStagingDirectory, privateDirectory, expectedPrivateFileNames);
   } catch (error) {
     for (const { fileName, backupPath } of publicInstalled.reverse())
       await revertInstalledFile(join(publicDirectory, fileName), backupPath);
     throw error;
   }
-  for (const { backupPath } of [...publicInstalled, ...privateInstalled])
-    await discardBackupFile(backupPath);
+  for (const { backupPath } of [...publicInstalled, ...privateInstalled]) await discardBackupFile(backupPath);
 }
 
-async function generateAndInstall(
-  publicDirectory,
-  privateDirectory,
-  includeNewCa,
-) {
-  await Promise.all([
-    mkdir(publicDirectory, { recursive: true }),
-    mkdir(privateDirectory, { recursive: true }),
-  ]);
+async function generateAndInstall(publicDirectory, privateDirectory, includeNewCa) {
+  await Promise.all([mkdir(publicDirectory, { recursive: true }), mkdir(privateDirectory, { recursive: true })]);
   // The umask set at startup makes mkdir create both directories as 0700
   // regardless of the mode requested, so the public directory's intended
   // world-readable mode has to be restored explicitly here. This runs on
   // every install (not just first creation) so the mode self-heals even if
   // it was somehow left wrong by an earlier run.
-  await Promise.all([
-    chmod(publicDirectory, 0o755),
-    chmod(privateDirectory, 0o700),
-  ]);
-  const publicStagingDirectory = await mkdtemp(
-    join(publicDirectory, ".tls-setup-"),
-  );
-  const privateStagingDirectory = await mkdtemp(
-    join(privateDirectory, ".tls-setup-"),
-  );
-  const scratchDirectory = await mkdtemp(
-    join(publicStagingDirectory, ".scratch-"),
-  );
+  await Promise.all([chmod(publicDirectory, 0o755), chmod(privateDirectory, 0o700)]);
+  const publicStagingDirectory = await mkdtemp(join(publicDirectory, ".tls-setup-"));
+  const privateStagingDirectory = await mkdtemp(join(privateDirectory, ".tls-setup-"));
+  const scratchDirectory = await mkdtemp(join(publicStagingDirectory, ".scratch-"));
   try {
     await prepareBundle(
       publicStagingDirectory,
@@ -782,12 +608,7 @@ async function generateAndInstall(
       includeNewCa ? undefined : privateDirectory,
       includeNewCa,
     );
-    await installBundlePair(
-      publicStagingDirectory,
-      publicDirectory,
-      privateStagingDirectory,
-      privateDirectory,
-    );
+    await installBundlePair(publicStagingDirectory, publicDirectory, privateStagingDirectory, privateDirectory);
   } finally {
     await Promise.all([
       rm(publicStagingDirectory, { recursive: true, force: true }),
@@ -824,10 +645,7 @@ async function performSetup(options) {
 
   if (state === "uninitialized") {
     await generateAndInstall(publicDirectory, privateDirectory, true);
-    const { caCertificate } = await validateBundle(
-      publicDirectory,
-      privateDirectory,
-    );
+    const { caCertificate } = await validateBundle(publicDirectory, privateDirectory);
     writeStandardOutput(
       `Created local TLS CA and server certificate in ${publicDirectory} (private keys in ${privateDirectory}).\n` +
         fingerprintLine(caCertificate) +
@@ -850,10 +668,7 @@ async function performSetup(options) {
   if (options.rotateCa) {
     const oldFingerprint = certificates.caCertificate.fingerprint256;
     await generateAndInstall(publicDirectory, privateDirectory, true);
-    const { caCertificate } = await validateBundle(
-      publicDirectory,
-      privateDirectory,
-    );
+    const { caCertificate } = await validateBundle(publicDirectory, privateDirectory);
     writeStandardOutput(
       `Rotated the local TLS CA and server certificate in ${publicDirectory} (private keys in ${privateDirectory}).\n` +
         `Old CA SHA-256 fingerprint: ${oldFingerprint}\n` +
@@ -863,15 +678,13 @@ async function performSetup(options) {
     return;
   }
 
-  const caRemainingMilliseconds =
-    certificates.caCertificate.validToDate.getTime() - Date.now();
+  const caRemainingMilliseconds = certificates.caCertificate.validToDate.getTime() - Date.now();
   if (caRemainingMilliseconds <= serverValidityDays * millisecondsPerDay) {
     throw new Error(
       `The CA expires too soon to issue a ${serverValidityDays}-day server certificate. Run with --rotate-ca and re-register the new ${publicFileNames.caCertificate}.`,
     );
   }
-  const remainingMilliseconds =
-    certificates.serverCertificate.validToDate.getTime() - Date.now();
+  const remainingMilliseconds = certificates.serverCertificate.validToDate.getTime() - Date.now();
   if (remainingMilliseconds >= renewalThresholdDays * millisecondsPerDay) {
     writeStandardOutput(
       `TLS certificates in ${publicDirectory} are valid; no changes were made.\n` +
@@ -881,10 +694,7 @@ async function performSetup(options) {
   }
 
   await generateAndInstall(publicDirectory, privateDirectory, false);
-  const { caCertificate } = await validateBundle(
-    publicDirectory,
-    privateDirectory,
-  );
+  const { caCertificate } = await validateBundle(publicDirectory, privateDirectory);
   writeStandardOutput(
     `Renewed the server certificate in ${publicDirectory} (private keys in ${privateDirectory}) using the existing local CA.\n` +
       fingerprintLine(caCertificate),
@@ -899,10 +709,7 @@ async function main() {
   }
 
   await runOpenSsl(["version"]);
-  const lockDirectory = await acquireSetupLock(
-    options.outputDirectory,
-    options.privateDirectory,
-  );
+  const lockDirectory = await acquireSetupLock(options.outputDirectory, options.privateDirectory);
   try {
     await performSetup(options);
   } finally {
@@ -913,8 +720,6 @@ async function main() {
 try {
   await main();
 } catch (error) {
-  writeStandardError(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
+  writeStandardError(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 }

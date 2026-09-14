@@ -7,9 +7,7 @@ export type AccessLogInput = Omit<AccessLogEntry, "id">;
 function copy(entry: AccessLogEntry): AccessLogEntry {
   return {
     ...entry,
-    fault: entry.fault
-      ? { ...entry.fault, parameters: { ...entry.fault.parameters } }
-      : null,
+    fault: entry.fault ? { ...entry.fault, parameters: { ...entry.fault.parameters } } : null,
   };
 }
 
@@ -35,8 +33,7 @@ export class InMemoryAccessLog {
   record(input: AccessLogInput): AccessLogEntry {
     const entry = copy({ ...input, id: this.#nextId++ });
     this.#entries.push(entry);
-    if (this.#entries.length > this.#capacity)
-      this.#entries.splice(0, this.#entries.length - this.#capacity);
+    if (this.#entries.length > this.#capacity) this.#entries.splice(0, this.#entries.length - this.#capacity);
     return copy(entry);
   }
 

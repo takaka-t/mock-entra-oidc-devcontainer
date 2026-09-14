@@ -50,17 +50,13 @@ const commonShape = {
   emailOptionalClaim: z.boolean(),
 };
 
-function refineClient(
-  value: z.infer<z.ZodObject<typeof commonShape>>,
-  ctx: z.RefinementCtx,
-) {
+function refineClient(value: z.infer<z.ZodObject<typeof commonShape>>, ctx: z.RefinementCtx) {
   if (value.clientType === "PUBLIC") {
     if (value.clientSecret !== undefined)
       ctx.addIssue({
         code: "custom",
         path: ["clientSecret"],
-        message:
-          "PUBLIC クライアントにはクライアントシークレットを指定できません",
+        message: "PUBLIC クライアントにはクライアントシークレットを指定できません",
       });
     if (value.tokenEndpointAuthMethod !== "none")
       ctx.addIssue({
@@ -73,15 +69,13 @@ function refineClient(
       ctx.addIssue({
         code: "custom",
         path: ["clientSecret"],
-        message:
-          "CONFIDENTIAL クライアントにはクライアントシークレットが必要です",
+        message: "CONFIDENTIAL クライアントにはクライアントシークレットが必要です",
       });
     if (value.tokenEndpointAuthMethod === "none")
       ctx.addIssue({
         code: "custom",
         path: ["tokenEndpointAuthMethod"],
-        message:
-          "CONFIDENTIAL クライアントにはトークンエンドポイント認証が必要です",
+        message: "CONFIDENTIAL クライアントにはトークンエンドポイント認証が必要です",
       });
   }
 }
@@ -90,10 +84,7 @@ export const createClientSchema = z
   .object({ clientId, ...commonShape })
   .strict()
   .superRefine(refineClient);
-export const updateClientSchema = z
-  .object(commonShape)
-  .strict()
-  .superRefine(refineClient);
+export const updateClientSchema = z.object(commonShape).strict().superRefine(refineClient);
 
 export const persistedClientSchema = z.preprocess((input) => {
   if (typeof input !== "object" || input === null) return input;
@@ -114,9 +105,7 @@ export function parseUpdateClient(input: unknown): UpdateOidcClientInput {
   return normalized(updateClientSchema.parse(input));
 }
 
-function normalized<T extends { clientSecret?: string | undefined }>(
-  value: T,
-): T & { clientSecret?: string } {
+function normalized<T extends { clientSecret?: string | undefined }>(value: T): T & { clientSecret?: string } {
   if (value.clientSecret === undefined) delete value.clientSecret;
   return value as T & { clientSecret?: string };
 }

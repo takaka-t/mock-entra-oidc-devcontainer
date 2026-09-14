@@ -24,12 +24,7 @@ export interface AccessLogEndpointTable {
 export function resolveAccessLogEndpoints(
   config: Pick<
     AppConfig,
-    | "issuerPath"
-    | "authorizePath"
-    | "tokenPath"
-    | "jwksPath"
-    | "logoutPath"
-    | "commonAuthorizePath"
+    "issuerPath" | "authorizePath" | "tokenPath" | "jwksPath" | "logoutPath" | "commonAuthorizePath"
   >,
 ): AccessLogEndpointTable {
   return {
@@ -77,11 +72,7 @@ export function classifyAccessLogEndpoint(
   pathname: string,
   table: AccessLogEndpointTable,
 ): AccessLogEndpoint {
-  if (
-    method === "HEAD" &&
-    matchesCommonProbePath(pathname, table["connectivity-probe"])
-  )
-    return "connectivity-probe";
+  if (method === "HEAD" && matchesCommonProbePath(pathname, table["connectivity-probe"])) return "connectivity-probe";
   if (matchesExact(pathname, table.discovery)) return "discovery";
   if (matchesExact(pathname, table.token)) return "token";
   if (matchesExact(pathname, table.jwks)) return "jwks";
@@ -107,11 +98,7 @@ export function createAccessLogMiddleware(
   store: InMemoryScenarioStore,
   table: AccessLogEndpointTable,
 ) {
-  return (
-    req: IncomingMessage,
-    res: ServerResponse,
-    next: (error?: Error) => void,
-  ): void => {
+  return (req: IncomingMessage, res: ServerResponse, next: (error?: Error) => void): void => {
     const url = req.url ?? "/";
     const routedPath = routedPathname(url);
     if (managementPath(routedPath) || browserChromePath(routedPath)) {
@@ -141,8 +128,7 @@ export function createAccessLogMiddleware(
       });
     };
     const onFinish = (): void => settle(res.statusCode);
-    const onClose = (): void =>
-      settle(res.writableFinished ? res.statusCode : null);
+    const onClose = (): void => settle(res.writableFinished ? res.statusCode : null);
     res.once("finish", onFinish);
     res.once("close", onClose);
     next();

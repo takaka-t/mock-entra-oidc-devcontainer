@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  accessLogCapacity,
-  InMemoryAccessLog,
-  type AccessLogInput,
-} from "../../src/access-log/store.js";
+import { accessLogCapacity, InMemoryAccessLog, type AccessLogInput } from "../../src/access-log/store.js";
 
 function entry(overrides: Partial<AccessLogInput> = {}): AccessLogInput {
   return {

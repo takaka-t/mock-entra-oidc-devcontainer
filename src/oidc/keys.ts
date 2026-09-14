@@ -13,11 +13,7 @@ export interface SigningKeys {
   invalid: SigningKey;
 }
 
-async function loadOrCreate(
-  directory: string,
-  name: string,
-  kid: string,
-): Promise<SigningKey> {
+async function loadOrCreate(directory: string, name: string, kid: string): Promise<SigningKey> {
   await mkdir(directory, { recursive: true });
   const path = join(directory, `${name}.json`);
   let privateJwk: JWK;
@@ -54,20 +50,8 @@ async function loadOrCreate(
 
 export async function loadSigningKeys(directory: string): Promise<SigningKeys> {
   return {
-    normal: await loadOrCreate(
-      directory,
-      "normal-signing-key",
-      "mock-normal-key",
-    ),
-    rollover: await loadOrCreate(
-      directory,
-      "rollover-signing-key",
-      "mock-rollover-key",
-    ),
-    invalid: await loadOrCreate(
-      directory,
-      "invalid-signing-key",
-      "mock-invalid-key",
-    ),
+    normal: await loadOrCreate(directory, "normal-signing-key", "mock-normal-key"),
+    rollover: await loadOrCreate(directory, "rollover-signing-key", "mock-rollover-key"),
+    invalid: await loadOrCreate(directory, "invalid-signing-key", "mock-invalid-key"),
   };
 }

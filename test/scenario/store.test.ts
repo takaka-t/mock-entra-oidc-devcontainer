@@ -2,24 +2,9 @@ import { describe, expect, it } from "vitest";
 import { InMemoryScenarioStore } from "../../src/scenario/store.js";
 import { parseScenarioInput } from "../../src/scenario/validation.js";
 
-const timeoutScenarios = [
-  "AUTH_TIMEOUT",
-  "TOKEN_TIMEOUT",
-  "JWKS_TIMEOUT",
-  "DISCOVERY_TIMEOUT",
-] as const;
-const retryAfterRequiredScenarios = [
-  "AUTH_429",
-  "TOKEN_429",
-  "JWKS_429",
-  "DISCOVERY_429",
-] as const;
-const retryAfterOptionalScenarios = [
-  "AUTH_500",
-  "TOKEN_500",
-  "JWKS_500",
-  "DISCOVERY_500",
-] as const;
+const timeoutScenarios = ["AUTH_TIMEOUT", "TOKEN_TIMEOUT", "JWKS_TIMEOUT", "DISCOVERY_TIMEOUT"] as const;
+const retryAfterRequiredScenarios = ["AUTH_429", "TOKEN_429", "JWKS_429", "DISCOVERY_429"] as const;
+const retryAfterOptionalScenarios = ["AUTH_500", "TOKEN_500", "JWKS_500", "DISCOVERY_500"] as const;
 
 describe("InMemoryScenarioStore", () => {
   it("atomically consumes limited failures and returns to normal", async () => {
@@ -49,9 +34,7 @@ describe("InMemoryScenarioStore", () => {
       failureCount: 1,
       parameters: {},
     });
-    const decisions = await Promise.all(
-      Array.from({ length: 20 }, async () => store.consume("token")),
-    );
+    const decisions = await Promise.all(Array.from({ length: 20 }, async () => store.consume("token")));
     expect(decisions.filter(Boolean)).toHaveLength(1);
   });
 
@@ -82,9 +65,7 @@ describe("InMemoryScenarioStore", () => {
 
   it("validates invariants even when the store is called directly", () => {
     const store = new InMemoryScenarioStore();
-    expect(() => store.set({ scenario: "TOKEN_500" } as never)).toThrow(
-      "mode は必須です",
-    );
+    expect(() => store.set({ scenario: "TOKEN_500" } as never)).toThrow("mode は必須です");
     expect(() =>
       store.set({
         scenario: "TOKEN_500",
@@ -95,62 +76,46 @@ describe("InMemoryScenarioStore", () => {
     expect(store.get().scenario).toBe("NORMAL");
   });
 
-  it.each(timeoutScenarios)(
-    "defaults %s delay and rejects values above the supported maximum",
-    (scenario) => {
-      expect(
-        parseScenarioInput({ scenario, mode: "CONTINUOUS" }),
-      ).toMatchObject({ parameters: { delayMs: 30_000 } });
-      expect(() =>
-        parseScenarioInput({
-          scenario,
-          mode: "CONTINUOUS",
-          parameters: { delayMs: 300_001 },
-        }),
-      ).toThrow();
-    },
-  );
+  it.each(timeoutScenarios)("defaults %s delay and rejects values above the supported maximum", (scenario) => {
+    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({ parameters: { delayMs: 30_000 } });
+    expect(() =>
+      parseScenarioInput({
+        scenario,
+        mode: "CONTINUOUS",
+        parameters: { delayMs: 300_001 },
+      }),
+    ).toThrow();
+  });
 
-  it.each(retryAfterRequiredScenarios)(
-    "normalizes required Retry-After parameters for %s",
-    (scenario) => {
-      expect(
-        parseScenarioInput({ scenario, mode: "CONTINUOUS" }),
-      ).toMatchObject({ parameters: { retryAfterSeconds: 60 } });
-      expect(
-        parseScenarioInput({
-          scenario,
-          mode: "LIMITED",
-          failureCount: 1,
-          parameters: { retryAfterSeconds: 15 },
-        }),
-      ).toMatchObject({ parameters: { retryAfterSeconds: 15 } });
-    },
-  );
+  it.each(retryAfterRequiredScenarios)("normalizes required Retry-After parameters for %s", (scenario) => {
+    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({
+      parameters: { retryAfterSeconds: 60 },
+    });
+    expect(
+      parseScenarioInput({
+        scenario,
+        mode: "LIMITED",
+        failureCount: 1,
+        parameters: { retryAfterSeconds: 15 },
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 15 } });
+  });
 
-  it.each(retryAfterOptionalScenarios)(
-    "normalizes optional Retry-After parameters for %s",
-    (scenario) => {
-      expect(
-        parseScenarioInput({ scenario, mode: "CONTINUOUS" }),
-      ).toMatchObject({ parameters: {} });
-      expect(
-        parseScenarioInput({
-          scenario,
-          mode: "CONTINUOUS",
-          parameters: { retryAfterSeconds: 30 },
-        }),
-      ).toMatchObject({ parameters: { retryAfterSeconds: 30 } });
-    },
-  );
+  it.each(retryAfterOptionalScenarios)("normalizes optional Retry-After parameters for %s", (scenario) => {
+    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({ parameters: {} });
+    expect(
+      parseScenarioInput({
+        scenario,
+        mode: "CONTINUOUS",
+        parameters: { retryAfterSeconds: 30 },
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 30 } });
+  });
 
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "60"])(
     "rejects invalid Retry-After seconds %s",
     (retryAfterSeconds) => {
-      for (const scenario of [
-        ...retryAfterRequiredScenarios,
-        ...retryAfterOptionalScenarios,
-      ])
+      for (const scenario of [...retryAfterRequiredScenarios, ...retryAfterOptionalScenarios])
         expect(() =>
           parseScenarioInput({
             scenario,
@@ -171,14 +136,9 @@ describe("InMemoryScenarioStore", () => {
     ).toThrow();
   });
 
-  it.each(["UNKNOWN_GROUPS", "DISCOVERY_INVALID"])(
-    "rejects removed scenario %s",
-    (scenario) => {
-      expect(() =>
-        parseScenarioInput({ scenario, mode: "CONTINUOUS" }),
-      ).toThrow();
-    },
-  );
+  it.each(["UNKNOWN_GROUPS", "DISCOVERY_INVALID"])("rejects removed scenario %s", (scenario) => {
+    expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toThrow();
+  });
 
   it("does not apply a scenario activated after a request started", () => {
     const store = new InMemoryScenarioStore();
@@ -221,9 +181,7 @@ describe("InMemoryScenarioStore", () => {
     const ticket = store.startRequest({});
 
     expect(store.consumeForRequest("token", ticket)).toBeNull();
-    expect(store.consumeForRequest("token-jwt", ticket)?.scenario).toBe(
-      "WRONG_ISSUER",
-    );
+    expect(store.consumeForRequest("token-jwt", ticket)?.scenario).toBe("WRONG_ISSUER");
     expect(store.consumeForRequest("token-jwt", ticket)).toBeNull();
     expect(store.get().triggeredCount).toBe(1);
   });

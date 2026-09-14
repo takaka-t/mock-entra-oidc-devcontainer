@@ -6,16 +6,8 @@ import {
   SerialQueue,
   stageJsonFile,
 } from "../persistence/json-file.js";
-import type {
-  CreateOidcClientInput,
-  OidcClientConfig,
-  UpdateOidcClientInput,
-} from "./types.js";
-import {
-  parseCreateClient,
-  parseUpdateClient,
-  persistedClientSchema,
-} from "./validation.js";
+import type { CreateOidcClientInput, OidcClientConfig, UpdateOidcClientInput } from "./types.js";
+import { parseCreateClient, parseUpdateClient, persistedClientSchema } from "./validation.js";
 
 export class ClientConflictError extends Error {}
 export class ClientNotFoundError extends Error {}
@@ -76,11 +68,7 @@ export class OidcClientStore {
     if (contents.exists) {
       const raw = contents.value;
       migrated =
-        Array.isArray(raw) &&
-        raw.some(
-          (client) =>
-            typeof client === "object" && client !== null && "scopes" in client,
-        );
+        Array.isArray(raw) && raw.some((client) => typeof client === "object" && client !== null && "scopes" in client);
       clients = z.array(persistedClientSchema).parse(raw) as OidcClientConfig[];
     } else {
       clients = defaultClients();
@@ -88,18 +76,12 @@ export class OidcClientStore {
     }
     const ids = new Set<string>();
     for (const client of clients) {
-      if (ids.has(client.clientId))
-        throw new Error(
-          `duplicate client_id in ${this.filePath}: ${client.clientId}`,
-        );
+      if (ids.has(client.clientId)) throw new Error(`duplicate client_id in ${this.filePath}: ${client.clientId}`);
       ids.add(client.clientId);
     }
     await this.validateClients(clients);
 
-    const temporary =
-      missing || migrated
-        ? await stageJsonFile(this.filePath, clients)
-        : undefined;
+    const temporary = missing || migrated ? await stageJsonFile(this.filePath, clients) : undefined;
     try {
       await this.applyInitialClients(clients);
       if (temporary)
@@ -113,9 +95,7 @@ export class OidcClientStore {
             ),
           );
         }
-      this.#clients = new Map(
-        clients.map((client) => [client.clientId, client]),
-      );
+      this.#clients = new Map(clients.map((client) => [client.clientId, client]));
     } finally {
       if (temporary) await discardStagedFile(temporary);
     }
@@ -129,9 +109,7 @@ export class OidcClientStore {
     const client = parseCreateClient(input);
     return this.#queue.run(async () => {
       if (this.#clients.has(client.clientId))
-        throw new ClientConflictError(
-          `client already exists: ${client.clientId}`,
-        );
+        throw new ClientConflictError(`client already exists: ${client.clientId}`);
       const next = new Map(this.#clients).set(client.clientId, client);
       await this.commit(
         next,
@@ -142,15 +120,11 @@ export class OidcClientStore {
     });
   }
 
-  async update(
-    clientId: string,
-    input: UpdateOidcClientInput,
-  ): Promise<OidcClientConfig> {
+  async update(clientId: string, input: UpdateOidcClientInput): Promise<OidcClientConfig> {
     const update = parseUpdateClient(input);
     return this.#queue.run(async () => {
       const previous = this.#clients.get(clientId);
-      if (!previous)
-        throw new ClientNotFoundError(`client not found: ${clientId}`);
+      if (!previous) throw new ClientNotFoundError(`client not found: ${clientId}`);
       const client = { clientId, ...update };
       const next = new Map(this.#clients).set(clientId, client);
       await this.commit(
@@ -165,8 +139,7 @@ export class OidcClientStore {
   async delete(clientId: string): Promise<void> {
     return this.#queue.run(async () => {
       const previous = this.#clients.get(clientId);
-      if (!previous)
-        throw new ClientNotFoundError(`client not found: ${clientId}`);
+      if (!previous) throw new ClientNotFoundError(`client not found: ${clientId}`);
       const next = new Map(this.#clients);
       next.delete(clientId);
       await this.commit(
@@ -185,10 +158,8 @@ export class OidcClientStore {
       await this.commit(
         next,
         async () => {
-          for (const clientId of this.#clients.keys())
-            await this.removeClient(clientId);
-          for (const client of clients)
-            await this.applyClient(structuredClone(client));
+          for (const clientId of this.#clients.keys()) await this.removeClient(clientId);
+          for (const client of clients) await this.applyClient(structuredClone(client));
         },
         () => this.restoreProvider(previous, clients),
       );
@@ -196,9 +167,7 @@ export class OidcClientStore {
     });
   }
 
-  private async applyInitialClients(
-    clients: OidcClientConfig[],
-  ): Promise<void> {
+  private async applyInitialClients(clients: OidcClientConfig[]): Promise<void> {
     const attemptedIds: string[] = [];
     try {
       for (const client of clients) {
@@ -207,18 +176,12 @@ export class OidcClientStore {
       }
     } catch (error) {
       await this.rollbackAndThrow(error, () =>
-        this.removeProviderClients(
-          attemptedIds,
-          "failed to roll back initial provider clients",
-        ),
+        this.removeProviderClients(attemptedIds, "failed to roll back initial provider clients"),
       );
     }
   }
 
-  private async removeProviderClients(
-    clientIds: Iterable<string>,
-    failureMessage: string,
-  ): Promise<void> {
+  private async removeProviderClients(clientIds: Iterable<string>, failureMessage: string): Promise<void> {
     const failures: unknown[] = [];
     for (const clientId of clientIds)
       try {
@@ -263,15 +226,9 @@ export class OidcClientStore {
       }
   }
 
-  private async restoreProvider(
-    previous: OidcClientConfig[],
-    candidate: OidcClientConfig[],
-  ): Promise<void> {
+  private async restoreProvider(previous: OidcClientConfig[], candidate: OidcClientConfig[]): Promise<void> {
     const failures: unknown[] = [];
-    const ids = new Set([
-      ...previous.map((client) => client.clientId),
-      ...candidate.map((client) => client.clientId),
-    ]);
+    const ids = new Set([...previous.map((client) => client.clientId), ...candidate.map((client) => client.clientId)]);
     for (const clientId of ids)
       try {
         await this.removeClient(clientId);
@@ -284,24 +241,15 @@ export class OidcClientStore {
       } catch (error) {
         failures.push(error);
       }
-    if (failures.length)
-      throw new AggregateError(failures, "failed to restore provider clients");
+    if (failures.length) throw new AggregateError(failures, "failed to restore provider clients");
   }
 
-  private async rollbackAndThrow(
-    error: unknown,
-    rollback: () => Promise<void>,
-  ): Promise<never> {
-    const operationError =
-      error instanceof Error ? error : new Error(String(error));
+  private async rollbackAndThrow(error: unknown, rollback: () => Promise<void>): Promise<never> {
+    const operationError = error instanceof Error ? error : new Error(String(error));
     try {
       await rollback();
     } catch (rollbackError) {
-      throw new AggregateError(
-        [operationError, rollbackError],
-        operationError.message,
-        { cause: operationError },
-      );
+      throw new AggregateError([operationError, rollbackError], operationError.message, { cause: operationError });
     }
     throw operationError;
   }

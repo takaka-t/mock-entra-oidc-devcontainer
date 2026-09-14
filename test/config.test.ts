@@ -37,9 +37,7 @@ describe("fixed OIDC configuration", () => {
       tlsPrivateKeyFile: ".data/tls-private/server.key.pem",
     });
     expect(mockTenantId).toBe("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-    expect(mockIssuer).toBe(
-      "https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0",
-    );
+    expect(mockIssuer).toBe("https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0");
     expect(mockCommonAuthorizePath).toBe("/common/oauth2/v2.0/authorize");
   });
 });

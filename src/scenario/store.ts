@@ -121,10 +121,7 @@ export class InMemoryScenarioStore {
    * not already been consumed by this request. Passing `undefined` (e.g. a
    * request that never called `startRequest`) fails closed.
    */
-  consumeForRequest(
-    endpoint: FaultEndpoint,
-    ticket: ScenarioRequestTicket | undefined,
-  ): FaultDecision | null {
+  consumeForRequest(endpoint: FaultEndpoint, ticket: ScenarioRequestTicket | undefined): FaultDecision | null {
     return this.#consume(endpoint, true, ticket);
   }
 

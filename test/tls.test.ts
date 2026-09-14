@@ -91,10 +91,7 @@ async function generateCertificateSet(
   return { caCertificate, certificate, privateKey };
 }
 
-function tlsConfig(
-  certificates: CertificateSet,
-  issuer = `https://${hostname}:9000/tenant/v2.0`,
-) {
+function tlsConfig(certificates: CertificateSet, issuer = `https://${hostname}:9000/tenant/v2.0`) {
   return {
     issuer,
     tlsCaCertificateFile: certificates.caCertificate,
@@ -115,22 +112,14 @@ describe("TLS server options", () => {
     [valid, alternate, wrongHostname, wrongUsage] = await Promise.all([
       generateCertificateSet(join(stateDirectory, "valid"), hostname),
       generateCertificateSet(join(stateDirectory, "alternate"), hostname),
-      generateCertificateSet(
-        join(stateDirectory, "wrong-hostname"),
-        "unexpected.test",
-      ),
-      generateCertificateSet(
-        join(stateDirectory, "wrong-usage"),
-        hostname,
-        false,
-      ),
+      generateCertificateSet(join(stateDirectory, "wrong-hostname"), "unexpected.test"),
+      generateCertificateSet(join(stateDirectory, "wrong-usage"), hostname, false),
     ]);
   }, 20_000);
 
   afterAll(async () => {
     vi.useRealTimers();
-    if (stateDirectory)
-      await rm(stateDirectory, { recursive: true, force: true });
+    if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
   });
 
   it("loads a matching CA, certificate, and private key with TLS 1.2 minimum", async () => {
@@ -157,9 +146,7 @@ describe("TLS server options", () => {
         ...tlsConfig(valid),
         tlsCertificateFile: invalidCertificate,
       }),
-    ).rejects.toThrow(
-      /server certificate is not a valid X.509 certificate.*npm run setup:tls/,
-    );
+    ).rejects.toThrow(/server certificate is not a valid X.509 certificate.*npm run setup:tls/);
   });
 
   it("rejects malformed private-key PEM", async () => {
@@ -198,9 +185,7 @@ describe("TLS server options", () => {
   });
 
   it("requires the issuer hostname in subjectAltName", async () => {
-    await expect(
-      loadTlsServerOptions(tlsConfig(wrongHostname)),
-    ).rejects.toThrow(
+    await expect(loadTlsServerOptions(tlsConfig(wrongHostname))).rejects.toThrow(
       /subjectAltName must contain only DNS:mock-idp\.test.*npm run setup:tls/,
     );
   });
@@ -226,17 +211,15 @@ describe("TLS server options", () => {
         ...tlsConfig(valid),
         tlsPrivateKeyFile: alternate.privateKey,
       }),
-    ).rejects.toThrow(
-      /private key does not match the server certificate.*npm run setup:tls/,
-    );
+    ).rejects.toThrow(/private key does not match the server certificate.*npm run setup:tls/);
   });
 
   it("rejects a non-HTTPS issuer before loading credentials", async () => {
-    await expect(
-      loadTlsServerOptions(tlsConfig(valid, `http://${hostname}:9000`)),
-    ).rejects.toBeInstanceOf(TlsSetupError);
-    await expect(
-      loadTlsServerOptions(tlsConfig(valid, `http://${hostname}:9000`)),
-    ).rejects.toThrow(/valid HTTPS URL.*npm run setup:tls/);
+    await expect(loadTlsServerOptions(tlsConfig(valid, `http://${hostname}:9000`))).rejects.toBeInstanceOf(
+      TlsSetupError,
+    );
+    await expect(loadTlsServerOptions(tlsConfig(valid, `http://${hostname}:9000`))).rejects.toThrow(
+      /valid HTTPS URL.*npm run setup:tls/,
+    );
   });
 });

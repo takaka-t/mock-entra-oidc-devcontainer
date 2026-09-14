@@ -20,11 +20,7 @@ interface StoredEntry {
 }
 
 export interface InMemoryAdapter extends Adapter {
-  upsert(
-    id: string,
-    payload: AdapterPayload,
-    expiresIn?: number,
-  ): Promise<void>;
+  upsert(id: string, payload: AdapterPayload, expiresIn?: number): Promise<void>;
 }
 
 export type InMemoryAdapterFactory = (model: string) => InMemoryAdapter;
@@ -44,10 +40,8 @@ export function createInMemoryAdapterFactory(): InMemoryAdapterFactory {
     if (!entry) return;
 
     entries.delete(key);
-    if (entry.uid && sessionKeysByUid.get(entry.uid) === key)
-      sessionKeysByUid.delete(entry.uid);
-    if (entry.userCode && keysByUserCode.get(entry.userCode) === key)
-      keysByUserCode.delete(entry.userCode);
+    if (entry.uid && sessionKeysByUid.get(entry.uid) === key) sessionKeysByUid.delete(entry.uid);
+    if (entry.userCode && keysByUserCode.get(entry.userCode) === key) keysByUserCode.delete(entry.userCode);
     if (entry.grantId) {
       const grantKeys = keysByGrantId.get(entry.grantId);
       grantKeys?.delete(key);
@@ -55,8 +49,7 @@ export function createInMemoryAdapterFactory(): InMemoryAdapterFactory {
     }
   };
 
-  const expired = (entry: StoredEntry): boolean =>
-    entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
+  const expired = (entry: StoredEntry): boolean => entry.expiresAt !== undefined && entry.expiresAt <= Date.now();
 
   const read = (key: string): AdapterPayload | undefined => {
     const entry = entries.get(key);
@@ -104,16 +97,9 @@ export function createInMemoryAdapterFactory(): InMemoryAdapterFactory {
         const key = keyFor(id);
         remove(key);
 
-        const uid =
-          model === "Session" && typeof payload.uid === "string"
-            ? payload.uid
-            : undefined;
-        const userCode =
-          typeof payload.userCode === "string" ? payload.userCode : undefined;
-        const grantId =
-          grantableModels.has(model) && typeof payload.grantId === "string"
-            ? payload.grantId
-            : undefined;
+        const uid = model === "Session" && typeof payload.uid === "string" ? payload.uid : undefined;
+        const userCode = typeof payload.userCode === "string" ? payload.userCode : undefined;
+        const grantId = grantableModels.has(model) && typeof payload.grantId === "string" ? payload.grantId : undefined;
         const expiresAt =
           expiresIn === undefined || !Number.isFinite(expiresIn)
             ? undefined

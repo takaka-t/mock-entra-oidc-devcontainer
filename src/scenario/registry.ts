@@ -1,8 +1,7 @@
 import type { AppConfig } from "../config.js";
 import type { FaultEndpoint, ScenarioName } from "./types.js";
 
-export type ScenarioParameterKind =
-  "none" | "timeout" | "token400" | "retryAfterRequired" | "retryAfterOptional";
+export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfterRequired" | "retryAfterOptional";
 
 export interface ScenarioDefinition {
   endpoint: FaultEndpoint | null;
@@ -172,16 +171,14 @@ export interface ScenarioUiMetadata {
 }
 
 export const scenarioUiMetadata = Object.fromEntries(
-  (Object.entries(scenarios) as Array<[ScenarioName, ScenarioDefinition]>).map(
-    ([name, definition]) => [
-      name,
-      {
-        supportsMode: name !== "NORMAL",
-        parameterKind: definition.parameterKind,
-        effect: definition.effect,
-      },
-    ],
-  ),
+  (Object.entries(scenarios) as Array<[ScenarioName, ScenarioDefinition]>).map(([name, definition]) => [
+    name,
+    {
+      supportsMode: name !== "NORMAL",
+      parameterKind: definition.parameterKind,
+      effect: definition.effect,
+    },
+  ]),
 ) as Record<ScenarioName, ScenarioUiMetadata>;
 
 export const scenarioUiDefaults = {
@@ -191,10 +188,7 @@ export const scenarioUiDefaults = {
   retryAfterSeconds: defaultRetryAfterSeconds,
 } as const;
 
-export type HttpFaultEndpoint = Extract<
-  FaultEndpoint,
-  "authorization-http" | "token" | "jwks" | "discovery"
->;
+export type HttpFaultEndpoint = Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">;
 
 export interface HttpFaultRoute {
   method: "GET" | "POST" | "HEAD";
@@ -211,10 +205,7 @@ export type HttpFaultRouteTable = Record<HttpFaultEndpoint, HttpFaultRoute>;
  * pathname in every configuration.
  */
 export function resolveHttpFaultEndpoints(
-  config: Pick<
-    AppConfig,
-    "issuerPath" | "tokenPath" | "jwksPath" | "commonAuthorizePath"
-  >,
+  config: Pick<AppConfig, "issuerPath" | "tokenPath" | "jwksPath" | "commonAuthorizePath">,
 ): HttpFaultRouteTable {
   return {
     "authorization-http": {
@@ -237,14 +228,7 @@ export function resolveHttpFaultEndpoints(
  * moved to the `common` connectivity probe.
  */
 export function resolveCorsPathnames(
-  config: Pick<
-    AppConfig,
-    | "issuerPath"
-    | "authorizePath"
-    | "tokenPath"
-    | "jwksPath"
-    | "commonAuthorizePath"
-  >,
+  config: Pick<AppConfig, "issuerPath" | "authorizePath" | "tokenPath" | "jwksPath" | "commonAuthorizePath">,
 ): readonly string[] {
   return [
     config.authorizePath,

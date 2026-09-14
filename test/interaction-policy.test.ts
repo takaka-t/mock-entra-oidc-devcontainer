@@ -26,11 +26,7 @@ function mergeCookies(current: string, headers: OutgoingHttpHeaders): string {
       .map((part) => [part.split("=")[0]!, part]),
   );
   const setCookies = headers["set-cookie"];
-  for (const cookie of Array.isArray(setCookies)
-    ? setCookies
-    : setCookies
-      ? [setCookies]
-      : []) {
+  for (const cookie of Array.isArray(setCookies) ? setCookies : setCookies ? [setCookies] : []) {
     const pair = cookie.split(";")[0]!;
     jar.set(pair.split("=")[0]!, pair);
   }
@@ -73,12 +69,8 @@ class BrowserFlow {
     return this.inject(this.#lastOpenedUrl);
   }
 
-  async submit(
-    _interactionResponse: LightMyRequestResponse,
-    payload = "accountId=user-normal",
-  ) {
-    if (!this.#lastOpenedUrl)
-      throw new Error("No interaction URL has been opened");
+  async submit(_interactionResponse: LightMyRequestResponse, payload = "accountId=user-normal") {
+    if (!this.#lastOpenedUrl) throw new Error("No interaction URL has been opened");
     return this.inject(this.#lastOpenedUrl, {
       method: "POST",
       contentType: "application/x-www-form-urlencoded",
@@ -86,42 +78,28 @@ class BrowserFlow {
     });
   }
 
-  async submitLocation(
-    response: LightMyRequestResponse,
-    payload = "accountId=user-normal",
-  ) {
+  async submitLocation(response: LightMyRequestResponse, payload = "accountId=user-normal") {
     const location = new URL(String(response.headers.location), issuer);
     this.#lastOpenedUrl = `${location.pathname}${location.search}`;
     return this.submit(response, payload);
   }
 
-  async submitEncodedLocation(
-    response: LightMyRequestResponse,
-    payload = "accountId=user-normal",
-  ) {
+  async submitEncodedLocation(response: LightMyRequestResponse, payload = "accountId=user-normal") {
     const location = new URL(String(response.headers.location), issuer);
     this.#lastOpenedUrl = `${location.pathname.replace("/interaction/", "/%69nteraction/")}${location.search}`;
     return this.submit(response, payload);
   }
 
-  async followToCallback(
-    initialResponse: LightMyRequestResponse,
-  ): Promise<URL> {
+  async followToCallback(initialResponse: LightMyRequestResponse): Promise<URL> {
     let response = initialResponse;
     for (let attempts = 0; attempts < 8; attempts++) {
       const rawLocation = response.headers.location;
       // oidc-provider switches accounts by auto-posting a logout form before
       // resuming the interaction. Follow it as a browser would.
       if (!rawLocation && response.statusCode === 200) {
-        const action = /<form method="post" action="([^"]+)">/.exec(
-          response.body,
-        )?.[1];
+        const action = /<form method="post" action="([^"]+)">/.exec(response.body)?.[1];
         const xsrf = /name="xsrf" value="([^"]+)"/.exec(response.body)?.[1];
-        if (
-          action &&
-          xsrf &&
-          response.body.includes('name="logout" value="yes"')
-        ) {
+        if (action && xsrf && response.body.includes('name="logout" value="yes"')) {
           const target = new URL(action, issuer);
           expect(target.origin).toBe(issuer);
           expect(target.pathname).toBe("/oauth2/v2.0/logout/confirm");
@@ -134,11 +112,8 @@ class BrowserFlow {
         }
       }
       if (!rawLocation)
-        throw new Error(
-          `Expected redirect, received ${response.statusCode}: ${response.body.slice(0, 200)}`,
-        );
-      if (String(rawLocation).startsWith("http://localhost:3000"))
-        return new URL(String(rawLocation));
+        throw new Error(`Expected redirect, received ${response.statusCode}: ${response.body.slice(0, 200)}`);
+      if (String(rawLocation).startsWith("http://localhost:3000")) return new URL(String(rawLocation));
       response = await this.openLocation(response);
     }
     throw new Error("OIDC redirect chain did not reach the callback");
@@ -213,9 +188,7 @@ describe("custom interaction policy", () => {
       failureCount: 1,
     });
     const browser = new BrowserFlow(context);
-    const interaction = await browser.openLocation(
-      await browser.start({ state: "new-session-denied" }),
-    );
+    const interaction = await browser.openLocation(await browser.start({ state: "new-session-denied" }));
     expect(interaction.statusCode).toBe(303);
     const callback = await browser.followToCallback(interaction);
     expect(callback.searchParams.get("error")).toBe("access_denied");
@@ -233,9 +206,7 @@ describe("custom interaction policy", () => {
       failureCount: 1,
     });
     const browser = new BrowserFlow(context);
-    const denied = await browser.submitLocation(
-      await browser.start({ state: "direct-post-denied" }),
-    );
+    const denied = await browser.submitLocation(await browser.start({ state: "direct-post-denied" }));
     expect(denied.statusCode).toBe(303);
     const callback = await browser.followToCallback(denied);
     expect(callback.searchParams.get("error")).toBe("access_denied");
@@ -250,9 +221,7 @@ describe("custom interaction policy", () => {
       failureCount: 1,
     });
     const browser = new BrowserFlow(context);
-    const denied = await browser.submitEncodedLocation(
-      await browser.start({ state: "encoded-post-denied" }),
-    );
+    const denied = await browser.submitEncodedLocation(await browser.start({ state: "encoded-post-denied" }));
     expect(denied.statusCode).toBe(303);
     const callback = await browser.followToCallback(denied);
     expect(callback.searchParams.get("error")).toBe("access_denied");
@@ -269,9 +238,7 @@ describe("custom interaction policy", () => {
       failureCount: 1,
     });
 
-    const interaction = await browser.openLocation(
-      await browser.start({ state: "existing-session-denied" }),
-    );
+    const interaction = await browser.openLocation(await browser.start({ state: "existing-session-denied" }));
     expect(interaction.statusCode).toBe(303);
     const callback = await browser.followToCallback(interaction);
     expect(callback.searchParams.get("error")).toBe("access_denied");
@@ -304,9 +271,7 @@ describe("custom interaction policy", () => {
     async (scenario, expectedError) => {
       context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
       const browser = new BrowserFlow(context);
-      const interaction = await browser.openLocation(
-        await browser.start({ state: `${scenario}-state` }),
-      );
+      const interaction = await browser.openLocation(await browser.start({ state: `${scenario}-state` }));
 
       expect(interaction.statusCode).toBe(303);
       const callback = await browser.followToCallback(interaction);
@@ -325,9 +290,7 @@ describe("custom interaction policy", () => {
     async (scenario, expectedError) => {
       context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
       const browser = new BrowserFlow(context);
-      const finished = await browser.submitLocation(
-        await browser.start({ state: `${scenario}-direct` }),
-      );
+      const finished = await browser.submitLocation(await browser.start({ state: `${scenario}-direct` }));
       const callback = await browser.followToCallback(finished);
 
       expect(callback.searchParams.get("error")).toBe(expectedError);
@@ -336,21 +299,18 @@ describe("custom interaction policy", () => {
     },
   );
 
-  it.each(authorizationFaultCases)(
-    "returns %s directly for prompt=none",
-    async (scenario, expectedError) => {
-      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
-      const response = await new BrowserFlow(context).start({
-        prompt: "none",
-        state: `${scenario}-silent`,
-      });
-      const callback = new URL(String(response.headers.location));
+  it.each(authorizationFaultCases)("returns %s directly for prompt=none", async (scenario, expectedError) => {
+    context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+    const response = await new BrowserFlow(context).start({
+      prompt: "none",
+      state: `${scenario}-silent`,
+    });
+    const callback = new URL(String(response.headers.location));
 
-      expect(callback.searchParams.get("error")).toBe(expectedError);
-      expect(callback.searchParams.get("state")).toBe(`${scenario}-silent`);
-      expect(callback.searchParams.get("code")).toBeNull();
-    },
-  );
+    expect(callback.searchParams.get("error")).toBe(expectedError);
+    expect(callback.searchParams.get("state")).toBe(`${scenario}-silent`);
+    expect(callback.searchParams.get("code")).toBeNull();
+  });
 
   it("preserves response_mode=form_post for AUTH_LOGIN_REQUIRED", async () => {
     context.store.set({
@@ -365,12 +325,8 @@ describe("custom interaction policy", () => {
     });
 
     expect(response.headers["content-type"]).toContain("text/html");
-    expect(response.body).toContain(
-      '<input type="hidden" name="error" value="login_required"/>',
-    );
-    expect(response.body).toContain(
-      '<input type="hidden" name="state" value="form-post-state"/>',
-    );
+    expect(response.body).toContain('<input type="hidden" name="error" value="login_required"/>');
+    expect(response.body).toContain('<input type="hidden" name="state" value="form-post-state"/>');
     expect(response.body).not.toContain('name="code"');
   });
 
@@ -460,10 +416,8 @@ describe("custom interaction policy", () => {
       const callback = new URL(String(response.headers.location));
       expect(callback.searchParams.get("error")).toBe("login_required");
       expect(callback.searchParams.get("state")).toBe(state);
-      if (remainingFailures === 0)
-        expect(context.store.get().scenario).toBe("NORMAL");
-      else
-        expect(context.store.get().remainingFailures).toBe(remainingFailures);
+      if (remainingFailures === 0) expect(context.store.get().scenario).toBe("NORMAL");
+      else expect(context.store.get().remainingFailures).toBe(remainingFailures);
     }
 
     const recovered = new URL(
@@ -541,17 +495,9 @@ describe("custom interaction policy", () => {
     });
     const first = new BrowserFlow(context);
     const second = new BrowserFlow(context);
-    const starts = await Promise.all([
-      first.start({ state: "parallel-one" }),
-      second.start({ state: "parallel-two" }),
-    ]);
-    const interactions = await Promise.all([
-      first.openLocation(starts[0]),
-      second.openLocation(starts[1]),
-    ]);
-    expect(interactions.map((response) => response.statusCode).sort()).toEqual([
-      200, 303,
-    ]);
+    const starts = await Promise.all([first.start({ state: "parallel-one" }), second.start({ state: "parallel-two" })]);
+    const interactions = await Promise.all([first.openLocation(starts[0]), second.openLocation(starts[1])]);
+    expect(interactions.map((response) => response.statusCode).sort()).toEqual([200, 303]);
     expect(context.store.get().lastCompleted).toMatchObject({
       scenario: "ACCESS_DENIED",
       triggeredCount: 1,
@@ -574,62 +520,46 @@ describe("custom interaction policy", () => {
     const picker = await browser.openLocation(start);
     expect(picker.statusCode).toBe(200);
     expect(picker.body).toContain("テストユーザーを選択してください。");
-    const existing = await browser.followToCallback(
-      await browser.submit(picker, "accountId=user-normal"),
-    );
+    const existing = await browser.followToCallback(await browser.submit(picker, "accountId=user-normal"));
     expect(existing.searchParams.get("code")).toBeTruthy();
     expect(existing.searchParams.get("state")).toBe("existing-select");
   });
 
-  it.each(["delete", "reset"] as const)(
-    "recovers an existing browser session after user %s",
-    async (operation) => {
-      const sub = "removed-user";
-      await context.userStore.create({
-        sub,
-        oid: "44444444-4444-4444-4444-444444444444",
-        name: "Removed User",
-        preferred_username: "removed@example.com",
-        mail: "removed@example.com",
-        groups: [],
-      });
-      const browser = new BrowserFlow(context);
-      const initialPicker = await browser.openLocation(await browser.start());
-      const initial = await browser.followToCallback(
-        await browser.submit(initialPicker, "accountId=" + sub),
-      );
-      expect(initial.searchParams.get("code")).toBeTruthy();
+  it.each(["delete", "reset"] as const)("recovers an existing browser session after user %s", async (operation) => {
+    const sub = "removed-user";
+    await context.userStore.create({
+      sub,
+      oid: "44444444-4444-4444-4444-444444444444",
+      name: "Removed User",
+      preferred_username: "removed@example.com",
+      mail: "removed@example.com",
+      groups: [],
+    });
+    const browser = new BrowserFlow(context);
+    const initialPicker = await browser.openLocation(await browser.start());
+    const initial = await browser.followToCallback(await browser.submit(initialPicker, "accountId=" + sub));
+    expect(initial.searchParams.get("code")).toBeTruthy();
 
-      const removed = await context.app.inject({
-        method: operation === "delete" ? "DELETE" : "POST",
-        url:
-          operation === "delete"
-            ? "/__mock/api/users/" + sub
-            : "/__mock/api/users/reset",
-        headers: { host },
-        ...(operation === "reset" ? { payload: {} } : {}),
-      });
-      expect(removed.statusCode).toBe(operation === "delete" ? 204 : 200);
+    const removed = await context.app.inject({
+      method: operation === "delete" ? "DELETE" : "POST",
+      url: operation === "delete" ? "/__mock/api/users/" + sub : "/__mock/api/users/reset",
+      headers: { host },
+      ...(operation === "reset" ? { payload: {} } : {}),
+    });
+    expect(removed.statusCode).toBe(operation === "delete" ? 204 : 200);
 
-      const silent = await browser.followToCallback(
-        await browser.start({ prompt: "none", state: "removed-silent" }),
-      );
-      expect(silent.searchParams.get("error")).toBe("login_required");
-      expect(silent.searchParams.get("state")).toBe("removed-silent");
+    const silent = await browser.followToCallback(await browser.start({ prompt: "none", state: "removed-silent" }));
+    expect(silent.searchParams.get("error")).toBe("login_required");
+    expect(silent.searchParams.get("state")).toBe("removed-silent");
 
-      const picker = await browser.openLocation(await browser.start());
-      expect(picker.statusCode, picker.body).toBe(200);
-      expect(picker.body).not.toContain('value="' + sub + '"');
-      const recovered = await browser.followToCallback(
-        await browser.submit(picker, "accountId=user-normal"),
-      );
-      expect(recovered.searchParams.get("code")).toBeTruthy();
-      const resumed = await browser.followToCallback(
-        await browser.start({ prompt: "none" }),
-      );
-      expect(resumed.searchParams.get("code")).toBeTruthy();
-    },
-  );
+    const picker = await browser.openLocation(await browser.start());
+    expect(picker.statusCode, picker.body).toBe(200);
+    expect(picker.body).not.toContain('value="' + sub + '"');
+    const recovered = await browser.followToCallback(await browser.submit(picker, "accountId=user-normal"));
+    expect(recovered.searchParams.get("code")).toBeTruthy();
+    const resumed = await browser.followToCallback(await browser.start({ prompt: "none" }));
+    expect(resumed.searchParams.get("code")).toBeTruthy();
+  });
 
   it("returns 400 for an invalid interaction body", async () => {
     const browser = new BrowserFlow(context);
@@ -643,9 +573,7 @@ describe("custom interaction policy", () => {
     const browser = new BrowserFlow(context);
     const picker = await browser.openLocation(await browser.start());
     expect(picker.headers["cache-control"]).toBe("no-store");
-    expect(picker.headers["content-security-policy"]).toBe(
-      "frame-ancestors 'none'",
-    );
+    expect(picker.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
     expect(picker.headers["referrer-policy"]).toBe("no-referrer");
     expect(picker.headers["x-content-type-options"]).toBe("nosniff");
     expect(picker.headers["x-frame-options"]).toBe("DENY");

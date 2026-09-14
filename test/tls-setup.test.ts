@@ -1,17 +1,7 @@
 import { execFile } from "node:child_process";
 import { X509Certificate } from "node:crypto";
 import { statfsSync } from "node:fs";
-import {
-  chmod,
-  copyFile,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -20,9 +10,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 const executeFile = promisify(execFile);
-const setupScript = fileURLToPath(
-  new URL("../scripts/setup-tls.mjs", import.meta.url),
-);
+const setupScript = fileURLToPath(new URL("../scripts/setup-tls.mjs", import.meta.url));
 const expectedPublicFiles = ["ca.crt", "server.crt"];
 const expectedPrivateFiles = ["ca.key.pem", "server.key.pem"];
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
@@ -75,54 +63,37 @@ async function rejectedMessage(operation: Promise<unknown>): Promise<string> {
   throw new Error("Expected operation to fail");
 }
 
-async function readBundle(
-  outputDirectory: string,
-): Promise<Map<string, Buffer>> {
+async function readBundle(outputDirectory: string): Promise<Map<string, Buffer>> {
   const privateDirectory = privateDirectoryFor(outputDirectory);
   return new Map(
     await Promise.all([
       ...expectedPublicFiles.map(
-        async (fileName) =>
-          [fileName, await readFile(join(outputDirectory, fileName))] as const,
+        async (fileName) => [fileName, await readFile(join(outputDirectory, fileName))] as const,
       ),
       ...expectedPrivateFiles.map(
-        async (fileName) =>
-          [fileName, await readFile(join(privateDirectory, fileName))] as const,
+        async (fileName) => [fileName, await readFile(join(privateDirectory, fileName))] as const,
       ),
     ]),
   );
 }
 
 function validityDays(certificate: X509Certificate): number {
-  return (
-    (certificate.validToDate.getTime() - certificate.validFromDate.getTime()) /
-    millisecondsPerDay
-  );
+  return (certificate.validToDate.getTime() - certificate.validFromDate.getTime()) / millisecondsPerDay;
 }
 
 async function expectValidBundle(outputDirectory: string): Promise<void> {
   const privateDirectory = privateDirectoryFor(outputDirectory);
   expect((await readdir(outputDirectory)).sort()).toEqual(expectedPublicFiles);
-  expect((await readdir(privateDirectory)).sort()).toEqual(
-    expectedPrivateFiles,
-  );
+  expect((await readdir(privateDirectory)).sort()).toEqual(expectedPrivateFiles);
 
-  const caCertificate = new X509Certificate(
-    await readFile(join(outputDirectory, "ca.crt")),
-  );
-  const serverCertificate = new X509Certificate(
-    await readFile(join(outputDirectory, "server.crt")),
-  );
+  const caCertificate = new X509Certificate(await readFile(join(outputDirectory, "ca.crt")));
+  const serverCertificate = new X509Certificate(await readFile(join(outputDirectory, "server.crt")));
   expect(caCertificate.ca).toBe(true);
   expect(serverCertificate.ca).toBe(false);
   expect(caCertificate.publicKey.asymmetricKeyType).toBe("rsa");
   expect(serverCertificate.publicKey.asymmetricKeyType).toBe("rsa");
-  expect(caCertificate.publicKey.asymmetricKeyDetails?.modulusLength).toBe(
-    2048,
-  );
-  expect(serverCertificate.publicKey.asymmetricKeyDetails?.modulusLength).toBe(
-    2048,
-  );
+  expect(caCertificate.publicKey.asymmetricKeyDetails?.modulusLength).toBe(2048);
+  expect(serverCertificate.publicKey.asymmetricKeyDetails?.modulusLength).toBe(2048);
   expect(validityDays(caCertificate)).toBe(3650);
   expect(validityDays(serverCertificate)).toBe(397);
   expect(serverCertificate.subjectAltName).toBe("DNS:mock-idp.test");
@@ -130,20 +101,8 @@ async function expectValidBundle(outputDirectory: string): Promise<void> {
   expect(serverCertificate.verify(caCertificate.publicKey)).toBe(true);
 
   const [caText, serverText, verification] = await Promise.all([
-    run("openssl", [
-      "x509",
-      "-in",
-      join(outputDirectory, "ca.crt"),
-      "-noout",
-      "-text",
-    ]),
-    run("openssl", [
-      "x509",
-      "-in",
-      join(outputDirectory, "server.crt"),
-      "-noout",
-      "-text",
-    ]),
+    run("openssl", ["x509", "-in", join(outputDirectory, "ca.crt"), "-noout", "-text"]),
+    run("openssl", ["x509", "-in", join(outputDirectory, "server.crt"), "-noout", "-text"]),
     run("openssl", [
       "verify",
       "-CAfile",
@@ -155,31 +114,19 @@ async function expectValidBundle(outputDirectory: string): Promise<void> {
       join(outputDirectory, "server.crt"),
     ]),
   ]);
-  expect(caText.stdout).toMatch(
-    /Signature Algorithm:\s*sha256WithRSAEncryption/,
-  );
-  expect(serverText.stdout).toMatch(
-    /Signature Algorithm:\s*sha256WithRSAEncryption/,
-  );
+  expect(caText.stdout).toMatch(/Signature Algorithm:\s*sha256WithRSAEncryption/);
+  expect(serverText.stdout).toMatch(/Signature Algorithm:\s*sha256WithRSAEncryption/);
   expect(verification.stdout).toContain("server.crt: OK");
 
   if (process.platform !== "win32") {
     expect((await stat(outputDirectory)).mode & 0o777).toBe(0o755);
     expect((await stat(privateDirectory)).mode & 0o777).toBe(0o700);
-    expect(
-      (await stat(join(privateDirectory, "ca.key.pem"))).mode & 0o777,
-    ).toBe(0o600);
-    expect(
-      (await stat(join(privateDirectory, "server.key.pem"))).mode & 0o777,
-    ).toBe(0o600);
+    expect((await stat(join(privateDirectory, "ca.key.pem"))).mode & 0o777).toBe(0o600);
+    expect((await stat(join(privateDirectory, "server.key.pem"))).mode & 0o777).toBe(0o600);
   }
 }
 
-async function replaceServerCertificate(
-  rootDirectory: string,
-  outputDirectory: string,
-  days: number,
-): Promise<void> {
+async function replaceServerCertificate(rootDirectory: string, outputDirectory: string, days: number): Promise<void> {
   const privateDirectory = privateDirectoryFor(outputDirectory);
   const workingDirectory = join(rootDirectory, `replacement-server-${days}`);
   await mkdir(workingDirectory);
@@ -233,14 +180,8 @@ async function replaceServerCertificate(
     extensionFile,
   ]);
   await Promise.all([
-    copyFile(
-      join(workingDirectory, "server.crt"),
-      join(outputDirectory, "server.crt"),
-    ),
-    copyFile(
-      join(workingDirectory, "server.key.pem"),
-      join(privateDirectory, "server.key.pem"),
-    ),
+    copyFile(join(workingDirectory, "server.crt"), join(outputDirectory, "server.crt")),
+    copyFile(join(workingDirectory, "server.key.pem"), join(privateDirectory, "server.key.pem")),
   ]);
   await Promise.all([
     chmod(join(outputDirectory, "server.crt"), 0o644),
@@ -248,10 +189,7 @@ async function replaceServerCertificate(
   ]);
 }
 
-async function replaceWithExpiringCa(
-  rootDirectory: string,
-  outputDirectory: string,
-): Promise<void> {
+async function replaceWithExpiringCa(rootDirectory: string, outputDirectory: string): Promise<void> {
   const privateDirectory = privateDirectoryFor(outputDirectory);
   const workingDirectory = join(rootDirectory, "replacement-ca");
   await mkdir(workingDirectory);
@@ -296,10 +234,7 @@ async function replaceWithExpiringCa(
   ]);
   await Promise.all([
     copyFile(join(workingDirectory, "ca.crt"), join(outputDirectory, "ca.crt")),
-    copyFile(
-      join(workingDirectory, "ca.key.pem"),
-      join(privateDirectory, "ca.key.pem"),
-    ),
+    copyFile(join(workingDirectory, "ca.key.pem"), join(privateDirectory, "ca.key.pem")),
   ]);
   await Promise.all([
     chmod(join(outputDirectory, "ca.crt"), 0o644),
@@ -309,11 +244,7 @@ async function replaceWithExpiringCa(
 }
 
 afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe("TLS setup script", () => {
@@ -322,52 +253,35 @@ describe("TLS setup script", () => {
     ["bundle", "bundle/private"],
     ["bundle/public", "bundle"],
     ["bundle", "bundle/../bundle"],
-  ])(
-    "rejects overlapping directories %s and %s before writing",
-    async (publicPath, privatePath) => {
-      const directory = await temporaryDirectory();
-      const message = await rejectedMessage(
-        run(process.execPath, [
-          setupScript,
-          "--output-dir",
-          join(directory, publicPath),
-          "--private-dir",
-          join(directory, privatePath),
-        ]),
-      );
-      expect(message).toContain("neither may equal or contain the other");
-      expect(await readdir(directory)).toEqual([]);
-    },
-  );
+  ])("rejects overlapping directories %s and %s before writing", async (publicPath, privatePath) => {
+    const directory = await temporaryDirectory();
+    const message = await rejectedMessage(
+      run(process.execPath, [
+        setupScript,
+        "--output-dir",
+        join(directory, publicPath),
+        "--private-dir",
+        join(directory, privatePath),
+      ]),
+    );
+    expect(message).toContain("neither may equal or contain the other");
+    expect(await readdir(directory)).toEqual([]);
+  });
 
   it("creates the public/private bundle in the default directories and is idempotent", async () => {
     const workingDirectory = await temporaryDirectory();
     const outputDirectory = join(workingDirectory, ".data", "tls");
 
-    const created = await run(
-      process.execPath,
-      [setupScript],
-      workingDirectory,
-    );
+    const created = await run(process.execPath, [setupScript], workingDirectory);
     expect(created.stdout).toContain("Created local TLS CA");
     await expectValidBundle(outputDirectory);
-    const caCertificate = new X509Certificate(
-      await readFile(join(outputDirectory, "ca.crt")),
-    );
-    expect(created.stdout).toContain(
-      `CA SHA-256 fingerprint: ${caCertificate.fingerprint256}`,
-    );
+    const caCertificate = new X509Certificate(await readFile(join(outputDirectory, "ca.crt")));
+    expect(created.stdout).toContain(`CA SHA-256 fingerprint: ${caCertificate.fingerprint256}`);
 
     const before = await readBundle(outputDirectory);
-    const repeated = await run(
-      process.execPath,
-      [setupScript],
-      workingDirectory,
-    );
+    const repeated = await run(process.execPath, [setupScript], workingDirectory);
     expect(repeated.stdout).toContain("no changes were made");
-    expect(repeated.stdout).toContain(
-      `CA SHA-256 fingerprint: ${caCertificate.fingerprint256}`,
-    );
+    expect(repeated.stdout).toContain(`CA SHA-256 fingerprint: ${caCertificate.fingerprint256}`);
     expect(await readBundle(outputDirectory)).toEqual(before);
   });
 
@@ -385,13 +299,9 @@ describe("TLS setup script", () => {
     expect(after.get("ca.crt")).toEqual(before.get("ca.crt"));
     expect(after.get("ca.key.pem")).toEqual(before.get("ca.key.pem"));
     expect(after.get("server.crt")).not.toEqual(before.get("server.crt"));
-    expect(after.get("server.key.pem")).not.toEqual(
-      before.get("server.key.pem"),
-    );
+    expect(after.get("server.key.pem")).not.toEqual(before.get("server.key.pem"));
     const renewedCaCertificate = new X509Certificate(after.get("ca.crt")!);
-    expect(renewed.stdout).toContain(
-      `CA SHA-256 fingerprint: ${renewedCaCertificate.fingerprint256}`,
-    );
+    expect(renewed.stdout).toContain(`CA SHA-256 fingerprint: ${renewedCaCertificate.fingerprint256}`);
     await expectValidBundle(outputDirectory);
   });
 
@@ -409,9 +319,7 @@ describe("TLS setup script", () => {
     expect(after.get("ca.crt")).toEqual(before.get("ca.crt"));
     expect(after.get("ca.key.pem")).toEqual(before.get("ca.key.pem"));
     expect(after.get("server.crt")).not.toEqual(before.get("server.crt"));
-    expect(after.get("server.key.pem")).not.toEqual(
-      before.get("server.key.pem"),
-    );
+    expect(after.get("server.key.pem")).not.toEqual(before.get("server.key.pem"));
     await expectValidBundle(outputDirectory);
   });
 
@@ -445,15 +353,9 @@ describe("TLS setup script", () => {
     expect(rotated.stdout).toContain("Rotated the local TLS CA");
     const after = await readBundle(outputDirectory);
     const newCaCertificate = new X509Certificate(after.get("ca.crt")!);
-    expect(rotated.stdout).toContain(
-      `Old CA SHA-256 fingerprint: ${oldCaCertificate.fingerprint256}`,
-    );
-    expect(rotated.stdout).toContain(
-      `New CA SHA-256 fingerprint: ${newCaCertificate.fingerprint256}`,
-    );
-    expect(newCaCertificate.fingerprint256).not.toBe(
-      oldCaCertificate.fingerprint256,
-    );
+    expect(rotated.stdout).toContain(`Old CA SHA-256 fingerprint: ${oldCaCertificate.fingerprint256}`);
+    expect(rotated.stdout).toContain(`New CA SHA-256 fingerprint: ${newCaCertificate.fingerprint256}`);
+    expect(newCaCertificate.fingerprint256).not.toBe(oldCaCertificate.fingerprint256);
     for (const fileName of [...expectedPublicFiles, ...expectedPrivateFiles])
       expect(after.get(fileName)).not.toEqual(before.get(fileName));
     await expectValidBundle(outputDirectory);
@@ -469,28 +371,21 @@ describe("TLS setup script", () => {
 
     expect(message).toContain("partial");
     expect(await readdir(outputDirectory)).toEqual(["ca.crt"]);
-    expect(await readFile(join(outputDirectory, "ca.crt"), "utf8")).toBe(
-      "partial setup\n",
-    );
+    expect(await readFile(join(outputDirectory, "ca.crt"), "utf8")).toBe("partial setup\n");
   });
 
   it("fails without changing an invalid setup, including with --rotate-ca", async () => {
     const rootDirectory = await temporaryDirectory();
     const outputDirectory = join(rootDirectory, "tls");
     await runSetup(outputDirectory);
-    await writeFile(
-      join(outputDirectory, "server.crt"),
-      "invalid certificate\n",
-    );
+    await writeFile(join(outputDirectory, "server.crt"), "invalid certificate\n");
     const invalidBundle = await readBundle(outputDirectory);
 
     const normalMessage = await rejectedMessage(runSetup(outputDirectory));
     expect(normalMessage).toContain("TLS setup is invalid");
     expect(await readBundle(outputDirectory)).toEqual(invalidBundle);
 
-    const rotationMessage = await rejectedMessage(
-      runSetup(outputDirectory, "--rotate-ca"),
-    );
+    const rotationMessage = await rejectedMessage(runSetup(outputDirectory, "--rotate-ca"));
     expect(rotationMessage).toContain("TLS setup is invalid");
     expect(await readBundle(outputDirectory)).toEqual(invalidBundle);
   });
@@ -526,9 +421,7 @@ describe("TLS setup script", () => {
     expect(normalMessage).toContain("removing the stale lock manually");
     expect(await readBundle(outputDirectory)).toEqual(before);
 
-    const rotationMessage = await rejectedMessage(
-      runSetup(outputDirectory, "--rotate-ca"),
-    );
+    const rotationMessage = await rejectedMessage(runSetup(outputDirectory, "--rotate-ca"));
     expect(rotationMessage).toContain("setup lock already exists");
     expect(await readBundle(outputDirectory)).toEqual(before);
     expect(await stat(lockDirectory)).toBeDefined();
@@ -545,12 +438,8 @@ describe("TLS setup script", () => {
 
     expect(message).toContain("partial or contains unexpected files");
     expect(message).toContain(outputDirectory);
-    expect(await readFile(join(staleStagingDirectory, "marker"), "utf8")).toBe(
-      "preserve me\n",
-    );
-    await expect(
-      stat(privateDirectoryFor(outputDirectory)),
-    ).rejects.toMatchObject({
+    expect(await readFile(join(staleStagingDirectory, "marker"), "utf8")).toBe("preserve me\n");
+    await expect(stat(privateDirectoryFor(outputDirectory))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -574,9 +463,7 @@ describe("TLS setup script", () => {
 
     const rootDirectory = await temporaryDirectory();
     const outputDirectory = join(rootDirectory, "tls");
-    const privateDirectory = await mkdtemp(
-      join("/dev/shm", "mock-entra-tls-private-"),
-    );
+    const privateDirectory = await mkdtemp(join("/dev/shm", "mock-entra-tls-private-"));
     try {
       const created = await run(process.execPath, [
         setupScript,
@@ -586,12 +473,8 @@ describe("TLS setup script", () => {
         privateDirectory,
       ]);
       expect(created.stdout).toContain("Created local TLS CA");
-      expect((await readdir(outputDirectory)).sort()).toEqual(
-        expectedPublicFiles,
-      );
-      expect((await readdir(privateDirectory)).sort()).toEqual(
-        expectedPrivateFiles,
-      );
+      expect((await readdir(outputDirectory)).sort()).toEqual(expectedPublicFiles);
+      expect((await readdir(privateDirectory)).sort()).toEqual(expectedPrivateFiles);
       if (process.platform !== "win32") {
         expect((await stat(outputDirectory)).mode & 0o777).toBe(0o755);
         expect((await stat(privateDirectory)).mode & 0o777).toBe(0o700);

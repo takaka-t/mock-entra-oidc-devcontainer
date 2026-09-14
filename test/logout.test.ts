@@ -5,13 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
-import {
-  mockAuthorizePath,
-  mockIssuerPath,
-  mockLogoutPath,
-  mockOrigin,
-  mockTokenPath,
-} from "../src/config.js";
+import { mockAuthorizePath, mockIssuerPath, mockLogoutPath, mockOrigin, mockTokenPath } from "../src/config.js";
 import { testConfig } from "./test-config.js";
 
 const host = new URL(mockOrigin).host;
@@ -107,9 +101,7 @@ describe("RP-initiated logout", () => {
     jar = cookies(jar, response.headers);
     for (
       let i = 0;
-      i < 5 &&
-      response.headers.location &&
-      !String(response.headers.location).startsWith(redirectUri);
+      i < 5 && response.headers.location && !String(response.headers.location).startsWith(redirectUri);
       i++
     ) {
       const next = new URL(String(response.headers.location), origin);
@@ -147,9 +139,7 @@ describe("RP-initiated logout", () => {
   ): Promise<{ action: string; xsrf: string }> {
     const query = new URLSearchParams({
       id_token_hint: idToken,
-      ...(withPostLogoutRedirectUri
-        ? { post_logout_redirect_uri: postLogoutRedirectUri, state: "bye" }
-        : {}),
+      ...(withPostLogoutRedirectUri ? { post_logout_redirect_uri: postLogoutRedirectUri, state: "bye" } : {}),
     });
     const response = await context.app.inject({
       url: `${mockLogoutPath}?${query}`,
@@ -199,9 +189,7 @@ describe("RP-initiated logout", () => {
 
     expect(confirmed.statusCode, confirmed.body).toBe(303);
     const location = new URL(String(confirmed.headers.location));
-    expect(`${location.origin}${location.pathname}`).toBe(
-      postLogoutRedirectUri,
-    );
+    expect(`${location.origin}${location.pathname}`).toBe(postLogoutRedirectUri);
     expect(location.searchParams.get("state")).toBe("bye");
   });
 
@@ -263,9 +251,7 @@ describe("RP-initiated logout", () => {
         url: path,
         headers: {
           host,
-          ...(method === "POST"
-            ? { "content-type": "application/x-www-form-urlencoded" }
-            : {}),
+          ...(method === "POST" ? { "content-type": "application/x-www-form-urlencoded" } : {}),
         },
         ...(method === "POST" ? { payload: "" } : {}),
       });

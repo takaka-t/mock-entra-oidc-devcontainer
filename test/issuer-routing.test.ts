@@ -33,11 +33,7 @@ function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
       .map((part) => [part.split("=")[0]!, part]),
   );
   const setCookies = headers["set-cookie"];
-  for (const cookie of Array.isArray(setCookies)
-    ? setCookies
-    : setCookies
-      ? [setCookies]
-      : []) {
+  for (const cookie of Array.isArray(setCookies) ? setCookies : setCookies ? [setCookies] : []) {
     const pair = cookie.split(";")[0]!;
     jar.set(pair.split("=")[0]!, pair);
   }
@@ -101,9 +97,7 @@ describe("issuer routing and origin enforcement", () => {
     });
     jar = updateCookies(jar, response.headers);
     const interaction = new URL(String(response.headers.location), issuer);
-    expect(interaction.pathname).toMatch(
-      new RegExp(`^${issuerPath}/interaction/`),
-    );
+    expect(interaction.pathname).toMatch(new RegExp(`^${issuerPath}/interaction/`));
 
     response = await context.app.inject({
       url: `${interaction.pathname}${interaction.search}`,
@@ -132,10 +126,7 @@ describe("issuer routing and origin enforcement", () => {
       attempts++
     ) {
       const next = new URL(String(response.headers.location), issuer);
-      expect(
-        next.pathname.startsWith(issuerPath) ||
-          next.pathname.startsWith(mockAuthorizePath),
-      ).toBe(true);
+      expect(next.pathname.startsWith(issuerPath) || next.pathname.startsWith(mockAuthorizePath)).toBe(true);
       response = await context.app.inject({
         url: `${next.pathname}${next.search}`,
         headers: { host, cookie: jar },
@@ -256,9 +247,7 @@ describe("issuer routing and origin enforcement", () => {
           redirect_uri: "http://localhost:3000/callback",
           response_type: "code",
           scope: "openid",
-          code_challenge: createHash("sha256")
-            .update(verifier)
-            .digest("base64url"),
+          code_challenge: createHash("sha256").update(verifier).digest("base64url"),
           code_challenge_method: "S256",
         }).toString(),
       headers: { host },
@@ -345,25 +334,20 @@ describe("issuer routing and origin enforcement", () => {
     expect(mismatch.json().error).toBe("invalid_request_origin");
   });
 
-  it.each(["GET", "POST"] as const)(
-    "rejects %s encoded issuer interactions from a mismatched Host",
-    async (method) => {
-      const response = await context.app.inject({
-        method,
-        url: `${encodedIssuerPath}/interaction/not-a-real-interaction`,
-        headers: {
-          host: "unexpected.test:19000",
-          ...(method === "POST"
-            ? { "content-type": "application/x-www-form-urlencoded" }
-            : {}),
-        },
-        ...(method === "POST" ? { payload: "accountId=user-admin" } : {}),
-      });
+  it.each(["GET", "POST"] as const)("rejects %s encoded issuer interactions from a mismatched Host", async (method) => {
+    const response = await context.app.inject({
+      method,
+      url: `${encodedIssuerPath}/interaction/not-a-real-interaction`,
+      headers: {
+        host: "unexpected.test:19000",
+        ...(method === "POST" ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+      },
+      ...(method === "POST" ? { payload: "accountId=user-admin" } : {}),
+    });
 
-      expect(response.statusCode).toBe(400);
-      expect(response.json().error).toBe("invalid_request_origin");
-    },
-  );
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_request_origin");
+  });
 
   it("enforces Admin protections for percent-encoded static route spellings", async () => {
     const encodedClientsPath = "/%5f%5fmock/api/clients";
@@ -469,9 +453,7 @@ describe("trusted HTTPS proxy", () => {
         },
       });
       expect(response.statusCode, response.body).toBe(200);
-      expect(response.json().issuer).toBe(
-        `https://login.microsoftonline.test${issuerPath}`,
-      );
+      expect(response.json().issuer).toBe(`https://login.microsoftonline.test${issuerPath}`);
       expect(
         (
           await context.app.inject({

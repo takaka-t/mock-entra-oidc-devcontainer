@@ -23,9 +23,7 @@ import {
 import { loadTlsServerOptions } from "../src/tls.js";
 
 const execFileAsync = promisify(execFile);
-const setupTlsScript = fileURLToPath(
-  new URL("../scripts/setup-tls.mjs", import.meta.url),
-);
+const setupTlsScript = fileURLToPath(new URL("../scripts/setup-tls.mjs", import.meta.url));
 const issuerUrl = new URL(mockOrigin);
 
 interface NetworkResponse {
@@ -42,21 +40,14 @@ interface TlsRequestOptions {
   trustCa?: boolean;
 }
 
-function updateCookies(
-  current: string,
-  setCookie: string | string[] | undefined,
-): string {
+function updateCookies(current: string, setCookie: string | string[] | undefined): string {
   const jar = new Map(
     current
       .split("; ")
       .filter(Boolean)
       .map((part) => [part.split("=")[0]!, part]),
   );
-  const values = Array.isArray(setCookie)
-    ? setCookie
-    : setCookie
-      ? [setCookie]
-      : [];
+  const values = Array.isArray(setCookie) ? setCookie : setCookie ? [setCookie] : [];
   for (const cookie of values) {
     const pair = cookie.split(";")[0]!;
     jar.set(pair.split("=")[0]!, pair);
@@ -70,10 +61,7 @@ describe("direct HTTPS hosting", () => {
   let ca: Buffer;
   let port: number;
 
-  function requestTls(
-    path: string,
-    options: TlsRequestOptions = {},
-  ): Promise<NetworkResponse> {
+  function requestTls(path: string, options: TlsRequestOptions = {}): Promise<NetworkResponse> {
     return new Promise((resolve, reject) => {
       const request = httpsRequest(
         {
@@ -134,8 +122,7 @@ describe("direct HTTPS hosting", () => {
     });
     await context.app.listen({ host: config.host, port: 0 });
     const address = context.app.server.address();
-    if (!address || typeof address === "string")
-      throw new Error("HTTPS test server did not expose a TCP address");
+    if (!address || typeof address === "string") throw new Error("HTTPS test server did not expose a TCP address");
     port = address.port;
   }, 20_000);
 
@@ -143,20 +130,14 @@ describe("direct HTTPS hosting", () => {
     try {
       await context?.app.close();
     } finally {
-      if (stateDirectory)
-        await rm(stateDirectory, { recursive: true, force: true });
+      if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
     }
   });
 
   it("completes an authorization code flow with HTTPS metadata and issuers", async () => {
-    const discovery = await requestTls(
-      `${mockIssuerPath}/.well-known/openid-configuration`,
-    );
+    const discovery = await requestTls(`${mockIssuerPath}/.well-known/openid-configuration`);
     expect(discovery.statusCode, discovery.body.toString()).toBe(200);
-    const metadata = JSON.parse(discovery.body.toString()) as Record<
-      string,
-      unknown
-    >;
+    const metadata = JSON.parse(discovery.body.toString()) as Record<string, unknown>;
     expect(metadata).toMatchObject({
       issuer: mockIssuer,
       authorization_endpoint: `${mockOrigin}${mockAuthorizePath}`,
@@ -179,36 +160,26 @@ describe("direct HTTPS hosting", () => {
     let response = await requestTls(`${mockAuthorizePath}?${query.toString()}`);
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(303);
-    expect(response.headers["set-cookie"]?.join(";")).toMatch(
-      /;\s*secure(?:;|$)/i,
-    );
+    expect(response.headers["set-cookie"]?.join(";")).toMatch(/;\s*secure(?:;|$)/i);
 
     const interaction = new URL(String(response.headers.location), mockIssuer);
-    response = await requestTls(
-      `${interaction.pathname}${interaction.search}`,
-      {
-        headers: { cookie: jar },
-      },
-    );
+    response = await requestTls(`${interaction.pathname}${interaction.search}`, {
+      headers: { cookie: jar },
+    });
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(200);
-    expect(response.body.toString()).toContain(
-      "テストユーザーを選択してください。",
-    );
+    expect(response.body.toString()).toContain("テストユーザーを選択してください。");
 
     const selection = "accountId=user-admin";
-    response = await requestTls(
-      `${interaction.pathname}${interaction.search}`,
-      {
-        method: "POST",
-        headers: {
-          cookie: jar,
-          "content-type": "application/x-www-form-urlencoded",
-          "content-length": Buffer.byteLength(selection),
-        },
-        payload: selection,
+    response = await requestTls(`${interaction.pathname}${interaction.search}`, {
+      method: "POST",
+      headers: {
+        cookie: jar,
+        "content-type": "application/x-www-form-urlencoded",
+        "content-length": Buffer.byteLength(selection),
       },
-    );
+      payload: selection,
+    });
     jar = updateCookies(jar, response.headers["set-cookie"]);
     for (
       let attempts = 0;
@@ -266,24 +237,19 @@ describe("direct HTTPS hosting", () => {
   });
 
   it("rejects untrusted CAs and a hostname outside the certificate SAN", async () => {
-    await expect(
-      requestTls("/health", { trustCa: false }),
-    ).rejects.toBeDefined();
-    await expect(
-      requestTls("/health", { servername: "unexpected.test" }),
-    ).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    await expect(requestTls("/health", { trustCa: false })).rejects.toBeDefined();
+    await expect(requestTls("/health", { servername: "unexpected.test" })).rejects.toMatchObject({
+      code: "ERR_TLS_CERT_ALTNAME_INVALID",
+    });
   });
 
   it("does not accept plaintext HTTP on the TLS listener", async () => {
     await expect(
       new Promise<void>((resolve, reject) => {
-        const request = httpRequest(
-          { hostname: "127.0.0.1", port, path: "/health" },
-          (response) => {
-            response.resume();
-            resolve();
-          },
-        );
+        const request = httpRequest({ hostname: "127.0.0.1", port, path: "/health" }, (response) => {
+          response.resume();
+          resolve();
+        });
         request.on("error", reject);
         request.end();
       }),
@@ -305,10 +271,9 @@ describe("direct HTTPS hosting", () => {
       error: "invalid_request_origin",
     });
 
-    const rejectedDiscovery = await requestTls(
-      `${mockIssuerPath}/.well-known/openid-configuration`,
-      { headers: { host: "unexpected.test:19000" } },
-    );
+    const rejectedDiscovery = await requestTls(`${mockIssuerPath}/.well-known/openid-configuration`, {
+      headers: { host: "unexpected.test:19000" },
+    });
     expect(rejectedDiscovery.statusCode).toBe(400);
     expect(JSON.parse(rejectedDiscovery.body.toString())).toMatchObject({
       error: "invalid_request_origin",

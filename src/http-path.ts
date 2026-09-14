@@ -12,9 +12,7 @@ export function managementPath(pathname: string): boolean {
 }
 
 export function decodeRoutingPath(pathname: string): string {
-  return pathname.replace(/%([0-7][\da-f])/gi, (_escape, hex: string) =>
-    String.fromCharCode(Number.parseInt(hex, 16)),
-  );
+  return pathname.replace(/%([0-7][\da-f])/gi, (_escape, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
 /**

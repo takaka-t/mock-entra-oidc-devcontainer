@@ -82,8 +82,7 @@ describe("scoped in-memory OIDC adapter", () => {
   it("evicts the least-recently-used record at an exact 1000-record limit", async () => {
     const adapter = createInMemoryAdapterFactory()("Session");
     await adapter.upsert("oldest", { uid: "oldest-uid" }, 60);
-    for (let index = 1; index < 1_000; index++)
-      await adapter.upsert(`session-${index}`, { uid: `uid-${index}` }, 60);
+    for (let index = 1; index < 1_000; index++) await adapter.upsert(`session-${index}`, { uid: `uid-${index}` }, 60);
 
     // A read promotes this entry, making session-1 the next eviction target.
     await adapter.find("oldest");
@@ -104,8 +103,7 @@ describe("scoped in-memory OIDC adapter", () => {
     const clients = factory("Client");
     const sessions = factory("Session");
     await clients.upsert("client", { client_id: "client" });
-    for (let index = 0; index < 1_000; index++)
-      await sessions.upsert(`session-${index}`, { uid: `uid-${index}` }, 60);
+    for (let index = 0; index < 1_000; index++) await sessions.upsert(`session-${index}`, { uid: `uid-${index}` }, 60);
 
     expect(await clients.find("client")).toMatchObject({
       client_id: "client",
@@ -119,16 +117,8 @@ describe("scoped in-memory OIDC adapter", () => {
   it("isolates all records between separately created factories", async () => {
     const first = createInMemoryAdapterFactory();
     const second = createInMemoryAdapterFactory();
-    await first("AuthorizationCode").upsert(
-      "same-id",
-      { accountId: "first" },
-      60,
-    );
-    await second("AuthorizationCode").upsert(
-      "same-id",
-      { accountId: "second" },
-      60,
-    );
+    await first("AuthorizationCode").upsert("same-id", { accountId: "first" }, 60);
+    await second("AuthorizationCode").upsert("same-id", { accountId: "second" }, 60);
 
     expect(await first("AuthorizationCode").find("same-id")).toMatchObject({
       accountId: "first",

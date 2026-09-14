@@ -15,11 +15,7 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
       .map((part) => [part.split("=")[0]!, part]),
   );
   const values = headers["set-cookie"];
-  for (const cookie of Array.isArray(values)
-    ? values
-    : values
-      ? [values]
-      : []) {
+  for (const cookie of Array.isArray(values) ? values : values ? [values] : []) {
     const pair = cookie.split(";")[0]!;
     jar.set(pair.split("=")[0]!, pair);
   }
@@ -42,21 +38,14 @@ function authorizationUrl(clientId: string, scope: string) {
         scope,
         state: randomBytes(8).toString("base64url"),
         nonce: randomBytes(8).toString("base64url"),
-        code_challenge: createHash("sha256")
-          .update(verifier)
-          .digest("base64url"),
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
         code_challenge_method: "S256",
         ...(scope.includes("offline_access") ? { prompt: "consent" } : {}),
       }).toString(),
   };
 }
 
-async function authorize(
-  context: AppContext,
-  issuer: string,
-  host: string,
-  scope: string,
-) {
+async function authorize(context: AppContext, issuer: string, host: string, scope: string) {
   const request = authorizationUrl("mock-public-client", scope);
   let jar = "";
   let response = await context.app.inject({
@@ -85,9 +74,7 @@ async function authorize(
   jar = cookies(jar, response.headers);
   for (
     let attempts = 0;
-    attempts < 6 &&
-    response.headers.location &&
-    !String(response.headers.location).startsWith("http://localhost:3000");
+    attempts < 6 && response.headers.location && !String(response.headers.location).startsWith("http://localhost:3000");
     attempts++
   ) {
     const location = new URL(String(response.headers.location), issuer);
@@ -103,12 +90,7 @@ async function authorize(
   return { code, verifier: request.verifier };
 }
 
-async function exchangeCode(
-  context: AppContext,
-  host: string,
-  code: string,
-  verifier: string,
-) {
+async function exchangeCode(context: AppContext, host: string, code: string, verifier: string) {
   return context.app.inject({
     method: "POST",
     url: tokenPath,
@@ -123,11 +105,7 @@ async function exchangeCode(
   });
 }
 
-async function refresh(
-  context: AppContext,
-  host: string,
-  refreshToken: string,
-) {
+async function refresh(context: AppContext, host: string, refreshToken: string) {
   return context.app.inject({
     method: "POST",
     url: tokenPath,
@@ -142,9 +120,7 @@ async function refresh(
 
 describe("Provider instance isolation", () => {
   it("does not share codes, refresh tokens, or dynamic clients", async () => {
-    const stateDirectory = await mkdtemp(
-      join(tmpdir(), "mock-idp-provider-isolation-"),
-    );
+    const stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-provider-isolation-"));
     const issuerA = "http://issuer-a.test";
     const issuerB = "http://issuer-b.test";
     const contextA = await buildApp(
@@ -166,42 +142,20 @@ describe("Provider instance isolation", () => {
       { https: false },
     );
     try {
-      const flow = await authorize(
-        contextA,
-        issuerA,
-        "issuer-a.test",
-        "openid offline_access",
-      );
-      const crossCode = await exchangeCode(
-        contextB,
-        "issuer-b.test",
-        flow.code,
-        flow.verifier,
-      );
+      const flow = await authorize(contextA, issuerA, "issuer-a.test", "openid offline_access");
+      const crossCode = await exchangeCode(contextB, "issuer-b.test", flow.code, flow.verifier);
       expect(crossCode.statusCode).toBe(400);
       expect(crossCode.json()).toMatchObject({ error: "invalid_grant" });
 
-      const issued = await exchangeCode(
-        contextA,
-        "issuer-a.test",
-        flow.code,
-        flow.verifier,
-      );
+      const issued = await exchangeCode(contextA, "issuer-a.test", flow.code, flow.verifier);
       expect(issued.statusCode, issued.body).toBe(200);
-      const refreshToken = issued.json<{ refresh_token: string }>()
-        .refresh_token;
+      const refreshToken = issued.json<{ refresh_token: string }>().refresh_token;
       expect(refreshToken).toBeTypeOf("string");
 
-      const crossRefresh = await refresh(
-        contextB,
-        "issuer-b.test",
-        refreshToken,
-      );
+      const crossRefresh = await refresh(contextB, "issuer-b.test", refreshToken);
       expect(crossRefresh.statusCode).toBe(400);
       expect(crossRefresh.json()).toMatchObject({ error: "invalid_grant" });
-      expect(
-        (await refresh(contextA, "issuer-a.test", refreshToken)).statusCode,
-      ).toBe(200);
+      expect((await refresh(contextA, "issuer-a.test", refreshToken)).statusCode).toBe(200);
 
       await contextA.clientStore.create({
         clientId: "provider-a-only",

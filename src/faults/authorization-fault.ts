@@ -31,13 +31,8 @@ export const authorizationFaultDefinitions = [
   },
 ] as const;
 
-export type AuthorizationFaultDefinition =
-  (typeof authorizationFaultDefinitions)[number];
+export type AuthorizationFaultDefinition = (typeof authorizationFaultDefinitions)[number];
 
-export function authorizationFaultForPrompt(
-  promptName: string,
-): AuthorizationFaultDefinition | undefined {
-  return authorizationFaultDefinitions.find(
-    (definition) => definition.promptName === promptName,
-  );
+export function authorizationFaultForPrompt(promptName: string): AuthorizationFaultDefinition | undefined {
+  return authorizationFaultDefinitions.find((definition) => definition.promptName === promptName);
 }

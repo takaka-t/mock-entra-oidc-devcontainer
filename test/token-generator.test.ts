@@ -49,13 +49,9 @@ describe("token fault generator", () => {
   beforeAll(async () => {
     keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-token-generator-"));
     keys = await loadSigningKeys(keyDirectory);
-    if (typeof keys.normal.publicJwk.kid !== "string")
-      throw new Error("normal signing key must have a kid");
+    if (typeof keys.normal.publicJwk.kid !== "string") throw new Error("normal signing key must have a kid");
     normalKid = keys.normal.publicJwk.kid;
-    normalPublicKey = (await importJWK(
-      keys.normal.publicJwk,
-      "RS256",
-    )) as CryptoKey;
+    normalPublicKey = (await importJWK(keys.normal.publicJwk, "RS256")) as CryptoKey;
   });
 
   afterAll(async () => {
@@ -84,118 +80,90 @@ describe("token fault generator", () => {
       .sign(keys.normal.privateKey);
   }
 
-  it.each(tokenKinds)(
-    "distinguishes invalid signatures from unknown kids for $name",
-    async (kind) => {
-      const source = await makeToken(kind);
-      const jwks = createLocalJWKSet({ keys: [keys.normal.publicJwk] });
+  it.each(tokenKinds)("distinguishes invalid signatures from unknown kids for $name", async (kind) => {
+    const source = await makeToken(kind);
+    const jwks = createLocalJWKSet({ keys: [keys.normal.publicJwk] });
 
-      const invalidSignature = await mutateToken(
-        source,
-        decision("INVALID_SIGNATURE"),
-        keys,
-      );
-      expect(decodeProtectedHeader(invalidSignature)).toEqual({
-        alg: "RS256",
-        kid: normalKid,
-        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
-      });
-      await expect(jwtVerify(invalidSignature, jwks)).rejects.toMatchObject({
-        code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
-      });
+    const invalidSignature = await mutateToken(source, decision("INVALID_SIGNATURE"), keys);
+    expect(decodeProtectedHeader(invalidSignature)).toEqual({
+      alg: "RS256",
+      kid: normalKid,
+      ...(kind.name === "access token" ? { typ: kind.typ } : {}),
+    });
+    await expect(jwtVerify(invalidSignature, jwks)).rejects.toMatchObject({
+      code: "ERR_JWS_SIGNATURE_VERIFICATION_FAILED",
+    });
 
-      const unknownKid = await mutateToken(
-        source,
-        decision("UNKNOWN_KID"),
-        keys,
-      );
-      expect(decodeProtectedHeader(unknownKid)).toEqual({
-        alg: "RS256",
-        kid: "unknown-kid",
-        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
-      });
-      await expect(jwtVerify(unknownKid, jwks)).rejects.toMatchObject({
-        code: "ERR_JWKS_NO_MATCHING_KEY",
-      });
+    const unknownKid = await mutateToken(source, decision("UNKNOWN_KID"), keys);
+    expect(decodeProtectedHeader(unknownKid)).toEqual({
+      alg: "RS256",
+      kid: "unknown-kid",
+      ...(kind.name === "access token" ? { typ: kind.typ } : {}),
+    });
+    await expect(jwtVerify(unknownKid, jwks)).rejects.toMatchObject({
+      code: "ERR_JWKS_NO_MATCHING_KEY",
+    });
 
-      expect(decodeJwt(invalidSignature)).toEqual(decodeJwt(source));
-      expect(decodeJwt(unknownKid)).toEqual(decodeJwt(source));
-    },
-  );
-
-  it.each(tokenKinds)(
-    "signs a rollover $name with the newly published key",
-    async (kind) => {
-      const source = await makeToken(kind);
-      const rollover = await mutateToken(
-        source,
-        decision("SIGNING_KEY_ROLLOVER"),
-        keys,
-      );
-
-      expect(decodeProtectedHeader(rollover)).toEqual({
-        alg: "RS256",
-        kid: "mock-rollover-key",
-        ...(kind.name === "access token" ? { typ: kind.typ } : {}),
-      });
-      await expect(
-        jwtVerify(
-          rollover,
-          createLocalJWKSet({
-            keys: [keys.normal.publicJwk, keys.rollover.publicJwk],
-          }),
-        ),
-      ).resolves.toBeDefined();
-      await expect(
-        jwtVerify(
-          rollover,
-          createLocalJWKSet({ keys: [keys.normal.publicJwk] }),
-        ),
-      ).rejects.toMatchObject({ code: "ERR_JWKS_NO_MATCHING_KEY" });
-      expect(decodeJwt(rollover)).toEqual(decodeJwt(source));
-    },
-  );
-
-  it.each([
-    "WRONG_AUDIENCE",
-    "WRONG_ISSUER",
-    "EXPIRED_TOKEN",
-    "FUTURE_NBF",
-  ] as const)("preserves protected headers for %s", async (scenario) => {
-    const source = await makeToken(tokenKinds[0]);
-    const mutated = await mutateToken(source, decision(scenario), keys);
-
-    expect(decodeProtectedHeader(mutated)).toEqual(
-      decodeProtectedHeader(source),
-    );
+    expect(decodeJwt(invalidSignature)).toEqual(decodeJwt(source));
+    expect(decodeJwt(unknownKid)).toEqual(decodeJwt(source));
   });
 
-  it.each(tokenKinds)(
-    "creates a future nbf before exp and preserves other $name claims",
-    async (kind) => {
-      const source = await makeToken(kind);
-      const sourcePayload = decodeJwt(source);
-      const before = Math.floor(Date.now() / 1000);
-      const mutated = await mutateToken(source, decision("FUTURE_NBF"), keys);
-      const after = Math.floor(Date.now() / 1000);
-      const payload = decodeJwt(mutated);
+  it.each(tokenKinds)("signs a rollover $name with the newly published key", async (kind) => {
+    const source = await makeToken(kind);
+    const rollover = await mutateToken(source, decision("SIGNING_KEY_ROLLOVER"), keys);
 
-      expect(payload.nbf).toBeGreaterThan(before);
-      expect(payload.nbf).toBeLessThan(payload.exp as number);
-      expect(payload.exp).toBe(sourcePayload.exp);
-      expect({ ...payload, nbf: sourcePayload.nbf }).toEqual(sourcePayload);
-      await expect(jwtVerify(mutated, normalPublicKey)).rejects.toMatchObject({
-        code: "ERR_JWT_CLAIM_VALIDATION_FAILED",
-        claim: "nbf",
-      });
-      await expect(
-        jwtVerify(mutated, normalPublicKey, {
-          currentDate: new Date(((payload.nbf as number) + 1) * 1000),
+    expect(decodeProtectedHeader(rollover)).toEqual({
+      alg: "RS256",
+      kid: "mock-rollover-key",
+      ...(kind.name === "access token" ? { typ: kind.typ } : {}),
+    });
+    await expect(
+      jwtVerify(
+        rollover,
+        createLocalJWKSet({
+          keys: [keys.normal.publicJwk, keys.rollover.publicJwk],
         }),
-      ).resolves.toBeDefined();
-      expect(payload.nbf).toBeGreaterThan(after);
+      ),
+    ).resolves.toBeDefined();
+    await expect(jwtVerify(rollover, createLocalJWKSet({ keys: [keys.normal.publicJwk] }))).rejects.toMatchObject({
+      code: "ERR_JWKS_NO_MATCHING_KEY",
+    });
+    expect(decodeJwt(rollover)).toEqual(decodeJwt(source));
+  });
+
+  it.each(["WRONG_AUDIENCE", "WRONG_ISSUER", "EXPIRED_TOKEN", "FUTURE_NBF"] as const)(
+    "preserves protected headers for %s",
+    async (scenario) => {
+      const source = await makeToken(tokenKinds[0]);
+      const mutated = await mutateToken(source, decision(scenario), keys);
+
+      expect(decodeProtectedHeader(mutated)).toEqual(decodeProtectedHeader(source));
     },
   );
+
+  it.each(tokenKinds)("creates a future nbf before exp and preserves other $name claims", async (kind) => {
+    const source = await makeToken(kind);
+    const sourcePayload = decodeJwt(source);
+    const before = Math.floor(Date.now() / 1000);
+    const mutated = await mutateToken(source, decision("FUTURE_NBF"), keys);
+    const after = Math.floor(Date.now() / 1000);
+    const payload = decodeJwt(mutated);
+
+    expect(payload.nbf).toBeGreaterThan(before);
+    expect(payload.nbf).toBeLessThan(payload.exp as number);
+    expect(payload.exp).toBe(sourcePayload.exp);
+    expect({ ...payload, nbf: sourcePayload.nbf }).toEqual(sourcePayload);
+    await expect(jwtVerify(mutated, normalPublicKey)).rejects.toMatchObject({
+      code: "ERR_JWT_CLAIM_VALIDATION_FAILED",
+      claim: "nbf",
+    });
+    await expect(
+      jwtVerify(mutated, normalPublicKey, {
+        currentDate: new Date(((payload.nbf as number) + 1) * 1000),
+      }),
+    ).resolves.toBeDefined();
+    expect(payload.nbf).toBeGreaterThan(after);
+  });
 
   it("rejects FUTURE_NBF for a token that is already about to expire", async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -210,39 +178,30 @@ describe("token fault generator", () => {
       .setProtectedHeader({ alg: "RS256", kid: normalKid })
       .sign(keys.normal.privateKey);
 
-    await expect(
-      mutateToken(almostExpired, decision("FUTURE_NBF"), keys),
-    ).rejects.toThrow("FUTURE_NBF requires a token that expires in the future");
+    await expect(mutateToken(almostExpired, decision("FUTURE_NBF"), keys)).rejects.toThrow(
+      "FUTURE_NBF requires a token that expires in the future",
+    );
   });
 
-  it.each(tokenKinds)(
-    "creates an expired but consistently ordered $name",
-    async (kind) => {
-      const source = await makeToken(kind);
-      const sourcePayload = decodeJwt(source);
-      const mutated = await mutateToken(
-        source,
-        decision("EXPIRED_TOKEN"),
-        keys,
-      );
-      const payload = decodeJwt(mutated);
-      const now = Math.floor(Date.now() / 1000);
+  it.each(tokenKinds)("creates an expired but consistently ordered $name", async (kind) => {
+    const source = await makeToken(kind);
+    const sourcePayload = decodeJwt(source);
+    const mutated = await mutateToken(source, decision("EXPIRED_TOKEN"), keys);
+    const payload = decodeJwt(mutated);
+    const now = Math.floor(Date.now() / 1000);
 
-      expect(payload.iat).toBeLessThanOrEqual(payload.nbf as number);
-      expect(payload.nbf).toBeLessThan(payload.exp as number);
-      expect(payload.exp).toBeLessThan(now);
-      expect({
-        ...payload,
-        iat: sourcePayload.iat,
-        nbf: sourcePayload.nbf,
-        exp: sourcePayload.exp,
-      }).toEqual(sourcePayload);
-      await expect(jwtVerify(mutated, normalPublicKey)).rejects.toMatchObject({
-        code: "ERR_JWT_EXPIRED",
-      });
-      await expect(
-        compactVerify(mutated, normalPublicKey),
-      ).resolves.toBeDefined();
-    },
-  );
+    expect(payload.iat).toBeLessThanOrEqual(payload.nbf as number);
+    expect(payload.nbf).toBeLessThan(payload.exp as number);
+    expect(payload.exp).toBeLessThan(now);
+    expect({
+      ...payload,
+      iat: sourcePayload.iat,
+      nbf: sourcePayload.nbf,
+      exp: sourcePayload.exp,
+    }).toEqual(sourcePayload);
+    await expect(jwtVerify(mutated, normalPublicKey)).rejects.toMatchObject({
+      code: "ERR_JWT_EXPIRED",
+    });
+    await expect(compactVerify(mutated, normalPublicKey)).resolves.toBeDefined();
+  });
 });

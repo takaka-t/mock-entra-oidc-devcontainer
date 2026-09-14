@@ -9,10 +9,7 @@ import type { AppConfig } from "../config.js";
 export const commonProbeContentType = "text/html; charset=utf-8";
 
 /** Match Fastify's static route aliases without decoding path separators. */
-export function matchesCommonProbePath(
-  pathname: string,
-  routePathname: string,
-): boolean {
+export function matchesCommonProbePath(pathname: string, routePathname: string): boolean {
   const decodeUnreserved = (value: string): string =>
     value.replace(/%([\da-f]{2})/gi, (escape, hex: string) => {
       const character = String.fromCharCode(Number.parseInt(hex, 16));
@@ -33,16 +30,9 @@ export function matchesCommonProbePath(
  * AUTH_TIMEOUT answer first and this handler is reached only when the probe is
  * healthy (AUTH_TIMEOUT reaches it after its delay).
  */
-export function registerCommonProbeRoute(
-  app: FastifyInstance,
-  config: AppConfig,
-): void {
+export function registerCommonProbeRoute(app: FastifyInstance, config: AppConfig): void {
   const handler = async (_request: unknown, reply: FastifyReply) =>
-    reply
-      .code(200)
-      .type(commonProbeContentType)
-      .header("cache-control", "no-store")
-      .send();
+    reply.code(200).type(commonProbeContentType).header("cache-control", "no-store").send();
   // The fault middleware treats one trailing slash as the same path, so both
   // spellings must exist here or a probe would 404 while healthy and 429 while
   // faulted.
