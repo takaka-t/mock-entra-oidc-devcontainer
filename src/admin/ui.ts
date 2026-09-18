@@ -26,7 +26,7 @@ h1{margin:0 0 .5rem;font-size:1.25rem}.card{background:white;border-radius:10px;
 .state{border-left:8px solid #159957}.state.fault{border-color:#d33b32}.state-header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.5rem}.state-header h2{margin:0}.state-tools{display:flex;align-items:center;gap:.5rem;flex-shrink:0}.scenario-form{margin-top:.5rem;padding-top:.5rem;border-top:1px solid #d9e0e7}.state-current{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem 1.25rem;min-width:0;padding:.5rem .75rem;background:#f8fafc;border-radius:8px}.state-now{flex:1 1 12rem;min-width:0}.state-current .state-now .value{font-size:1.1rem}.state-grid{flex:3 1 28rem}.state-details-title{margin:0 0 .35rem;font-size:.8rem;color:#475569}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.5rem .75rem}.state-grid{grid-template-columns:repeat(auto-fit,minmax(105px,1fr))}.state-grid>div{min-width:0}.state .value,.history-value{min-width:0;overflow-wrap:anywhere;word-break:break-word}.history{display:flex;flex-wrap:wrap;align-items:baseline;gap:.25rem .5rem;margin-top:.5rem;padding-top:.5rem;border-top:1px solid #d9e0e7}.history .value{margin-top:0}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:0 .75rem;align-items:start}.contents{display:contents}
 .label{font-size:.7rem;color:#64748b}.value{font-size:1rem;font-weight:700;margin-top:.1rem}label{display:block;margin:.4rem 0 .15rem}label.required::after{content:" *";color:#b42318;font-weight:700}
 select,input,textarea,button{font:inherit;padding:.4rem .5rem;border:1px solid #bdc7d3;border-radius:6px}select,input,textarea{width:100%;box-sizing:border-box}input[type=checkbox]{width:auto;padding:0}textarea{min-height:4rem}button{cursor:pointer;font-weight:650}.primary{background:#1261a0;color:white}.danger{background:#b42318;color:white}.actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-start;margin-top:.5rem}.action{display:grid;gap:.15rem}.action-hint{margin:0;max-width:15rem;color:#64748b;font-size:.7rem}.action-hint.danger-hint{color:#b42318}.icon-button{display:grid;place-items:center;width:2.1rem;height:2.1rem;padding:0}.icon-button svg{width:1.1rem;height:1.1rem}.connection-value{display:flex;align-items:center;gap:.4rem;min-width:0}.connection-value code{min-width:0;overflow-wrap:anywhere}.connection-message{margin:.35rem 0 0;color:#64748b;font-size:.85rem}.connection-message:empty{margin:0}.hidden{display:none}.error,.warning{color:#b42318;white-space:pre-wrap}.error{margin:.5rem 0 0}.error:empty{margin:0}.warning{margin:.5rem 0}.hint{margin:.2rem 0 0;color:#64748b;font-size:.8rem}#testLogout{display:inline-block;padding:.4rem .5rem;border:1px solid #bdc7d3;border-radius:6px;text-decoration:none;color:inherit;font-weight:650}
-dialog.editor{box-sizing:border-box;width:min(42rem,calc(100% - 2rem));max-height:calc(100dvh - 2rem);margin:auto;padding:1.25rem;border:0;border-radius:12px;color:inherit;background:white;overflow:auto;box-shadow:0 12px 40px #18324b40}dialog.editor::backdrop{background:#16202a80}.editor-header{display:flex;align-items:center;justify-content:space-between;gap:1rem}.editor-header h2{margin:0;font-size:1.2rem}.editor-header button{flex-shrink:0}.editor .actions{position:sticky;bottom:-1.25rem;background:white;padding:.75rem 0}.editor .error,.notice{overflow-wrap:anywhere}.notice{position:fixed;top:1rem;right:1rem;z-index:1000;display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;width:min(24rem,calc(100% - 2rem));padding:.75rem;border:1px solid #159957;border-radius:8px;background:#edf9f1;color:#14532d;box-shadow:0 8px 24px #18324b40}#clientNotice{top:5rem}#userNotice{top:9rem}.notice.hidden{display:none}.notice p{margin:0}.notice button{flex-shrink:0}button:disabled{cursor:wait;opacity:.65}
+dialog.editor{box-sizing:border-box;width:min(42rem,calc(100% - 2rem));max-height:calc(100dvh - 2rem);margin:auto;padding:1.25rem;border:0;border-radius:12px;color:inherit;background:white;overflow:auto;box-shadow:0 12px 40px #18324b40}dialog.editor::backdrop{background:#16202a80}.editor-header{display:flex;align-items:center;justify-content:space-between;gap:1rem}.editor-header h2{margin:0;font-size:1.2rem}.editor-header button{flex-shrink:0}.editor .actions{position:sticky;bottom:-1.25rem;background:white;padding:.75rem 0}.editor .error,.notice{overflow-wrap:anywhere}.notice{position:fixed;top:1rem;right:1rem;z-index:1000;display:flex;align-items:flex-start;justify-content:space-between;gap:.75rem;width:min(24rem,calc(100% - 2rem));padding:.75rem;border:1px solid #159957;border-radius:8px;background:#edf9f1;color:#14532d;box-shadow:0 8px 24px #18324b40}#accessLogNotice{top:5rem}#clientNotice{top:9rem}#userNotice{top:13rem}.notice.hidden{display:none}.notice p{margin:0}.notice button{flex-shrink:0}button:disabled{cursor:wait;opacity:.65}
 details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;list-style:none}details.card>summary::-webkit-details-marker{display:none}details.card>summary::before{content:"";flex-shrink:0;width:.5rem;height:.5rem;margin:0 .2rem 0 .1rem;border-right:2px solid #475569;border-bottom:2px solid #475569;transform:rotate(-45deg);transition:transform .15s}details.card[open]>summary::before{transform:rotate(45deg)}details.card>summary h2{margin:0}details.card[open]>summary{margin-bottom:.5rem}.count{font-weight:400;font-size:.85rem;color:#64748b}
 .log-wrap{max-height:min(28rem,55vh);overflow:auto;margin-top:.5rem}.data-table{width:100%;border-collapse:collapse;font-size:.85rem}.data-table th,.data-table td{padding:.3rem .5rem;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}.data-table th{position:sticky;top:0;z-index:1;background:white;font-size:.7rem;font-weight:600;color:#64748b}.data-table td{min-width:0;overflow-wrap:anywhere}.data-table code{overflow-wrap:anywhere}.list-table td.ops{width:1%;white-space:nowrap}.list-table .actions{margin-top:0;flex-wrap:nowrap}.log-table th,.log-table td{white-space:nowrap}.log-table td.path{min-width:12rem;white-space:normal;overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.log-table td.scenario{min-width:14rem;white-space:normal;overflow-wrap:anywhere}.log-table tr.injected{background:#fff1f0}.status-ok{color:#159957;font-weight:700}.status-error{color:#b42318;font-weight:700}.muted{color:#64748b}
 </style></head><body><main class="wrap"><h1>Mock OIDC Provider 管理画面</h1>
@@ -45,6 +45,7 @@ details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;li
 <p id="rolloverNote" class="warning">SIGNING_KEY_ROLLOVERを有効にすると、シナリオの完了後、NORMALに戻した後、または別のシナリオを選択した後も、新しい署名鍵はJWKSで公開され続けます。シナリオを初期状態に戻すと、初期の鍵セットに戻ります。</p>
 <div class="actions"><button class="primary" type="submit">適用</button><div class="action"><button id="normal" type="button">NORMALに戻す</button><p class="action-hint">シナリオを停止します（履歴は残ります）</p></div><div class="action"><button id="reset" class="danger" type="button">シナリオを初期状態に戻す</button><p class="action-hint danger-hint">履歴と鍵の状態を初期化します</p></div></div><p id="error" class="error" aria-live="polite"></p></form></section>
 <details class="card" id="accessLogPanel"><summary><h2>アクセスログ <span id="accessLogCount" class="count"></span></h2></summary>
+<div id="accessLogNotice" class="notice hidden"><p id="accessLogMessage" role="status" aria-atomic="true"></p><button id="dismissAccessLogNotice" type="button" aria-label="アクセスログの通知を閉じる">閉じる</button></div>
 <div class="actions"><button id="refreshAccessLog" type="button">アクセスログを再読み込み</button><div class="action"><button id="clearAccessLog" class="danger" type="button">アクセスログをクリア</button><p class="action-hint danger-hint">記録済みのアクセスログをすべて削除します（シナリオの状態は変わりません）</p></div></div>
 <p class="hint">Mock IdP が受け付けた OIDC 関連リクエストの履歴です（新しい順。最新 ${accessLogCapacity} 件をメモリ上に保持し、再起動で消えます）。管理画面・管理 API へのアクセスと、query・本文・ヘッダーは記録しません。「シナリオ」列は受付時に有効だったシナリオで、実際に障害が注入された行は「適用」と赤い背景で示します。自動更新はしないため、再読み込みボタンで最新の状態を取得してください。</p>
 <p id="accessLogError" class="error" role="alert"></p>
@@ -89,16 +90,9 @@ function renderLatest(id,state){if(id<lastSettled)return false;lastSettled=id;re
 function showLatestError(id,error,visible=true){if(id<lastSettled)return;lastSettled=id;if(visible)$('error').textContent=message(error)}
 function message(error){return error instanceof Error?error.message:String(error)}
 async function refresh(showError=true){if(pendingUpdates)return;const id=++sequence;try{if(renderLatest(id,await request('/__mock/api/scenario')))$('error').textContent=''}catch(error){showLatestError(id,error,showError)}}
-let scenarioNoticeTimer=null;
-function clearScenarioNotice(){if(scenarioNoticeTimer){clearTimeout(scenarioNoticeTimer);scenarioNoticeTimer=null}$('scenarioNotice').classList.add('hidden');$('scenarioMessage').textContent=''}
-function scheduleScenarioNoticeHide(){if(scenarioNoticeTimer)clearTimeout(scenarioNoticeTimer);scenarioNoticeTimer=setTimeout(clearScenarioNotice,10000)}
-function showScenarioNotice(text){$('scenarioNotice').classList.remove('hidden');$('scenarioMessage').textContent=text;scheduleScenarioNoticeHide()}
-$('scenarioNotice').addEventListener('mouseenter',()=>{if(scenarioNoticeTimer){clearTimeout(scenarioNoticeTimer);scenarioNoticeTimer=null}});
-$('scenarioNotice').addEventListener('mouseleave',()=>{if(!$('scenarioNotice').classList.contains('hidden'))scheduleScenarioNoticeHide()});
-$('scenarioNotice').addEventListener('focusin',()=>{if(scenarioNoticeTimer){clearTimeout(scenarioNoticeTimer);scenarioNoticeTimer=null}});
-$('scenarioNotice').addEventListener('focusout',()=>{if(!$('scenarioNotice').classList.contains('hidden'))scheduleScenarioNoticeHide()});
-$('dismissScenarioNotice').onclick=()=>{clearScenarioNotice();$('scenario').focus({preventScroll:true})};
-async function update(url,options,successMessage){pendingUpdates++;let id=++sequence;clearScenarioNotice();try{await request(url,options);id=++sequence;if(renderLatest(id,await request('/__mock/api/scenario'))){$('error').textContent='';if(successMessage)showScenarioNotice(successMessage)}}catch(error){showLatestError(id,error)}finally{pendingUpdates--}}
+function createNotice(kind,focusTarget){const cap=kind[0].toUpperCase()+kind.slice(1),notice=$(kind+'Notice'),message=$(kind+'Message'),dismiss=$('dismiss'+cap+'Notice');let timer=null;function clear(){if(timer){clearTimeout(timer);timer=null}notice.classList.add('hidden');message.textContent=''}function schedule(){if(timer)clearTimeout(timer);timer=setTimeout(clear,10000)}function show(text){notice.classList.remove('hidden');message.textContent=text;schedule()}notice.addEventListener('mouseenter',()=>{if(timer){clearTimeout(timer);timer=null}});notice.addEventListener('mouseleave',()=>{if(!notice.classList.contains('hidden'))schedule()});notice.addEventListener('focusin',()=>{if(timer){clearTimeout(timer);timer=null}});notice.addEventListener('focusout',()=>{if(!notice.classList.contains('hidden'))schedule()});dismiss.onclick=()=>{clear();focusTarget().focus({preventScroll:true})};return{clear,show}}
+const scenarioNotice=createNotice('scenario',()=>$('scenario'));
+async function update(url,options,successMessage){pendingUpdates++;let id=++sequence;scenarioNotice.clear();try{await request(url,options);id=++sequence;if(renderLatest(id,await request('/__mock/api/scenario'))){$('error').textContent='';if(successMessage)scenarioNotice.show(successMessage)}}catch(error){showLatestError(id,error)}finally{pendingUpdates--}}
 $('scenario').onchange=fields;$('mode').onchange=fields;$('form').onsubmit=e=>{e.preventDefault();const scenario=$('scenario').value,info=metadata[scenario];let body={scenario};if(info.supportsMode){body.mode=$('mode').value;if(body.mode==='LIMITED')body.failureCount=Number($('failureCount').value);if(info.parameterKind==='timeout')body.parameters={delayMs:Number($('delayMs').value||defaults.delayMs)};if(info.parameterKind==='retryAfterRequired')body.parameters={retryAfterSeconds:Number($('retryAfterRequired').value||defaults.retryAfterSeconds)};if(info.parameterKind==='retryAfterOptional'&&$('retryAfterOptional').value)body.parameters={retryAfterSeconds:Number($('retryAfterOptional').value)};if(info.parameterKind==='token400')body.parameters={error:$('errorCode').value||defaults.tokenError,...($('errorDescription').value?{errorDescription:$('errorDescription').value}:{})}}void update('/__mock/api/scenario',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)},'シナリオ「'+scenario+'」を適用しました。')};
 $('normal').onclick=()=>void update('/__mock/api/scenario',{method:'DELETE'},'シナリオをNORMALに戻しました。');$('reset').onclick=()=>void update('/__mock/api/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'},'シナリオを初期状態に戻しました。');$('refresh').onclick=()=>void refresh();fields();void refresh();
 const endpointLabels={discovery:'Discovery',authorization:'認可',interaction:'サインイン画面',token:'トークン',jwks:'JWKS',logout:'ログアウト','connectivity-probe':'接続性プローブ',other:'その他'};
@@ -109,8 +103,9 @@ function describeScenario(entry){if(entry.fault){const fault=entry.fault,effect=
 function cell(text,className,title){const td=document.createElement('td');td.textContent=text;if(className)td.className=className;if(title)td.title=title;return td}
 function renderAccessLog(entries){const root=$('accessLogRows');root.replaceChildren();$('accessLogCount').textContent='（'+entries.length+' 件）';if(!entries.length){const row=document.createElement('tr'),empty=document.createElement('td');empty.colSpan=7;empty.textContent='アクセスログはありません。';row.append(empty);root.append(row);return}for(const entry of entries){const row=document.createElement('tr');if(entry.fault)row.className='injected';const aborted=entry.statusCode===null;row.append(cell(formatTime(entry.receivedAt),'',entry.receivedAt),cell(entry.method),cell(endpointLabels[entry.endpoint]??entry.endpoint),cell(entry.path,'path'),cell(aborted?'中断':String(entry.statusCode),aborted||entry.statusCode>=400?'status-error':'status-ok',aborted?'応答を返す前にクライアントが切断しました':''),cell(entry.durationMs+' ms'),cell(describeScenario(entry),entry.fault?'scenario':'scenario muted'));root.append(row)}}
 async function loadAccessLog(){const id=++accessLogSequence;try{const entries=await request('/__mock/api/access-log');if(id!==accessLogSequence)return;renderAccessLog(entries);$('accessLogError').textContent=''}catch(error){if(id!==accessLogSequence)return;$('accessLogError').textContent='アクセスログを読み込めませんでした。 '+message(error);revealPanel('accessLogPanel')}}
+const accessLogNotice=createNotice('accessLog',()=>$('refreshAccessLog'));
 $('refreshAccessLog').onclick=()=>void loadAccessLog();
-$('clearAccessLog').onclick=async()=>{if(!confirm('アクセスログをクリアしますか？'))return;try{await request('/__mock/api/access-log',{method:'DELETE'})}catch(error){$('accessLogError').textContent='アクセスログをクリアできませんでした。 '+message(error);revealPanel('accessLogPanel');return}await loadAccessLog()};
+$('clearAccessLog').onclick=async()=>{if(!confirm('アクセスログをクリアしますか？'))return;try{await request('/__mock/api/access-log',{method:'DELETE'})}catch(error){$('accessLogError').textContent='アクセスログをクリアできませんでした。 '+message(error);revealPanel('accessLogPanel');return}await loadAccessLog();accessLogNotice.show('アクセスログをクリアしました。')};
 void loadAccessLog();
 // Collapsed panels are a per-browser convenience; storage may be unavailable, so every access is best effort.
 const panelStorageKey='mock-idp-admin-panels';
@@ -128,19 +123,17 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     editorError = $(errorId),
     list = $(kind + 's'),
     listError = $(kind + 'Error'),
-    notice = $(kind + 'Notice'),
-    noticeMessage = $(kind + 'Message'),
     retry = $('retry' + cap + 's'),
     newButton = $('new' + cap),
-    url = '/__mock/api/' + kind + 's';
+    url = '/__mock/api/' + kind + 's',
+    notice = createNotice(kind, () => newButton);
   let editingId = null,
     initialValues = '',
     opener = null,
     busy = false,
     disabledBeforeSave = [],
     loadSequence = 0,
-    savedRefreshPending = false,
-    noticeTimer = null;
+    savedRefreshPending = false;
   const inputs = () => [...form.querySelectorAll('input,select,textarea')];
   const snapshot = () =>
     JSON.stringify(
@@ -152,38 +145,8 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     [...list.querySelectorAll('button[data-edit-id]')].find(
       (button) => button.dataset.editId === id,
     );
-  function clearNotice() {
-    if (noticeTimer) {
-      clearTimeout(noticeTimer);
-      noticeTimer = null;
-    }
-    notice.classList.add('hidden');
-    noticeMessage.textContent = '';
-  }
-  function scheduleNoticeHide() {
-    if (noticeTimer) clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(clearNotice, 10000);
-  }
-  notice.addEventListener('mouseenter', () => {
-    if (noticeTimer) {
-      clearTimeout(noticeTimer);
-      noticeTimer = null;
-    }
-  });
-  notice.addEventListener('mouseleave', () => {
-    if (!notice.classList.contains('hidden')) scheduleNoticeHide();
-  });
-  notice.addEventListener('focusin', () => {
-    if (noticeTimer) {
-      clearTimeout(noticeTimer);
-      noticeTimer = null;
-    }
-  });
-  notice.addEventListener('focusout', () => {
-    if (!notice.classList.contains('hidden')) scheduleNoticeHide();
-  });
   function beginChange() {
-    clearNotice();
+    notice.clear();
     listError.textContent = '';
     retry.classList.add('hidden');
     savedRefreshPending = false;
@@ -228,12 +191,8 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
   });
   $('cancel' + cap).onclick = cancel;
   $('close' + cap).onclick = cancel;
-  $('dismiss' + cap + 'Notice').onclick = () => {
-    clearNotice();
-    newButton.focus({ preventScroll: true });
-  };
   function open(id) {
-    clearNotice();
+    notice.clear();
     editingId = id;
     opener = document.activeElement;
     editorError.textContent = '';
@@ -300,18 +259,12 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     }
     setBusy(false);
     close();
-    notice.classList.remove('hidden');
-    noticeMessage.textContent =
-      label +
-      '「' +
-      describeItem(item) +
-      '」を' +
-      (isUpdate ? '更新' : '登録') +
-      'しました。';
-    scheduleNoticeHide();
+    notice.show(
+      label + '「' + describeItem(item) + '」を' + (isUpdate ? '更新' : '登録') + 'しました。',
+    );
     await load(true);
   }
-  return { open, save, load, beginChange };
+  return { open, save, load, beginChange, notice: notice.show };
 }
 const clientEditor = createEditor(
   'client',
@@ -334,17 +287,17 @@ function openClient(client){$('clientId').value=client?.clientId??'';$('clientId
 // Lists show only what identifies an item; every field stays editable in the dialog.
 function listTable(root,headers){const table=document.createElement('table');table.className='data-table list-table';const head=document.createElement('thead'),headRow=document.createElement('tr');for(const text of headers){const th=document.createElement('th');th.scope='col';th.textContent=text;headRow.append(th)}head.append(headRow);const body=document.createElement('tbody');table.append(head,body);root.replaceChildren(table);return body}
 function rowActions(editId,onEdit,onDelete){const actions=document.createElement('div');actions.className='actions';const edit=document.createElement('button');edit.type='button';edit.textContent='編集';edit.dataset.editId=editId;edit.onclick=onEdit;const del=document.createElement('button');del.type='button';del.className='danger';del.textContent='削除';del.onclick=onDelete;actions.append(edit,del);const td=document.createElement('td');td.className='ops';td.append(actions);return td}
-function renderClients(items){const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri;uris.append(line)}row.append(id,cell(client.clientType),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients()}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
+function renderClients(items){const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri;uris.append(line)}row.append(id,cell(client.clientType),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients();clientEditor.notice('OIDC クライアント「'+client.clientId+'」を削除しました。')}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
 async function loadClients(){await clientEditor.load()}
 $('newClient').onclick=()=>openClient(null);$('clientType').onchange=clientTypeFields;
 $('clientForm').onsubmit=async event=>{event.preventDefault();const type=$('clientType').value,payload={clientType:type,...(type==='CONFIDENTIAL'?{clientSecret:$('clientSecret').value,tokenEndpointAuthMethod:$('authMethod').value}:{tokenEndpointAuthMethod:'none'}),redirectUris:lines($('redirectUris').value),postLogoutRedirectUris:lines($('logoutUris').value),accessTokenAudience:$('audience').value,accessTokenScope:$('scope').value,emailOptionalClaim:$('emailOptionalClaim').checked};await clientEditor.save({clientId:$('clientId').value,...payload})};
-$('resetClients').onclick=async()=>{if(!confirm('すべての OIDC クライアントを初期状態に戻しますか？'))return;clientEditor.beginChange();try{renderClients(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent=''}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
+$('resetClients').onclick=async()=>{if(!confirm('すべての OIDC クライアントを初期状態に戻しますか？'))return;clientEditor.beginChange();try{renderClients(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent='';clientEditor.notice('OIDC クライアントを初期状態に戻しました。')}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
 function newUuid(){if(crypto.randomUUID)return crypto.randomUUID();const b=crypto.getRandomValues(new Uint8Array(16));b[6]=b[6]&15|64;b[8]=b[8]&63|128;const h=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20)}
 function openUser(user){$('userSub').value=user?.sub??newUuid();$('userSub').disabled=!!user;$('userOid').value=user?.oid??newUuid();$('userName').value=user?.name??'';$('userPreferredUsername').value=user?.preferred_username??'';$('userMail').value=user?.mail??'';$('userGroups').value=(user?.groups??[]).join('\\n');userEditor.open(user?.sub??null)}
-function renderUsers(items){const root=$('users');$('userCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みのテストユーザーはありません。';return}const body=listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作']);for(const user of items){const row=document.createElement('tr');row.append(cell(user.name),cell(user.preferred_username),cell(user.groups.join(', ')||'なし',user.groups.length?'':'muted'),rowActions(user.sub,()=>openUser(user),async()=>{if(!confirm('テストユーザー（ユーザー ID（sub）：'+user.sub+'）を削除しますか？'))return;userEditor.beginChange();try{await request('/__mock/api/users/'+encodeURIComponent(user.sub),{method:'DELETE'});await loadUsers()}catch(error){$('userError').textContent=message(error)}}));body.append(row)}}
+function renderUsers(items){const root=$('users');$('userCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みのテストユーザーはありません。';return}const body=listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作']);for(const user of items){const row=document.createElement('tr');row.append(cell(user.name),cell(user.preferred_username),cell(user.groups.join(', ')||'なし',user.groups.length?'':'muted'),rowActions(user.sub,()=>openUser(user),async()=>{if(!confirm('テストユーザー（ユーザー ID（sub）：'+user.sub+'）を削除しますか？'))return;userEditor.beginChange();try{await request('/__mock/api/users/'+encodeURIComponent(user.sub),{method:'DELETE'});await loadUsers();userEditor.notice('テストユーザー「'+user.name+'（'+user.sub+'）」を削除しました。')}catch(error){$('userError').textContent=message(error)}}));body.append(row)}}
 async function loadUsers(){await userEditor.load()}
 $('newUser').onclick=()=>openUser(null);
 $('userForm').onsubmit=async event=>{event.preventDefault();const payload={oid:$('userOid').value.trim(),name:$('userName').value,preferred_username:$('userPreferredUsername').value,mail:$('userMail').value.trim(),groups:lines($('userGroups').value)},sub=$('userSub').value.trim();await userEditor.save({...(sub?{sub}:{}),...payload})};
-$('resetUsers').onclick=async()=>{if(!confirm('すべてのテストユーザーを初期状態に戻しますか？'))return;userEditor.beginChange();try{renderUsers(await request('/__mock/api/users/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('userError').textContent=''}catch(error){$('userError').textContent=message(error)}};void loadUsers();
+$('resetUsers').onclick=async()=>{if(!confirm('すべてのテストユーザーを初期状態に戻しますか？'))return;userEditor.beginChange();try{renderUsers(await request('/__mock/api/users/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('userError').textContent='';userEditor.notice('テストユーザーを初期状態に戻しました。')}catch(error){$('userError').textContent=message(error)}};void loadUsers();
 </script></body></html>`;
 }
