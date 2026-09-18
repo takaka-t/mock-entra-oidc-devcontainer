@@ -121,6 +121,7 @@ describe("OIDC provider", () => {
       clientId?: string;
       clientSecret?: string;
       redirectUri?: string;
+      accept?: string;
     } = {},
   ) {
     const clientId = options.clientId ?? "mock-public-client";
@@ -137,6 +138,7 @@ describe("OIDC provider", () => {
       headers: {
         host,
         "content-type": "application/x-www-form-urlencoded",
+        ...(options.accept !== undefined ? { accept: options.accept } : {}),
         ...(options.clientSecret !== undefined
           ? {
               authorization: `Basic ${Buffer.from(`${clientId}:${options.clientSecret}`).toString("base64")}`,
@@ -323,6 +325,44 @@ describe("OIDC provider", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_grant" });
+  });
+
+  /**
+   * oidc-provider error handler content-negotiates on Accept and renders an
+   * HTML page for anything that prefers text/html. msal4j sets no Accept of
+   * its own, so its JDK HttpURLConnection sends a browser-shaped default and
+   * used to get that page back instead of JSON. See renderError in
+   * src/oidc/provider.ts.
+   */
+  const jdkDefaultAccept = "text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2";
+
+  it.each([
+    ["the JDK HttpURLConnection default Accept", jdkDefaultAccept],
+    ["an explicit text/html Accept", "text/html"],
+  ])("answers a token error with JSON for %s", async (_label, accept) => {
+    const response = await exchange("unknown-authorization-code", randomBytes(32).toString("base64url"), { accept });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers["content-type"]).toMatch(/^application\/json/);
+    expect(response.json()).toMatchObject({ error: "invalid_grant" });
+    expect(response.body).not.toContain("<html");
+  });
+
+  it("still renders an HTML page for an authorization error a browser would see", async () => {
+    const query = new URLSearchParams({
+      client_id: "unknown-client",
+      redirect_uri: "http://localhost:3000/callback",
+      response_type: "code",
+      scope: "openid",
+    });
+    const response = await context.app.inject({
+      url: `${authorizePath}?${query}`,
+      headers: { host, accept: jdkDefaultAccept },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers["content-type"]).toMatch(/^text\/html/);
+    expect(response.body).toContain("invalid_client");
   });
 
   it("rejects a wrong confidential client secret without consuming the code", async () => {

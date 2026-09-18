@@ -14,7 +14,7 @@ import { loadSigningKeys } from "./oidc/keys.js";
 import { SigningKeyRolloverState } from "./oidc/key-rollover.js";
 import { applyProviderClient, createProvider, removeProviderClient, validateProviderClient } from "./oidc/provider.js";
 import { matchesCommonProbePath, registerCommonProbeRoute } from "./oidc/common-probe.js";
-import { oidcInternalRoutes } from "./oidc/routes.js";
+import { matchesRouteOrSubPath, oidcInternalRoutes } from "./oidc/routes.js";
 import { resolveCorsPathnames, resolveHttpFaultEndpoints } from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 import { MockUserStore } from "./users/store.js";
@@ -43,7 +43,7 @@ export interface BuildAppOptions {
 const legacyOidcRouteNames: readonly string[] = Object.values(oidcInternalRoutes);
 
 function isLegacyOidcRoutePath(remainder: string): boolean {
-  return legacyOidcRouteNames.some((route) => remainder === route || remainder.startsWith(`${route}/`));
+  return legacyOidcRouteNames.some((route) => matchesRouteOrSubPath(remainder, route));
 }
 
 function issuerScopedPath(pathname: string, issuerPath: string): boolean {
@@ -87,7 +87,7 @@ function oidcMounts(config: AppConfig): readonly OidcMount[] {
 
 function matchOidcMount(pathname: string, config: AppConfig): OidcMount | null {
   for (const mount of oidcMounts(config)) {
-    if (pathname === mount.external || pathname.startsWith(`${mount.external}/`)) return mount;
+    if (matchesRouteOrSubPath(pathname, mount.external)) return mount;
   }
   return null;
 }

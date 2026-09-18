@@ -3,11 +3,13 @@ import Provider, {
   interactionPolicy,
   type Client,
   type Configuration,
+  type ErrorOut,
   type KoaContextWithOIDC,
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
 import { decodeJwt, decodeProtectedHeader, SignJWT, type JWTHeaderParameters } from "jose";
 import type { AppConfig } from "../config.js";
+import { escapeHtml } from "../admin/html.js";
 import type { OidcClientConfig } from "../clients/types.js";
 import { authorizationFaultDefinitions } from "../faults/authorization-fault.js";
 import { mutateTokenResponse } from "../faults/token-generator.js";
@@ -18,7 +20,7 @@ import type { MockUser } from "../users/types.js";
 import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
-import { oidcInternalRoutes } from "./routes.js";
+import { browserFacingRoutePath, oidcInternalRoutes } from "./routes.js";
 
 type UserClaims = Omit<MockUser, "groups" | "mail"> & {
   tid: string;
@@ -102,6 +104,18 @@ async function patchIdToken(
   }
   const header = decodeProtectedHeader(idToken) as JWTHeaderParameters;
   return new SignJWT(payload).setProtectedHeader(header).sign(keys.normal.privateKey);
+}
+
+/**
+ * The browser-facing counterpart of renderError below, styled like the
+ * sign-in interaction page rather than oidc-provider default page.
+ */
+function errorPageHtml(out: ErrorOut): string {
+  const rows = Object.entries(out)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`)
+    .join("");
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>Mock Entra ID エラー</title><style>body{font-family:system-ui;background:#f4f6f8;padding:3rem}.box{max-width:420px;margin:auto;background:white;padding:2rem;border-radius:12px}dt{font-weight:600;margin-top:.8rem;color:#666;font-size:.85rem}dd{margin:.2rem 0 0;word-break:break-word}</style></head><body><main class="box"><h1>Mock Entra ID エラー</h1><dl>${rows}</dl></main></body></html>`;
 }
 
 export function createProvider(
@@ -239,6 +253,26 @@ export function createProvider(
       },
     },
     routes: oidcInternalRoutes,
+    /**
+     * oidc-provider error handler picks the error response format by content
+     * negotiation (`ctx.accepts("json", "html")` in shared/error_handler.js)
+     * and hands anything preferring HTML to renderError -- the token endpoint
+     * included. msal4j default HttpClient is a JDK HttpURLConnection, which
+     * sends its own `Accept: text/html, image/gif, image/jpeg, ...` when the
+     * caller sets none, so every token error arrived as an HTML page and
+     * msal4j failed to parse it as JSON. Entra ID answers its machine
+     * endpoints with JSON whatever the client accepts, so HTML is kept only
+     * for the pages a browser actually renders.
+     */
+    renderError: (ctx, out) => {
+      if (!browserFacingRoutePath(ctx.path)) {
+        ctx.type = "application/json; charset=utf-8";
+        ctx.body = out;
+        return;
+      }
+      ctx.type = "text/html; charset=utf-8";
+      ctx.body = errorPageHtml(out);
+    },
     features: {
       devInteractions: { enabled: false },
       userinfo: { enabled: false },

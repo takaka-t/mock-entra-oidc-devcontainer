@@ -27,3 +27,24 @@ export const oidcInternalRoutes = {
   jwks: "/jwks",
   end_session: "/logout",
 } as const;
+
+/**
+ * Whether a path is a route's own path, i.e. the route itself or one of the
+ * sub-paths oidc-provider mounts below it (`/authorize/:uid`,
+ * `/logout/confirm`, `/logout/success`). Used for the internal route names
+ * below and, in app.ts, for their external counterparts, which end in the
+ * same segment and so have the same sub-path shape.
+ */
+export function matchesRouteOrSubPath(path: string, route: string): boolean {
+  return path === route || path.startsWith(`${route}/`);
+}
+
+/**
+ * Error responses on these routes are rendered for a browser; every other
+ * internal route belongs to a machine client. See renderError in provider.ts.
+ */
+const browserFacingRoutes: readonly string[] = [oidcInternalRoutes.authorization, oidcInternalRoutes.end_session];
+
+export function browserFacingRoutePath(path: string): boolean {
+  return browserFacingRoutes.some((route) => matchesRouteOrSubPath(path, route));
+}
