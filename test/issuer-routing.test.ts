@@ -219,7 +219,7 @@ describe("issuer routing and origin enforcement", () => {
       payload: "grant_type=authorization_code&code=invalid",
     });
     expect(throttled.statusCode).toBe(429);
-    expect(throttled.headers["retry-after"]).toBe("60");
+    expect(throttled.headers["retry-after"]).toBeUndefined();
 
     context.store.set({
       scenario: "DISCOVERY_429",
@@ -231,7 +231,7 @@ describe("issuer routing and origin enforcement", () => {
       headers: { host },
     });
     expect(discoveryThrottled.statusCode).toBe(429);
-    expect(discoveryThrottled.headers["retry-after"]).toBe("60");
+    expect(discoveryThrottled.headers["retry-after"]).toBeUndefined();
 
     const verifier = randomBytes(32).toString("base64url");
     context.store.set({

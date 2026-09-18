@@ -346,14 +346,16 @@ describe("HTTP fault middleware", () => {
     },
   );
 
-  it.each(endpointCases)("defaults $throttle Retry-After to 60 seconds", ({ throttle, method, url }) => {
+  it.each(endpointCases)("omits Retry-After from $throttle when not configured", ({ throttle, method, url }) => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: throttle, mode: "CONTINUOUS" });
     const res = response();
 
     faultMiddleware(store, logger())(request(method, url), res.response, vi.fn());
 
-    expect(res.headers.get("retry-after")).toBe("60");
+    expect(res.response.statusCode).toBe(429);
+    expect(res.headers.has("retry-after")).toBe(false);
+    expect(res.headers.has("access-control-expose-headers")).toBe(false);
   });
 
   it.each(endpointCases)(

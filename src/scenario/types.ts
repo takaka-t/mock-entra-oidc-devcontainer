@@ -83,12 +83,9 @@ export interface NormalScenarioInput {
 }
 
 type TimeoutScenarioName = "AUTH_TIMEOUT" | "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
-type RetryAfterRequiredScenarioName = "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429";
-type RetryAfterOptionalScenarioName = "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
-type ParameterlessScenarioName = Exclude<
-  FaultScenarioName,
-  TimeoutScenarioName | "TOKEN_400" | RetryAfterRequiredScenarioName | RetryAfterOptionalScenarioName
->;
+type RetryAfterScenarioName =
+  "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429" | "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
+type ParameterlessScenarioName = Exclude<FaultScenarioName, TimeoutScenarioName | "TOKEN_400" | RetryAfterScenarioName>;
 
 interface NoScenarioParameters {
   delayMs?: never;
@@ -132,7 +129,7 @@ type ScenarioSpecificInput =
       parameters?: Token400ScenarioParameters;
     }
   | {
-      scenario: RetryAfterRequiredScenarioName | RetryAfterOptionalScenarioName;
+      scenario: RetryAfterScenarioName;
       parameters?: RetryAfterScenarioParameters;
     };
 

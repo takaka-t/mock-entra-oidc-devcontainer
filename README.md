@@ -500,7 +500,7 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す                                                                                                             |
 | `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す                                                                                                                  |
 | `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                                                                                                                             |
-| `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と`Retry-After`を本文なしで返す                                                                                                                        |
+| `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と任意の`Retry-After`を本文なしで返す                                                                                                                  |
 | `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す                                                                                                                  |
 | `AUTH_TIMEOUT`                 | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す                                                                                                                             |
 | `NO_GROUPS`                    | ID/access token claim生成 | `groups` claimを（空配列ではなく）完全に削除する。ID Token・Access Tokenの両方が対象                                                                           |
@@ -512,14 +512,14 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `UNKNOWN_KID`                  | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                                                                                                                           |
 | `SIGNING_KEY_ROLLOVER`         | Token/JWKS                | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開                                                                                                                       |
 | `TOKEN_400`                    | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す。`error`未指定時は`invalid_grant`を既定値とし、`error_description`は`errorDescription`パラメータを指定した場合だけ含める |
-| `TOKEN_429`                    | `POST` Token              | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `TOKEN_429`                    | `POST` Token              | HTTP 429と任意の`Retry-After`を返す                                                                                                                            |
 | `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
 | `TOKEN_TIMEOUT`                | `POST` Token              | 指定時間遅延してから通常処理を続行                                                                                                                             |
 | `JWKS_INVALID`                 | `GET` JWKS                | HTTP 200で、`keys`に1件だけ含むがRSA鍵として必須の`n`/`e`を欠いた不完全なkeyオブジェクトを返す（配列自体は空にしない）                                         |
-| `JWKS_429`                     | `GET` JWKS                | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `JWKS_429`                     | `GET` JWKS                | HTTP 429と任意の`Retry-After`を返す                                                                                                                            |
 | `JWKS_500`                     | `GET` JWKS                | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
 | `JWKS_TIMEOUT`                 | `GET` JWKS                | 指定時間遅延してから通常処理を続行                                                                                                                             |
-| `DISCOVERY_429`                | `GET` Discovery           | HTTP 429と`Retry-After`を返す                                                                                                                                  |
+| `DISCOVERY_429`                | `GET` Discovery           | HTTP 429と任意の`Retry-After`を返す                                                                                                                            |
 | `DISCOVERY_500`                | `GET` Discovery           | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
 | `DISCOVERY_TIMEOUT`            | `GET` Discovery           | 指定時間遅延してから通常処理を続行                                                                                                                             |
 
@@ -538,13 +538,12 @@ AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害で�
 
 ### Parametersと回復試験
 
-- `AUTH_429`, `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`の`retryAfterSeconds`は1以上のsafe integerで、未指定時は60秒です。
-- `AUTH_500`, `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`でも`retryAfterSeconds`を任意指定できます。指定した場合だけ`Retry-After`を返します。
+- `AUTH_429`, `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`, `AUTH_500`, `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`の`retryAfterSeconds`は1以上のsafe integerで任意です。指定した場合だけ`Retry-After`を返し、未指定時は`Retry-After`なしで応答します。
 - `AUTH_TIMEOUT`, `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT`の`delayMs`は1〜300,000msで、未指定時は30,000msです。
 - Connectivity Probe Faultは`HEAD`、Token Faultは`POST`、JWKS/Discovery Faultは`GET`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`はLIMITED countを消費しません。Authorization endpointはHTTP faultの対象外です。
-- Mock自身は待機や再試行を行いません。429では`Retry-After`が終わるまで再取得せず、5xxではheaderがあれば従い、なければ指数バックオフするクライアント動作を試験してください。Timeoutでも即時再試行を避けてください。
+- Mock自身は待機や再試行を行いません。429と5xxのどちらも、`Retry-After`があればそれが終わるまで再取得せず、なければ指数バックオフするクライアント動作を試験してください。Timeoutでも即時再試行を避けてください。
 
-Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、429の既定値は60秒です。特定のAADSTS番号には依存しません。
+Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、429と5xxでは`Retry-After`があればそれを尊重するクライアント動作を想定しています。特定のAADSTS番号には依存しません。
 
 `prompt=none`で`login_required`または`interaction_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive authenticationへ切り替えてください。[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は検証済みredirect URIだけへ返します。
 

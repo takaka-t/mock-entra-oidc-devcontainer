@@ -206,6 +206,7 @@ describe("official Entra resilience scenarios", () => {
     context.store.set({
       scenario,
       mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 60 },
     });
     const response = await requestEndpoint(endpoint, "http://localhost:3000");
 
@@ -229,6 +230,15 @@ describe("official Entra resilience scenarios", () => {
       status: "ACTIVE",
       triggeredCount: 1,
     });
+
+    context.store.set({
+      scenario,
+      mode: "CONTINUOUS",
+    });
+    const withoutRetryAfter = await requestEndpoint(endpoint);
+    expect(withoutRetryAfter.statusCode).toBe(429);
+    expect(withoutRetryAfter.headers["retry-after"]).toBeUndefined();
+    expect(withoutRetryAfter.headers["access-control-expose-headers"]).toBeUndefined();
   });
 
   it.each([

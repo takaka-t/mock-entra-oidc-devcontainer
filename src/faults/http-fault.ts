@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { FastifyBaseLogger } from "fastify";
 import {
   defaultDelayMs,
-  defaultRetryAfterSeconds,
   defaultTokenError,
   scenarios,
   type HttpFaultEndpoint,
@@ -191,6 +190,13 @@ export function createHttpFaultMiddleware(
         res.statusCode = statusCode;
         res.end(bodyless ? undefined : JSON.stringify(body));
       };
+      /**
+       * Only the 429/500 scenarios accept retryAfterSeconds, and the header is
+       * emitted solely when it was configured.
+       */
+      if (decision.parameters.retryAfterSeconds !== undefined) {
+        setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds);
+      }
 
       switch (effect) {
         case "http-400":
@@ -202,16 +208,12 @@ export function createHttpFaultMiddleware(
           });
           return;
         case "http-429":
-          setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds ?? defaultRetryAfterSeconds);
           respond(429, {
             error: "temporarily_unavailable",
             error_description: `Injected ${decision.scenario} fault`,
           });
           return;
         case "http-500":
-          if (decision.parameters.retryAfterSeconds !== undefined) {
-            setRetryAfterHeaders(res, decision.parameters.retryAfterSeconds);
-          }
           respond(500, {
             error: "server_error",
             error_description: `Injected ${decision.scenario} fault`,

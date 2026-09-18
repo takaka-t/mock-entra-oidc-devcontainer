@@ -1,7 +1,7 @@
 import type { AppConfig } from "../config.js";
 import type { FaultEndpoint, ScenarioName } from "./types.js";
 
-export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfterRequired" | "retryAfterOptional";
+export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfter";
 
 export interface ScenarioDefinition {
   endpoint: FaultEndpoint | null;
@@ -49,12 +49,12 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
   },
   AUTH_429: {
     endpoint: "authorization-http",
-    parameterKind: "retryAfterRequired",
+    parameterKind: "retryAfter",
     effect: "http-429",
   },
   AUTH_500: {
     endpoint: "authorization-http",
-    parameterKind: "retryAfterOptional",
+    parameterKind: "retryAfter",
     effect: "http-500",
   },
   AUTH_TIMEOUT: {
@@ -109,12 +109,12 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
   },
   TOKEN_429: {
     endpoint: "token",
-    parameterKind: "retryAfterRequired",
+    parameterKind: "retryAfter",
     effect: "http-429",
   },
   TOKEN_500: {
     endpoint: "token",
-    parameterKind: "retryAfterOptional",
+    parameterKind: "retryAfter",
     effect: "http-500",
   },
   TOKEN_TIMEOUT: {
@@ -129,12 +129,12 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
   },
   JWKS_429: {
     endpoint: "jwks",
-    parameterKind: "retryAfterRequired",
+    parameterKind: "retryAfter",
     effect: "http-429",
   },
   JWKS_500: {
     endpoint: "jwks",
-    parameterKind: "retryAfterOptional",
+    parameterKind: "retryAfter",
     effect: "http-500",
   },
   JWKS_TIMEOUT: {
@@ -144,12 +144,12 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
   },
   DISCOVERY_429: {
     endpoint: "discovery",
-    parameterKind: "retryAfterRequired",
+    parameterKind: "retryAfter",
     effect: "http-429",
   },
   DISCOVERY_500: {
     endpoint: "discovery",
-    parameterKind: "retryAfterOptional",
+    parameterKind: "retryAfter",
     effect: "http-500",
   },
   DISCOVERY_TIMEOUT: {
@@ -162,7 +162,6 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
 export const maxDelayMs = 300_000;
 export const defaultDelayMs = 30_000;
 export const defaultTokenError = "invalid_grant";
-export const defaultRetryAfterSeconds = 60;
 
 export interface ScenarioUiMetadata {
   supportsMode: boolean;
@@ -185,7 +184,6 @@ export const scenarioUiDefaults = {
   delayMs: defaultDelayMs,
   maxDelayMs,
   tokenError: defaultTokenError,
-  retryAfterSeconds: defaultRetryAfterSeconds,
 } as const;
 
 export type HttpFaultEndpoint = Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">;

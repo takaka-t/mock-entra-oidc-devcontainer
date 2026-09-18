@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defaultDelayMs, defaultRetryAfterSeconds, defaultTokenError, maxDelayMs, scenarios } from "./registry.js";
+import { defaultDelayMs, defaultTokenError, maxDelayMs, scenarios } from "./registry.js";
 import { scenarioNames, type ScenarioParameters, type SetScenarioInput } from "./types.js";
 
 const baseSchema = z
@@ -45,14 +45,10 @@ export function parseScenarioInput(value: unknown): SetScenarioInput {
       error: result.error,
       ...(result.errorDescription === undefined ? {} : { errorDescription: result.errorDescription }),
     };
-  } else if (definition.parameterKind === "retryAfterRequired" || definition.parameterKind === "retryAfterOptional") {
-    const retryAfterSeconds = z.number().int().positive().safe();
+  } else if (definition.parameterKind === "retryAfter") {
     const result = z
       .object({
-        retryAfterSeconds:
-          definition.parameterKind === "retryAfterRequired"
-            ? retryAfterSeconds.default(defaultRetryAfterSeconds)
-            : retryAfterSeconds.optional(),
+        retryAfterSeconds: z.number().int().positive().safe().optional(),
       })
       .strict()
       .parse(parsed.parameters ?? {});

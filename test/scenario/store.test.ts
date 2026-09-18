@@ -3,8 +3,16 @@ import { InMemoryScenarioStore } from "../../src/scenario/store.js";
 import { parseScenarioInput } from "../../src/scenario/validation.js";
 
 const timeoutScenarios = ["AUTH_TIMEOUT", "TOKEN_TIMEOUT", "JWKS_TIMEOUT", "DISCOVERY_TIMEOUT"] as const;
-const retryAfterRequiredScenarios = ["AUTH_429", "TOKEN_429", "JWKS_429", "DISCOVERY_429"] as const;
-const retryAfterOptionalScenarios = ["AUTH_500", "TOKEN_500", "JWKS_500", "DISCOVERY_500"] as const;
+const retryAfterScenarios = [
+  "AUTH_429",
+  "TOKEN_429",
+  "JWKS_429",
+  "DISCOVERY_429",
+  "AUTH_500",
+  "TOKEN_500",
+  "JWKS_500",
+  "DISCOVERY_500",
+] as const;
 
 describe("InMemoryScenarioStore", () => {
   it("atomically consumes limited failures and returns to normal", async () => {
@@ -87,10 +95,15 @@ describe("InMemoryScenarioStore", () => {
     ).toThrow();
   });
 
-  it.each(retryAfterRequiredScenarios)("normalizes required Retry-After parameters for %s", (scenario) => {
-    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({
-      parameters: { retryAfterSeconds: 60 },
-    });
+  it.each(retryAfterScenarios)("normalizes optional Retry-After parameters for %s", (scenario) => {
+    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({ parameters: {} });
+    expect(
+      parseScenarioInput({
+        scenario,
+        mode: "CONTINUOUS",
+        parameters: { retryAfterSeconds: 30 },
+      }),
+    ).toMatchObject({ parameters: { retryAfterSeconds: 30 } });
     expect(
       parseScenarioInput({
         scenario,
@@ -101,21 +114,10 @@ describe("InMemoryScenarioStore", () => {
     ).toMatchObject({ parameters: { retryAfterSeconds: 15 } });
   });
 
-  it.each(retryAfterOptionalScenarios)("normalizes optional Retry-After parameters for %s", (scenario) => {
-    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({ parameters: {} });
-    expect(
-      parseScenarioInput({
-        scenario,
-        mode: "CONTINUOUS",
-        parameters: { retryAfterSeconds: 30 },
-      }),
-    ).toMatchObject({ parameters: { retryAfterSeconds: 30 } });
-  });
-
   it.each([0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "60"])(
     "rejects invalid Retry-After seconds %s",
     (retryAfterSeconds) => {
-      for (const scenario of [...retryAfterRequiredScenarios, ...retryAfterOptionalScenarios])
+      for (const scenario of retryAfterScenarios)
         expect(() =>
           parseScenarioInput({
             scenario,

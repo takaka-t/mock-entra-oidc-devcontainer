@@ -364,30 +364,17 @@ describe("admin API and UI", () => {
     ).toBe(400);
   });
 
-  it("normalizes every 429 and preserves optional Retry-After for every 500", async () => {
-    for (const scenario of ["AUTH_429", "TOKEN_429", "JWKS_429", "DISCOVERY_429"] as const) {
-      const defaulted = await context.app.inject({
-        method: "PUT",
-        url: "/__mock/api/scenario",
-        payload: { scenario, mode: "CONTINUOUS" },
-      });
-      expect(defaulted.statusCode).toBe(200);
-      expect(defaulted.json().parameters).toEqual({ retryAfterSeconds: 60 });
-
-      const configured = await context.app.inject({
-        method: "PUT",
-        url: "/__mock/api/scenario",
-        payload: {
-          scenario,
-          mode: "CONTINUOUS",
-          parameters: { retryAfterSeconds: 15 },
-        },
-      });
-      expect(configured.statusCode).toBe(200);
-      expect(configured.json().parameters).toEqual({ retryAfterSeconds: 15 });
-    }
-
-    for (const scenario of ["AUTH_500", "TOKEN_500", "JWKS_500", "DISCOVERY_500"] as const) {
+  it("preserves optional Retry-After for every 429 and 500", async () => {
+    for (const scenario of [
+      "AUTH_429",
+      "TOKEN_429",
+      "JWKS_429",
+      "DISCOVERY_429",
+      "AUTH_500",
+      "TOKEN_500",
+      "JWKS_500",
+      "DISCOVERY_500",
+    ] as const) {
       const configured = await context.app.inject({
         method: "PUT",
         url: "/__mock/api/scenario",
@@ -490,19 +477,17 @@ describe("admin API and UI", () => {
       "userName",
       "userPreferredUsername",
       "userMail",
-      "retryAfterRequired",
       "failureCount",
     ])
       expect(response.body).toContain(`for="${requiredFor}" class="required"`);
-    for (const notRequiredFor of ["userSub", "logoutUris", "userGroups", "clientType", "retryAfterOptional"])
+    for (const notRequiredFor of ["userSub", "logoutUris", "userGroups", "clientType", "retryAfter"])
       expect(response.body).not.toContain(`for="${notRequiredFor}" class="required"`);
     for (const id of [
       "scenario",
       "mode",
       "failureCount",
       "delayMs",
-      "retryAfterRequired",
-      "retryAfterOptional",
+      "retryAfter",
       "errorCode",
       "errorDescription",
       "normal",
@@ -551,7 +536,9 @@ describe("admin API and UI", () => {
     }
     expect(response.body).toContain('aria-label="実行状況"');
     expect(response.body).toContain('max="300000"');
-    expect(response.body).toContain('value="60" required');
+    expect(response.body).toContain(
+      'id="retryAfter" type="number" min="1" step="1" placeholder="Retry-Afterヘッダーを付与しない">',
+    );
     expect(response.body).toContain('id="userMail" type="email" required');
     for (const scenario of scenarioNames) expect(response.body).toContain(`value="${scenario}"`);
     // The scenario card is always visible; every other card is a collapsible
