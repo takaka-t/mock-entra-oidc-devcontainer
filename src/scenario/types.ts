@@ -5,6 +5,7 @@ export const scenarioNames = [
   "AUTH_INTERACTION_REQUIRED",
   "AUTH_TEMPORARILY_UNAVAILABLE",
   "AUTH_SERVER_ERROR",
+  "AUTH_400",
   "AUTH_429",
   "AUTH_500",
   "AUTH_TIMEOUT",

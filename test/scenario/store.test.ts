@@ -56,6 +56,16 @@ describe("InMemoryScenarioStore", () => {
     expect(store.get().scenario).toBe("NORMAL");
   });
 
+  it("consumes AUTH_400 only on the connectivity probe endpoint", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "AUTH_400", mode: "LIMITED", failureCount: 1 });
+
+    expect(store.consume("authorization")).toBeNull();
+    expect(store.get().remainingFailures).toBe(1);
+    expect(store.consume("authorization-http")?.scenario).toBe("AUTH_400");
+    expect(store.get().scenario).toBe("NORMAL");
+  });
+
   it("keeps continuous scenarios active and reset clears state", () => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: "JWKS_500", mode: "CONTINUOUS", parameters: {} });

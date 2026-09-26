@@ -181,7 +181,9 @@ export function createHttpFaultMiddleware(
       /**
        * The `common` connectivity probe is a HEAD request, which cannot carry a
        * body, so its faults are status and headers only and reuse the healthy
-       * probe's content type.
+       * probe's content type. AUTH_400 therefore takes no error parameters: the
+       * `http-400` body below is written for the token endpoint and never
+       * reaches the probe.
        */
       const bodyless = req.method?.toUpperCase() === "HEAD";
       setNoStoreHeaders(res);

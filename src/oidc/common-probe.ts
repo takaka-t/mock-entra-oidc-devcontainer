@@ -27,9 +27,9 @@ export function matchesCommonProbePath(pathname: string, routePathname: string):
  * is registered: every other method stays a 404, except that the HTTP fault
  * middleware answers a CORS preflight `OPTIONS` with 204 before this route.
  *
- * The HTTP fault middleware runs ahead of this route, so AUTH_429 / AUTH_500 /
- * AUTH_TIMEOUT answer first and this handler is reached only when the probe is
- * healthy (AUTH_TIMEOUT reaches it after its delay).
+ * The HTTP fault middleware runs ahead of this route, so AUTH_400 / AUTH_429 /
+ * AUTH_500 / AUTH_TIMEOUT answer first and this handler is reached only when the
+ * probe is healthy (AUTH_TIMEOUT reaches it after its delay).
  */
 export function registerCommonProbeRoute(app: FastifyInstance, config: AppConfig): void {
   const handler = async (_request: unknown, reply: FastifyReply) =>

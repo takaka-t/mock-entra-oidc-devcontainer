@@ -277,6 +277,7 @@ describe("official Entra resilience scenarios", () => {
   });
 
   it.each([
+    ["AUTH_400", "authorization-http", 400, 200],
     ["AUTH_429", "authorization-http", 429, 200],
     ["AUTH_500", "authorization-http", 500, 200],
     ["TOKEN_429", "token", 429, 400],
@@ -490,24 +491,49 @@ describe("official Entra resilience scenarios", () => {
     },
   );
 
-  it("keeps a real Authorization request unaffected while AUTH_500 is active", async () => {
+  it("returns AUTH_400 as a bodyless probe failure without Retry-After", async () => {
     context.store.set({
-      scenario: "AUTH_500",
+      scenario: "AUTH_400",
       mode: "CONTINUOUS",
     });
+    const response = await requestEndpoint("authorization-http", "http://localhost:3000");
 
-    const response = await context.app.inject({
-      url: authorizationRequest().url,
-      headers: { host },
-    });
-
-    expect(response.statusCode, response.body).toBe(303);
-    expect(response.headers.location).toBeDefined();
+    expect(response.statusCode).toBe(400);
+    expect(response.body).toBe("");
+    expect(response.headers["content-type"]).toBe(probeContentType);
+    expect(response.headers.location).toBeUndefined();
+    expect(response.headers["cache-control"]).toBe("no-store");
+    // AUTH_400 takes no parameters, so it never carries Retry-After.
+    expect(response.headers["retry-after"]).toBeUndefined();
+    expect(response.headers["access-control-expose-headers"]).toBeUndefined();
     expect(context.store.get()).toMatchObject({
-      scenario: "AUTH_500",
-      triggeredCount: 0,
+      scenario: "AUTH_400",
+      status: "ACTIVE",
+      triggeredCount: 1,
     });
   });
+
+  it.each(["AUTH_400", "AUTH_500"] as const)(
+    "keeps a real Authorization request unaffected while %s is active",
+    async (scenario) => {
+      context.store.set({
+        scenario,
+        mode: "CONTINUOUS",
+      });
+
+      const response = await context.app.inject({
+        url: authorizationRequest().url,
+        headers: { host },
+      });
+
+      expect(response.statusCode, response.body).toBe(303);
+      expect(response.headers.location).toBeDefined();
+      expect(context.store.get()).toMatchObject({
+        scenario,
+        triggeredCount: 0,
+      });
+    },
+  );
 
   it("does not consume AUTH_429 when the probe Host is invalid", async () => {
     context.store.set({

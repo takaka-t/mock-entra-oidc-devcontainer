@@ -47,6 +47,11 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "none",
     effect: "authorization-error",
   },
+  AUTH_400: {
+    endpoint: "authorization-http",
+    parameterKind: "none",
+    effect: "http-400",
+  },
   AUTH_429: {
     endpoint: "authorization-http",
     parameterKind: "retryAfter",

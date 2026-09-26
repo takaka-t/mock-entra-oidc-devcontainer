@@ -500,6 +500,7 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す                                                                                                             |
 | `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す                                                                                                                  |
 | `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                                                                                                                             |
+| `AUTH_400`                     | `HEAD` Connectivity Probe | HTTP 400を本文なしで返す                                                                                                                                       |
 | `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と任意の`Retry-After`を本文なしで返す                                                                                                                  |
 | `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す                                                                                                                  |
 | `AUTH_TIMEOUT`                 | `HEAD` Connectivity Probe | 指定時間遅延してからHTTP 200を返す                                                                                                                             |
@@ -528,11 +529,11 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害です。前者は通常の認証要求そのものに、後者は認証を始める前の到達性確認に作用します。
 
 - `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`はAuthorization requestをProviderが検証した後、OAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`と`form_post`はProviderの標準処理に従います。
-- `AUTH_429`, `AUTH_500`, `AUTH_TIMEOUT`はConnectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`）だけに作用します。正常時のEntraはこのプローブへHTTP 200を返すので、Mockも既定では200を返し、Scenario適用時だけ429、500、遅延を再現します。`AUTH_TIMEOUT`は待機後に通常どおり200を返します。
+- `AUTH_400`, `AUTH_429`, `AUTH_500`, `AUTH_TIMEOUT`はConnectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`）だけに作用します。正常時のEntraはこのプローブへHTTP 200を返すので、Mockも既定では200を返し、Scenario適用時だけ400、429、500、遅延を再現します。`AUTH_TIMEOUT`は待機後に通常どおり200を返します。
 - これらは通常の認証要求には一切影響しません。`AUTH_500`をCONTINUOUSで有効にしていても、`GET {tenant}/oauth2/v2.0/authorize`は通常のAuthorization処理を続け、LIMITED countも消費しません。
 - したがって、`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。前者はアプリケーションのcallbackへ届くOAuth response、後者はクライアントとMicrosoft Entra IDとの間の接続性の問題です。
 
-`HEAD`は本文を持てないため、Connectivity Probeの429と500はHTTP statusとheaderだけを返します。`content-type`は正常時の200と同じ`text/html; charset=utf-8`です。Token、JWKS、DiscoveryのHTTP faultは従来どおりJSON本文を返し、HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含みます。
+`HEAD`は本文を持てないため、Connectivity Probeの400、429、500はHTTP statusとheaderだけを返します。`AUTH_400`が`TOKEN_400`と違い`error`・`errorDescription`を受け付けないのはこのためで、指定するとAdmin APIは`400 invalid_scenario`を返します。`content-type`は正常時の200と同じ`text/html; charset=utf-8`です。Token、JWKS、DiscoveryのHTTP faultは従来どおりJSON本文を返し、HTTP 429の本文は`temporarily_unavailable`、HTTP 500の本文は`server_error`を使用します。どちらも`error_description`に注入したScenario名を含みます。
 
 `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`の`error_description`は、シナリオ名ではなく固定の説明文（例: "Login required by mock scenario"）を使用します。
 
@@ -557,7 +558,7 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 - 不正なconfidential client secretによる`invalid_client`
 - Token交換時の`redirect_uri`不一致による`invalid_grant`
 
-このため、`AUTH_CODE_INVALID`, `AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。`state`と`nonce`もクライアント側検証を上書きするScenarioにはしません。任意のToken endpoint errorが必要な場合は`TOKEN_400`をescape hatchとして使用できます。AADSTS50196のloop検出も、例えば次のように再現できます。
+このため、`AUTH_CODE_INVALID`, `AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。`state`と`nonce`もクライアント側検証を上書きするScenarioにはしません。任意のToken endpoint errorが必要な場合は`TOKEN_400`をescape hatchとして使用できます（`AUTH_400`は本文を持てないため、任意のOAuth errorを返す用途には使えません）。AADSTS50196のloop検出も、例えば次のように再現できます。
 
 ```json
 {

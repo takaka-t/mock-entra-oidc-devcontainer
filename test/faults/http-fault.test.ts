@@ -130,6 +130,8 @@ describe("HTTP fault middleware", () => {
   afterEach(() => vi.useRealTimers());
 
   it.each([
+    ["AUTH_400", "GET", mockCommonAuthorizePath],
+    ["AUTH_400", "POST", mockCommonAuthorizePath],
     ["AUTH_500", "GET", mockCommonAuthorizePath],
     ["AUTH_500", "POST", mockCommonAuthorizePath],
     ["TOKEN_500", "GET", "/token"],
@@ -235,9 +237,14 @@ describe("HTTP fault middleware", () => {
     },
   );
 
-  it.each(["GET", "POST"] as const)("keeps the tenant Authorization endpoint free of HTTP faults for %s", (method) => {
+  it.each([
+    ["AUTH_400", "GET"],
+    ["AUTH_400", "POST"],
+    ["AUTH_500", "GET"],
+    ["AUTH_500", "POST"],
+  ] as const)("keeps the tenant Authorization endpoint free of %s for %s", (scenario, method) => {
     const store = new InMemoryScenarioStore();
-    store.set({ scenario: "AUTH_500", mode: "LIMITED", failureCount: 1 });
+    store.set({ scenario, mode: "LIMITED", failureCount: 1 });
     const res = response();
     const next = vi.fn();
 
@@ -269,6 +276,31 @@ describe("HTTP fault middleware", () => {
     expect(res.response.statusCode).toBe(204);
     expect(res.headers.get("access-control-allow-methods")).toBe("GET, HEAD, POST, OPTIONS");
     expect(store.get().remainingFailures).toBe(1);
+  });
+
+  /**
+   * AUTH_400 reuses the token endpoint's http-400 effect, but the probe is a
+   * HEAD request: the response must stay bodyless and keep the healthy probe's
+   * content type.
+   */
+  it("returns a bodyless 400 for AUTH_400 at the connectivity probe", () => {
+    const store = new InMemoryScenarioStore();
+    store.set({ scenario: "AUTH_400", mode: "LIMITED", failureCount: 1 });
+    const res = response();
+    const next = vi.fn();
+
+    faultMiddleware(store, logger())(request("HEAD", mockCommonAuthorizePath), res.response, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.response.statusCode).toBe(400);
+    expect(res.end).toHaveBeenCalledWith(undefined);
+    expect(res.headers.get("content-type")).toBe(commonProbeContentType);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("retry-after")).toBeUndefined();
+    expect(store.get()).toMatchObject({
+      scenario: "NORMAL",
+      lastCompleted: { scenario: "AUTH_400", triggeredCount: 1 },
+    });
   });
 
   it("adds CORS and no-store headers to injected errors", () => {

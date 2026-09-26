@@ -335,6 +335,16 @@ describe("admin API and UI", () => {
       parameters: { error: "invalid_grant", unexpected: true },
     },
     {
+      scenario: "AUTH_400",
+      mode: "CONTINUOUS",
+      parameters: { error: "invalid_request" },
+    },
+    {
+      scenario: "AUTH_400",
+      mode: "CONTINUOUS",
+      parameters: { retryAfterSeconds: 5 },
+    },
+    {
       scenario: "TOKEN_429",
       mode: "CONTINUOUS",
       parameters: { retryAfterSeconds: 0 },
