@@ -18,7 +18,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 
 ## 起動
 
-既存のdevcontainerとNode.js 24を前提とします。Composeのservice名は既存の`app`のままで、OIDCで公開するhostnameはservice名から分離したDocker network aliasの`mock-idp.test`です。Tenant ID、issuer、host、portは次の値に固定しており、実行時に変更できません。
+devcontainerとNode.js 24を前提とします。Composeのservice名は`app`で、OIDCで公開するhostnameはservice名から分離したDocker network aliasの`mock-idp.test`です。Tenant ID、issuer、host、portは次の値に固定しており、実行時に変更できません。
 
 ```text
 Tenant ID: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
@@ -61,10 +61,10 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 
 ### MSAL利用時の注意
 
-HTTPS化はMSALによるcustom authority受け入れの十分条件とは限りません。`mock-idp.test:9000`はMicrosoftの既知クラウドインスタンスではないため、MSAL側のinstance discovery（既知authority検証）は引き続きブロックされます。
+HTTPSで提供していても、MSALがcustom authorityを受け入れるとは限りません。`mock-idp.test:9000`はMicrosoftの既知クラウドインスタンスではないため、MSAL側のinstance discovery（既知authority検証）でブロックされます。
 
 - MSAL.js（Browser / Node）では、使用するversionの設定方法に従って`knownAuthorities`へ`mock-idp.test:9000`を追加してください。MSAL Node v5では設定先が`auth`から`system`へ移動しているため、[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。
-- `protocolMode`を`OIDC`にする回避策は、endpointのpath構造が非準拠だった以前は必須でしたが、Entra準拠になった現在は不要の可能性があります。既定の`protocolMode`（AAD）で動作するかは使用するMSAL SDK/バージョンで実際に確認してください。
+- endpointのpath構造はEntraに準拠しているため、`protocolMode`を`OIDC`にする必要はない可能性があります。既定の`protocolMode`（AAD）で動作するかは使用するMSAL SDK/バージョンで実際に確認してください。
 - MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。
 - authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
 
@@ -400,11 +400,10 @@ Mock自身は待機や再試行を行いません。Microsoft Entraの[クライ
 }
 ```
 
-### 署名鍵と廃止したシナリオ
+### 署名鍵のシナリオ
 
-- `JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正なkey metadata受信時のlast-known-good継続を試験するためのシナリオです。`JWKS_INVALID`はkey metadata検証用として維持します。
+- `JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正なkey metadata受信時のlast-known-good継続を試験するためのシナリオです。
 - `SIGNING_KEY_ROLLOVER`で公開した新しい鍵は、シナリオ完了、NORMALへの変更、別Scenarioへの切り替え後もJWKSに残り、Reset時だけ初期鍵へ戻ります。
-- `UNKNOWN_GROUPS`は認可データのケースでありOIDC障害ではないため削除しました。必要なgroupsはテストユーザーで表現してください。`DISCOVERY_INVALID`も削除し、Discoveryの障害は429、500、Timeoutで表現します。Microsoft GraphはProviderの対象外なのでGraph APIの429は扱いません。
 
 ### シナリオの追加
 
@@ -415,7 +414,7 @@ Mock自身は待機や再試行を行いません。Microsoft Entraの[クライ
 Mock IdPが受け付けたリクエストを、そのとき有効だったシナリオと紐づけて記録します。Admin UIの「アクセスログ」カードで新しい順に一覧でき、障害を注入した行は「適用」の表示と赤い背景で区別されます。アプリケーション側で認証を試した後にこの一覧を再読み込みすると、どの要求が届き、どのシナリオが実際に作用したかを確認できます。
 
 - **記録対象**: `/__mock`配下（Admin UI/Admin API）、`/health`、ブラウザが管理画面やサインイン画面を開いたときに自動的に要求する`/favicon.ico`以外のすべてのリクエストです。Host不一致で`400 invalid_request_origin`になった要求も記録されます。
-- **分類**: Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（旧path、typo、未対応の`common`/`organizations` authorityへの要求など）は`other`として残します。
+- **分類**: Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（typo、未対応の`common`/`organizations` authorityへの要求など）は`other`として残します。
 - **記録内容**: pathnameだけです。`code`、`client_secret`、`code_verifier`などを残さないため、query、リクエスト本文、ヘッダーは記録しません。
 - **保持**: 最新200件をプロセスのメモリ上に保持し、超過分は古い順に破棄します。永続化せず、再起動で消えます。
 - **Admin UI**: 自動更新しません。「アクセスログを再読み込み」で最新の状態を取得し、「アクセスログをクリア」で全件削除します。シナリオの「初期状態に戻す」（`POST /__mock/api/reset`）ではアクセスログは消えません。シナリオ以外のカードは見出しのクリックで折りたためます。初回表示では折りたたまれており、開閉状態はブラウザに保存されます。
