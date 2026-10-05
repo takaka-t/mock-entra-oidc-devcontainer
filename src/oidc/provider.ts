@@ -8,7 +8,7 @@ import Provider, {
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
 import { decodeJwt, decodeProtectedHeader, SignJWT, type JWTHeaderParameters } from "jose";
-import type { AppConfig } from "../config.js";
+import { mockTokenTtlSeconds, type AppConfig } from "../config.js";
 import { escapeHtml } from "../admin/html.js";
 import type { OidcClientConfig } from "../clients/types.js";
 import { authorizationFaultDefinitions, mutateAuthorizationResponse } from "../faults/authorization-fault.js";
@@ -325,10 +325,10 @@ export function createProvider(
       keys: ["mock-cookie-key-one-at-least-32-bytes", "mock-cookie-key-two-at-least-32-bytes"],
     },
     ttl: {
-      AccessToken: 3600,
+      AccessToken: mockTokenTtlSeconds,
       AuthorizationCode: 600,
       Grant: 14 * 24 * 3600,
-      IdToken: 3600,
+      IdToken: mockTokenTtlSeconds,
       Interaction: 600,
       RefreshToken: 14 * 24 * 3600,
       Session: 14 * 24 * 3600,

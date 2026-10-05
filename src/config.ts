@@ -8,6 +8,8 @@ export const mockAuthorizePath = `${mockTenantBasePath}/oauth2/v2.0/authorize`;
 export const mockTokenPath = `${mockTenantBasePath}/oauth2/v2.0/token`;
 export const mockJwksPath = `${mockTenantBasePath}/discovery/v2.0/keys`;
 export const mockLogoutPath = `${mockTenantBasePath}/oauth2/v2.0/logout`;
+/** Lifetime of issued ID Tokens and Access Tokens. */
+export const mockTokenTtlSeconds = 3600;
 
 /**
  * `common` is Entra's multi-tenant alias. Clients probe reachability with a

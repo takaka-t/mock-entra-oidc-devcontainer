@@ -879,6 +879,8 @@ describe("OIDC provider", () => {
       if (scenario === "EXPIRED_TOKEN") {
         expect(payload.exp).toBeLessThan(Date.now() / 1000);
         expect(accessPayload.exp).toBeLessThan(Date.now() / 1000);
+        // The default offset exceeds the common 300s validator clock skew.
+        expect(payload.exp).toBeLessThan(Date.now() / 1000 - 300);
         for (const claims of [payload, accessPayload]) {
           expect(claims.iat).toBeLessThanOrEqual(claims.nbf as number);
           expect(claims.nbf).toBeLessThan(claims.exp as number);
@@ -902,6 +904,7 @@ describe("OIDC provider", () => {
       if (scenario === "FUTURE_NBF") {
         expect(payload.nbf).toBeGreaterThan(Date.now() / 1000);
         expect(accessPayload.nbf).toBeGreaterThan(Date.now() / 1000);
+        expect(payload.nbf).toBeGreaterThan(Date.now() / 1000 + 300);
         expect(payload.nbf).toBeLessThan(payload.exp as number);
         expect(accessPayload.nbf).toBeLessThan(accessPayload.exp as number);
         for (const tokenCase of tokenCases) {

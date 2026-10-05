@@ -69,6 +69,8 @@ export interface ScenarioParameters {
   delayMs?: number;
   error?: string;
   errorDescription?: string;
+  expiredAgoSeconds?: number;
+  nbfAheadSeconds?: number;
   retryAfterSeconds?: number;
 }
 
@@ -112,7 +114,7 @@ type RetryAfterScenarioName =
   "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429" | "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
 type ParameterlessScenarioName = Exclude<
   FaultScenarioName,
-  TimeoutScenarioName | "TOKEN_400" | "MISSING_CLAIM" | RetryAfterScenarioName
+  TimeoutScenarioName | "TOKEN_400" | "MISSING_CLAIM" | "EXPIRED_TOKEN" | "FUTURE_NBF" | RetryAfterScenarioName
 >;
 
 interface NoScenarioParameters {
@@ -120,6 +122,8 @@ interface NoScenarioParameters {
   delayMs?: never;
   error?: never;
   errorDescription?: never;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: never;
   retryAfterSeconds?: never;
 }
 
@@ -128,6 +132,8 @@ interface TimeoutScenarioParameters {
   delayMs?: number;
   error?: never;
   errorDescription?: never;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: never;
   retryAfterSeconds?: never;
 }
 
@@ -136,6 +142,8 @@ interface Token400ScenarioParameters {
   delayMs?: never;
   error?: string;
   errorDescription?: string;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: never;
   retryAfterSeconds?: never;
 }
 
@@ -144,6 +152,8 @@ interface RetryAfterScenarioParameters {
   delayMs?: never;
   error?: never;
   errorDescription?: never;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: never;
   retryAfterSeconds?: number;
 }
 
@@ -152,6 +162,28 @@ interface MissingClaimScenarioParameters {
   delayMs?: never;
   error?: never;
   errorDescription?: never;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: never;
+  retryAfterSeconds?: never;
+}
+
+interface ExpiredTokenScenarioParameters {
+  claim?: never;
+  delayMs?: never;
+  error?: never;
+  errorDescription?: never;
+  expiredAgoSeconds?: number;
+  nbfAheadSeconds?: never;
+  retryAfterSeconds?: never;
+}
+
+interface FutureNbfScenarioParameters {
+  claim?: never;
+  delayMs?: never;
+  error?: never;
+  errorDescription?: never;
+  expiredAgoSeconds?: never;
+  nbfAheadSeconds?: number;
   retryAfterSeconds?: never;
 }
 
@@ -175,6 +207,14 @@ type ScenarioSpecificInput =
   | {
       scenario: "MISSING_CLAIM";
       parameters?: MissingClaimScenarioParameters;
+    }
+  | {
+      scenario: "EXPIRED_TOKEN";
+      parameters?: ExpiredTokenScenarioParameters;
+    }
+  | {
+      scenario: "FUTURE_NBF";
+      parameters?: FutureNbfScenarioParameters;
     };
 
 export type ContinuousScenarioInput = ScenarioSpecificInput & {

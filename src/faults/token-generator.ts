@@ -1,7 +1,8 @@
 import { base64url, decodeJwt, decodeProtectedHeader, SignJWT } from "jose";
+import { mockTokenTtlSeconds } from "../config.js";
 import type { SigningKeys } from "../oidc/keys.js";
 import type { FaultDecision, FaultScenarioName } from "../scenario/types.js";
-import { defaultMissingClaim } from "../scenario/registry.js";
+import { defaultExpiredAgoSeconds, defaultMissingClaim, defaultNbfAheadSeconds } from "../scenario/registry.js";
 
 export const mismatchedNonce = "mock-mismatched-nonce";
 export const wrongTenantId = "ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb";
@@ -40,8 +41,8 @@ export async function mutateToken(token: string, decision: FaultDecision, keys: 
       payload.iss = "https://wrong-issuer.invalid";
       break;
     case "EXPIRED_TOKEN": {
-      const expiredAt = now - 60;
-      payload.iat = expiredAt - 3600;
+      const expiredAt = now - (decision.parameters.expiredAgoSeconds ?? defaultExpiredAgoSeconds);
+      payload.iat = expiredAt - mockTokenTtlSeconds;
       payload.nbf = payload.iat;
       payload.exp = expiredAt;
       break;
@@ -49,7 +50,7 @@ export async function mutateToken(token: string, decision: FaultDecision, keys: 
     case "FUTURE_NBF": {
       if (typeof payload.exp !== "number" || payload.exp <= now + 2)
         throw new Error("FUTURE_NBF requires a token that expires in the future");
-      payload.nbf = Math.min(now + 300, payload.exp - 1);
+      payload.nbf = Math.min(now + (decision.parameters.nbfAheadSeconds ?? defaultNbfAheadSeconds), payload.exp - 1);
       break;
     }
     case "NONCE_MISMATCH":

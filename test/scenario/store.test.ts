@@ -168,6 +168,29 @@ describe("InMemoryScenarioStore", () => {
     },
   );
 
+  it.each([
+    { scenario: "EXPIRED_TOKEN", key: "expiredAgoSeconds", max: 31_536_000 },
+    { scenario: "FUTURE_NBF", key: "nbfAheadSeconds", max: 3_599 },
+  ] as const)("defaults $scenario $key to 600 and accepts 1..$max", ({ scenario, key, max }) => {
+    expect(parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toMatchObject({ parameters: { [key]: 600 } });
+    for (const value of [1, max])
+      expect(
+        parseScenarioInput({ scenario, mode: "LIMITED", failureCount: 1, parameters: { [key]: value } }),
+      ).toMatchObject({ parameters: { [key]: value } });
+    for (const value of [0, -1, 1.5, max + 1, "600"])
+      expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS", parameters: { [key]: value } })).toThrow();
+  });
+
+  it("rejects time offset parameters for other scenarios", () => {
+    for (const [scenario, key] of [
+      ["EXPIRED_TOKEN", "nbfAheadSeconds"],
+      ["FUTURE_NBF", "expiredAgoSeconds"],
+      ["WRONG_AUDIENCE", "expiredAgoSeconds"],
+      ["TOKEN_TIMEOUT", "nbfAheadSeconds"],
+    ] as const)
+      expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS", parameters: { [key]: 60 } })).toThrow();
+  });
+
   it.each(["UNKNOWN_GROUPS", "DISCOVERY_INVALID"])("rejects removed scenario %s", (scenario) => {
     expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toThrow();
   });

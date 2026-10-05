@@ -355,6 +355,21 @@ describe("admin API and UI", () => {
       parameters: { retryAfterSeconds: 1.5 },
     },
     {
+      scenario: "EXPIRED_TOKEN",
+      mode: "CONTINUOUS",
+      parameters: { expiredAgoSeconds: 0 },
+    },
+    {
+      scenario: "FUTURE_NBF",
+      mode: "CONTINUOUS",
+      parameters: { nbfAheadSeconds: 3_600 },
+    },
+    {
+      scenario: "FUTURE_NBF",
+      mode: "CONTINUOUS",
+      parameters: { expiredAgoSeconds: 60 },
+    },
+    {
       scenario: "DISCOVERY_INVALID",
       mode: "CONTINUOUS",
     },
@@ -404,6 +419,29 @@ describe("admin API and UI", () => {
       });
       expect(omitted.statusCode).toBe(200);
       expect(omitted.json().parameters).toEqual({});
+    }
+  });
+
+  it("defaults and preserves the EXPIRED_TOKEN and FUTURE_NBF time offsets", async () => {
+    for (const [scenario, key] of [
+      ["EXPIRED_TOKEN", "expiredAgoSeconds"],
+      ["FUTURE_NBF", "nbfAheadSeconds"],
+    ] as const) {
+      const omitted = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: { scenario, mode: "CONTINUOUS" },
+      });
+      expect(omitted.statusCode).toBe(200);
+      expect(omitted.json().parameters).toEqual({ [key]: 600 });
+
+      const configured = await context.app.inject({
+        method: "PUT",
+        url: "/__mock/api/scenario",
+        payload: { scenario, mode: "CONTINUOUS", parameters: { [key]: 30 } },
+      });
+      expect(configured.statusCode).toBe(200);
+      expect(configured.json().parameters).toEqual({ [key]: 30 });
     }
   });
 
@@ -498,6 +536,8 @@ describe("admin API and UI", () => {
       "failureCount",
       "delayMs",
       "retryAfter",
+      "expiredAgoSeconds",
+      "nbfAheadSeconds",
       "errorCode",
       "errorDescription",
       "normal",
@@ -546,6 +586,12 @@ describe("admin API and UI", () => {
     }
     expect(response.body).toContain('aria-label="実行状況"');
     expect(response.body).toContain('max="300000"');
+    expect(response.body).toContain('id="expiredAgoSeconds" type="number" min="1" max="31536000" step="1" value="600"');
+    expect(response.body).toContain('id="nbfAheadSeconds" type="number" min="1" max="3599" step="1" value="600"');
+    // Hidden constrained inputs must be disabled, or an invalid value left in
+    // one would block submitting a different scenario.
+    for (const id of ["delayMs", "retryAfter", "expiredAgoSeconds", "nbfAheadSeconds"])
+      expect(response.body).toContain(`$('${id}').disabled=`);
     expect(response.body).toContain(
       'id="retryAfter" type="number" min="1" step="1" placeholder="Retry-Afterヘッダーを付与しない">',
     );

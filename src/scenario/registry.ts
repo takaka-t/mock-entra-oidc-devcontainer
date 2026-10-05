@@ -1,7 +1,8 @@
-import type { AppConfig } from "../config.js";
+import { mockTokenTtlSeconds, type AppConfig } from "../config.js";
 import { missingClaimNames, type FaultEndpoint, type ScenarioName } from "./types.js";
 
-export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfter" | "claim";
+export type ScenarioParameterKind =
+  "none" | "timeout" | "token400" | "retryAfter" | "claim" | "expiredToken" | "futureNbf";
 
 export interface ScenarioDefinition {
   endpoint: FaultEndpoint | null;
@@ -111,12 +112,12 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
   },
   EXPIRED_TOKEN: {
     endpoint: "token-jwt",
-    parameterKind: "none",
+    parameterKind: "expiredToken",
     effect: "token-mutation",
   },
   FUTURE_NBF: {
     endpoint: "token-jwt",
-    parameterKind: "none",
+    parameterKind: "futureNbf",
     effect: "token-mutation",
   },
   INVALID_SIGNATURE: {
@@ -225,6 +226,13 @@ export const maxDelayMs = 300_000;
 export const defaultDelayMs = 30_000;
 export const defaultTokenError = "invalid_grant";
 export const defaultMissingClaim = "sub";
+// Both defaults exceed common validator clock skews (Spring Security 60s,
+// Microsoft.IdentityModel 300s), so the token is rejected without tuning.
+export const defaultExpiredAgoSeconds = 600;
+export const maxExpiredAgoSeconds = 31_536_000;
+export const defaultNbfAheadSeconds = 600;
+/** One second below the ID/Access Token TTL, so `nbf` stays before `exp`. */
+export const maxNbfAheadSeconds = mockTokenTtlSeconds - 1;
 
 export interface ScenarioUiMetadata {
   supportsMode: boolean;
@@ -249,6 +257,10 @@ export const scenarioUiDefaults = {
   tokenError: defaultTokenError,
   missingClaim: defaultMissingClaim,
   missingClaims: missingClaimNames,
+  expiredAgoSeconds: defaultExpiredAgoSeconds,
+  maxExpiredAgoSeconds,
+  nbfAheadSeconds: defaultNbfAheadSeconds,
+  maxNbfAheadSeconds,
 } as const;
 
 export type HttpFaultEndpoint = Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">;

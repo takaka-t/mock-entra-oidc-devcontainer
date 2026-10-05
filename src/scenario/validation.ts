@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { defaultDelayMs, defaultMissingClaim, defaultTokenError, maxDelayMs, scenarios } from "./registry.js";
+import {
+  defaultDelayMs,
+  defaultExpiredAgoSeconds,
+  defaultMissingClaim,
+  defaultNbfAheadSeconds,
+  defaultTokenError,
+  maxDelayMs,
+  maxExpiredAgoSeconds,
+  maxNbfAheadSeconds,
+  scenarios,
+} from "./registry.js";
 import { missingClaimNames, scenarioNames, type ScenarioParameters, type SetScenarioInput } from "./types.js";
 
 const baseSchema = z
@@ -57,6 +67,20 @@ export function parseScenarioInput(value: unknown): SetScenarioInput {
     parameters = z
       .object({
         claim: z.enum(missingClaimNames).default(defaultMissingClaim),
+      })
+      .strict()
+      .parse(parsed.parameters ?? {});
+  } else if (definition.parameterKind === "expiredToken") {
+    parameters = z
+      .object({
+        expiredAgoSeconds: z.number().int().positive().max(maxExpiredAgoSeconds).default(defaultExpiredAgoSeconds),
+      })
+      .strict()
+      .parse(parsed.parameters ?? {});
+  } else if (definition.parameterKind === "futureNbf") {
+    parameters = z
+      .object({
+        nbfAheadSeconds: z.number().int().positive().max(maxNbfAheadSeconds).default(defaultNbfAheadSeconds),
       })
       .strict()
       .parse(parsed.parameters ?? {});

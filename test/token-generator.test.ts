@@ -310,4 +310,46 @@ describe("token fault generator", () => {
     });
     await expect(compactVerify(mutated, normalPublicKey)).resolves.toBeDefined();
   });
+
+  it.each([
+    { parameters: {}, offset: 600 },
+    { parameters: { expiredAgoSeconds: 10 }, offset: 10 },
+    { parameters: { expiredAgoSeconds: 86_400 }, offset: 86_400 },
+  ])("sets EXPIRED_TOKEN exp $offset seconds in the past", async ({ parameters, offset }) => {
+    const source = await makeToken(tokenKinds[0]);
+    const before = Math.floor(Date.now() / 1000);
+    const payload = decodeJwt(await mutateToken(source, decision("EXPIRED_TOKEN", parameters), keys));
+    const after = Math.floor(Date.now() / 1000);
+
+    expect(payload.exp).toBeGreaterThanOrEqual(before - offset);
+    expect(payload.exp).toBeLessThanOrEqual(after - offset);
+    expect(payload.iat).toBe((payload.exp as number) - 3600);
+    expect(payload.nbf).toBe(payload.iat);
+  });
+
+  it.each([
+    { parameters: {}, offset: 600 },
+    { parameters: { nbfAheadSeconds: 10 }, offset: 10 },
+    { parameters: { nbfAheadSeconds: 3000 }, offset: 3000 },
+  ])("sets FUTURE_NBF nbf $offset seconds in the future", async ({ parameters, offset }) => {
+    const source = await makeToken(tokenKinds[1]);
+    const before = Math.floor(Date.now() / 1000);
+    const payload = decodeJwt(await mutateToken(source, decision("FUTURE_NBF", parameters), keys));
+    const after = Math.floor(Date.now() / 1000);
+
+    expect(payload.nbf).toBeGreaterThanOrEqual(before + offset);
+    expect(payload.nbf).toBeLessThanOrEqual(after + offset);
+    expect(payload.nbf).toBeLessThan(payload.exp as number);
+  });
+
+  it("caps FUTURE_NBF nbf one second before exp", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const shortLived = await new SignJWT({ sub: "user-admin", iat: now, nbf: now, exp: now + 100 })
+      .setProtectedHeader({ alg: "RS256", kid: normalKid })
+      .sign(keys.normal.privateKey);
+    const payload = decodeJwt(await mutateToken(shortLived, decision("FUTURE_NBF", { nbfAheadSeconds: 600 }), keys));
+
+    expect(payload.exp).toBe(now + 100);
+    expect(payload.nbf).toBe(now + 99);
+  });
 });
