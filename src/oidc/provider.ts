@@ -11,8 +11,8 @@ import { decodeJwt, decodeProtectedHeader, SignJWT, type JWTHeaderParameters } f
 import type { AppConfig } from "../config.js";
 import { escapeHtml } from "../admin/html.js";
 import type { OidcClientConfig } from "../clients/types.js";
-import { authorizationFaultDefinitions } from "../faults/authorization-fault.js";
-import { mutateTokenResponse } from "../faults/token-generator.js";
+import { authorizationFaultDefinitions, mutateAuthorizationResponse } from "../faults/authorization-fault.js";
+import { mutateTokenResponse, tokenResponseFaultApplies } from "../faults/token-generator.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { FaultDecision } from "../scenario/types.js";
 import type { MockUserStore } from "../users/store.js";
@@ -106,6 +106,26 @@ async function patchIdToken(
   return new SignJWT(payload).setProtectedHeader(header).sign(keys.normal.privateKey);
 }
 
+function logFaultInjected(
+  logger: FastifyBaseLogger,
+  decision: FaultDecision,
+  message: string,
+  extra: Record<string, unknown> = {},
+): void {
+  logger.warn(
+    {
+      scenario: decision.scenario,
+      endpoint: decision.endpoint,
+      mode: decision.mode,
+      ...extra,
+      faultInjected: true,
+      remainingBefore: decision.remainingBefore,
+      remainingAfter: decision.remainingAfter,
+    },
+    message,
+  );
+}
+
 /**
  * The browser-facing counterpart of renderError below, styled like the
  * sign-in interaction page rather than oidc-provider default page.
@@ -131,18 +151,7 @@ export function createProvider(
     if (claimDecisions.has(ctx.req)) return claimDecisions.get(ctx.req) ?? null;
     const decision = ctx.path === "/token" ? store.consumeForRequest("claims", store.getRequestTicket(ctx.req)) : null;
     claimDecisions.set(ctx.req, decision);
-    if (decision)
-      logger.warn(
-        {
-          scenario: decision.scenario,
-          endpoint: decision.endpoint,
-          mode: decision.mode,
-          faultInjected: true,
-          remainingBefore: decision.remainingBefore,
-          remainingAfter: decision.remainingAfter,
-        },
-        "[MOCK-IDP] claim fault injected",
-      );
+    if (decision) logFaultInjected(logger, decision, "[MOCK-IDP] claim fault injected");
     return decision;
   };
   const policy = interactionPolicy.base();
@@ -164,18 +173,9 @@ export function createProvider(
           if (store.get().scenario !== definition.scenario) return false;
           const decision = store.consumeForRequest("authorization", store.getRequestTicket(ctx.req));
           if (!decision) return false;
-          logger.warn(
-            {
-              scenario: decision.scenario,
-              endpoint: decision.endpoint,
-              mode: decision.mode,
-              oauthError: definition.error,
-              faultInjected: true,
-              remainingBefore: decision.remainingBefore,
-              remainingAfter: decision.remainingAfter,
-            },
-            "[MOCK-IDP] authorization fault injected",
-          );
+          logFaultInjected(logger, decision, "[MOCK-IDP] authorization fault injected", {
+            oauthError: definition.error,
+          });
           return true;
         }),
       ),
@@ -337,6 +337,12 @@ export function createProvider(
 
   const provider = new Provider(config.issuer, configuration);
   provider.proxy = config.trustProxy;
+  provider.on("authorization.success", (ctx: KoaContextWithOIDC, out: Record<string, unknown>) => {
+    const decision = store.consumeForRequest("authorization-response", store.getRequestTicket(ctx.req));
+    if (!decision) return;
+    mutateAuthorizationResponse(out, decision);
+    logFaultInjected(logger, decision, "[MOCK-IDP] authorization response fault injected");
+  });
   provider.use(async (ctx: KoaContextWithOIDC, next) => {
     await next();
     if (
@@ -368,20 +374,13 @@ export function createProvider(
       responseBody.id_token = await patchIdToken(responseBody.id_token as string, ctx, keys, userStore);
       ctx.body = responseBody;
     }
-    const ticket = store.getRequestTicket(ctx.req);
-    const decision = store.consumeForRequest("token-jwt", ticket);
+    // Checked and consumed with no await in between, like the authorization
+    // fault Checks above, so the scenario cannot change between the two.
+    const active = store.get().scenario;
+    if (active !== "NORMAL" && !tokenResponseFaultApplies(active, ctx.body)) return;
+    const decision = store.consumeForRequest("token-jwt", store.getRequestTicket(ctx.req));
     if (!decision) return;
-    logger.warn(
-      {
-        scenario: decision.scenario,
-        endpoint: decision.endpoint,
-        mode: decision.mode,
-        faultInjected: true,
-        remainingBefore: decision.remainingBefore,
-        remainingAfter: decision.remainingAfter,
-      },
-      "[MOCK-IDP] token fault injected",
-    );
+    logFaultInjected(logger, decision, "[MOCK-IDP] token fault injected");
     try {
       ctx.body = await mutateTokenResponse(ctx.body, decision, keys);
     } catch (error) {

@@ -1,7 +1,7 @@
 import type { AppConfig } from "../config.js";
-import type { FaultEndpoint, ScenarioName } from "./types.js";
+import { missingClaimNames, type FaultEndpoint, type ScenarioName } from "./types.js";
 
-export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfter";
+export type ScenarioParameterKind = "none" | "timeout" | "token400" | "retryAfter" | "claim";
 
 export interface ScenarioDefinition {
   endpoint: FaultEndpoint | null;
@@ -10,8 +10,10 @@ export interface ScenarioDefinition {
     | "normal"
     | "authorization-denied"
     | "authorization-error"
+    | "authorization-response-mutation"
     | "claims-mutation"
     | "token-mutation"
+    | "token-response-mutation"
     | "signing-key-rollover"
     | "http-400"
     | "http-429"
@@ -46,6 +48,31 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     endpoint: "authorization",
     parameterKind: "none",
     effect: "authorization-error",
+  },
+  AUTH_STATE_MISMATCH: {
+    endpoint: "authorization-response",
+    parameterKind: "none",
+    effect: "authorization-response-mutation",
+  },
+  AUTH_STATE_MISSING: {
+    endpoint: "authorization-response",
+    parameterKind: "none",
+    effect: "authorization-response-mutation",
+  },
+  AUTH_CODE_INVALID: {
+    endpoint: "authorization-response",
+    parameterKind: "none",
+    effect: "authorization-response-mutation",
+  },
+  AUTH_CODE_MISSING: {
+    endpoint: "authorization-response",
+    parameterKind: "none",
+    effect: "authorization-response-mutation",
+  },
+  AUTH_CODE_WITH_ERROR: {
+    endpoint: "authorization-response",
+    parameterKind: "none",
+    effect: "authorization-response-mutation",
   },
   AUTH_400: {
     endpoint: "authorization-http",
@@ -107,6 +134,36 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
     parameterKind: "none",
     effect: "signing-key-rollover",
   },
+  NONCE_MISMATCH: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "token-mutation",
+  },
+  NONCE_MISSING: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "token-mutation",
+  },
+  ALG_NONE: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "token-mutation",
+  },
+  WRONG_TENANT: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "token-mutation",
+  },
+  MISSING_CLAIM: {
+    endpoint: "token-jwt",
+    parameterKind: "claim",
+    effect: "token-mutation",
+  },
+  TOKEN_NO_ID_TOKEN: {
+    endpoint: "token-jwt",
+    parameterKind: "none",
+    effect: "token-response-mutation",
+  },
   TOKEN_400: {
     endpoint: "token",
     parameterKind: "token400",
@@ -167,6 +224,7 @@ export const scenarios: Record<ScenarioName, ScenarioDefinition> = {
 export const maxDelayMs = 300_000;
 export const defaultDelayMs = 30_000;
 export const defaultTokenError = "invalid_grant";
+export const defaultMissingClaim = "sub";
 
 export interface ScenarioUiMetadata {
   supportsMode: boolean;
@@ -189,6 +247,8 @@ export const scenarioUiDefaults = {
   delayMs: defaultDelayMs,
   maxDelayMs,
   tokenError: defaultTokenError,
+  missingClaim: defaultMissingClaim,
+  missingClaims: missingClaimNames,
 } as const;
 
 export type HttpFaultEndpoint = Extract<FaultEndpoint, "authorization-http" | "token" | "jwks" | "discovery">;

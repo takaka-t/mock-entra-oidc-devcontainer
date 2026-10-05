@@ -550,6 +550,11 @@ describe("admin API and UI", () => {
       'id="retryAfter" type="number" min="1" step="1" placeholder="Retry-Afterヘッダーを付与しない">',
     );
     expect(response.body).toContain('id="userMail" type="email" required');
+    expect(response.body).toContain(
+      '<select id="claim"><option selected>sub</option><option>oid</option><option>tid</option><option>iss</option><option>aud</option><option>exp</option><option>iat</option></select>',
+    );
+    expect(response.body).toContain("'authorization-response-mutation':'認可応答を改変'");
+    expect(response.body).toContain("'token-response-mutation':'トークン応答を改変'");
     for (const scenario of scenarioNames) expect(response.body).toContain(`value="${scenario}"`);
     // The scenario card is always visible; every other card is a collapsible
     // <details> that starts closed and shows its item count in the heading.

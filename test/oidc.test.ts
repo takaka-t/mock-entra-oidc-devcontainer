@@ -7,6 +7,7 @@ import { createLocalJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify } from "
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { mockTenantId } from "../src/config.js";
+import { wrongTenantId } from "../src/faults/token-generator.js";
 import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
@@ -59,6 +60,35 @@ describe("OIDC provider", () => {
     scope = "openid profile",
     accountId = "user-admin",
   ): Promise<{ code: string; verifier: string }> {
+    const { response } = await signIn({ verifier, challenge, clientId, scope, accountId });
+    const callback = new URL(String(response.headers.location));
+    expect(callback.searchParams.get("state")).toBe("test-state");
+    return { code: String(callback.searchParams.get("code")), verifier };
+  }
+
+  /**
+   * Drives the Authorization request through account selection and returns
+   * the final response that carries the Authorization response to the client
+   * (a 303 for `query`, an auto-submitting form for `form_post`).
+   */
+  async function signIn({
+    verifier = randomBytes(32).toString("base64url"),
+    challenge = "",
+    clientId = "mock-public-client",
+    scope = "openid profile",
+    accountId = "user-admin",
+    responseMode,
+    nonce = "test-nonce",
+  }: {
+    verifier?: string;
+    challenge?: string;
+    clientId?: string;
+    scope?: string;
+    accountId?: string;
+    responseMode?: "query" | "form_post";
+    /** null leaves `nonce` out of the Authorization request. */
+    nonce?: string | null;
+  } = {}) {
     challenge ||= createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
       client_id: clientId,
@@ -66,10 +96,11 @@ describe("OIDC provider", () => {
       response_type: "code",
       scope,
       state: "test-state",
-      nonce: "test-nonce",
+      ...(nonce === null ? {} : { nonce }),
       code_challenge: challenge,
       code_challenge_method: "S256",
       ...(scope.includes("offline_access") ? { prompt: "consent" } : {}),
+      ...(responseMode ? { response_mode: responseMode } : {}),
     });
     let jar = "";
     let response = await context.app.inject({
@@ -109,9 +140,25 @@ describe("OIDC provider", () => {
       });
       jar = cookies(jar, response.headers);
     }
-    const callback = new URL(String(response.headers.location));
-    expect(callback.searchParams.get("state")).toBe("test-state");
-    return { code: String(callback.searchParams.get("code")), verifier };
+    return { response, verifier };
+  }
+
+  async function authorizationResponseParams(responseMode: "query" | "form_post") {
+    const { response, verifier } = await signIn({ responseMode });
+    if (responseMode === "query") {
+      expect(response.statusCode).toBe(303);
+      const callback = new URL(String(response.headers.location));
+      expect(`${callback.origin}${callback.pathname}`).toBe("http://localhost:3000/callback");
+      return { params: Object.fromEntries(callback.searchParams), verifier, statusCode: response.statusCode };
+    }
+    expect(response.body).toContain('action="http://localhost:3000/callback"');
+    const params = Object.fromEntries(
+      [...response.body.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"\/>/g)].map((match) => [
+        match[1]!,
+        match[2]!,
+      ]),
+    );
+    return { params, verifier, statusCode: response.statusCode };
   }
 
   async function exchange(
@@ -547,6 +594,99 @@ describe("OIDC provider", () => {
     expect(entries.every((entry) => !entry.path.includes("?"))).toBe(true);
   });
 
+  for (const responseMode of ["query", "form_post"] as const) {
+    it(`mutates each Authorization response scenario with response_mode=${responseMode}`, async () => {
+      const normal = await authorizationResponseParams(responseMode);
+      expect(normal.params).toMatchObject({ state: "test-state" });
+      expect(normal.params.code).toBeTypeOf("string");
+      expect(normal.params).not.toHaveProperty("error");
+
+      for (const scenario of [
+        "AUTH_STATE_MISMATCH",
+        "AUTH_STATE_MISSING",
+        "AUTH_CODE_INVALID",
+        "AUTH_CODE_MISSING",
+        "AUTH_CODE_WITH_ERROR",
+      ] as const) {
+        context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+        const { params, verifier, statusCode } = await authorizationResponseParams(responseMode);
+        expect(context.store.get().scenario, scenario).toBe("NORMAL");
+        expect(params.iss).toBe(`http://${host}`);
+        if (scenario === "AUTH_STATE_MISMATCH") {
+          expect(params.state).toBe("mock-mismatched-state");
+          expect(params.code).toBeTypeOf("string");
+        }
+        if (scenario === "AUTH_STATE_MISSING") {
+          expect(params).not.toHaveProperty("state");
+          expect(params.code).toBeTypeOf("string");
+        }
+        if (scenario === "AUTH_CODE_INVALID") {
+          expect(params.state).toBe("test-state");
+          expect(params.code).toMatch(/^mock-invalid-/);
+          const response = await exchange(params.code!, verifier);
+          expect(response.statusCode).toBe(400);
+          expect(response.json()).toMatchObject({ error: "invalid_grant" });
+        }
+        if (scenario === "AUTH_CODE_MISSING") {
+          expect(params.state).toBe("test-state");
+          expect(params).not.toHaveProperty("code");
+          expect(params).not.toHaveProperty("error");
+        }
+        if (scenario === "AUTH_CODE_WITH_ERROR") {
+          expect(params.state).toBe("test-state");
+          expect(params.code).toBeTypeOf("string");
+          expect(params.error).toBe("server_error");
+          expect(params.error_description).toBeTypeOf("string");
+          // oidc-provider's form_post picks 400 whenever `error` is present.
+          expect(statusCode).toBe(responseMode === "query" ? 303 : 400);
+        }
+      }
+    });
+  }
+
+  it("consumes Authorization response faults only on the successful response", async () => {
+    context.store.set({ scenario: "AUTH_STATE_MISMATCH", mode: "LIMITED", failureCount: 2 });
+    const before = context.accessLog.list().length;
+    await authorizationResponseParams("query");
+    expect(context.store.get()).toMatchObject({ scenario: "AUTH_STATE_MISMATCH", remainingFailures: 1 });
+    const faulted = context.accessLog
+      .list()
+      .slice(0, context.accessLog.list().length - before)
+      .filter((entry) => entry.fault !== null);
+    expect(faulted).toHaveLength(1);
+    expect(faulted[0]).toMatchObject({
+      method: "GET",
+      endpoint: "authorization",
+      statusCode: 303,
+      fault: { scenario: "AUTH_STATE_MISMATCH", endpoint: "authorization-response", remainingAfter: 1 },
+    });
+    expect(faulted[0]!.path).not.toBe(authorizePath);
+    context.store.clear();
+  });
+
+  it("does not consume Authorization response faults on an OAuth error response", async () => {
+    context.store.set({ scenario: "AUTH_STATE_MISMATCH", mode: "LIMITED", failureCount: 1 });
+    const query = new URLSearchParams({
+      client_id: "mock-public-client",
+      redirect_uri: "http://localhost:3000/callback",
+      response_type: "code",
+      scope: "openid profile",
+      state: "test-state",
+      nonce: "test-nonce",
+      code_challenge: createHash("sha256").update(randomBytes(32).toString("base64url")).digest("base64url"),
+      code_challenge_method: "S256",
+      prompt: "none",
+    });
+    // No session cookie, so prompt=none ends in login_required.
+    const response = await context.app.inject({ url: `${authorizePath}?${query}`, headers: { host } });
+    expect(response.statusCode).toBe(303);
+    const callback = new URL(String(response.headers.location));
+    expect(callback.searchParams.get("error")).toBe("login_required");
+    expect(callback.searchParams.get("state")).toBe("test-state");
+    expect(context.store.get()).toMatchObject({ scenario: "AUTH_STATE_MISMATCH", remainingFailures: 1 });
+    context.store.clear();
+  });
+
   it("rejects missing, mismatched, and malformed PKCE data", async () => {
     let flow = await authorize();
     const missing = await exchange(flow.code);
@@ -794,6 +934,72 @@ describe("OIDC provider", () => {
       }
     }
   });
+
+  it("mutates each ID Token / token response scenario through the token endpoint", async () => {
+    const cases = [
+      { scenario: "NONCE_MISMATCH" },
+      { scenario: "NONCE_MISSING" },
+      { scenario: "ALG_NONE" },
+      { scenario: "WRONG_TENANT" },
+      { scenario: "MISSING_CLAIM", parameters: { claim: "oid" } },
+      { scenario: "TOKEN_NO_ID_TOKEN" },
+    ] as const;
+    for (const testCase of cases) {
+      const flow = await authorize();
+      context.store.set({ mode: "LIMITED", failureCount: 1, ...testCase });
+      const response = await exchange(flow.code, flow.verifier);
+      expect(response.statusCode, response.body).toBe(200);
+      expect(context.store.get().scenario).toBe("NORMAL");
+      const tokens = response.json<{ id_token?: string; access_token: string }>();
+      const accessPayload = decodeJwt(tokens.access_token);
+      if (testCase.scenario === "TOKEN_NO_ID_TOKEN") {
+        expect(tokens).not.toHaveProperty("id_token");
+        expect(tokens.access_token.split(".")).toHaveLength(3);
+        continue;
+      }
+      const payload = decodeJwt(tokens.id_token!);
+      if (testCase.scenario === "NONCE_MISMATCH") {
+        expect(payload.nonce).toBe("mock-mismatched-nonce");
+        expect(decodeProtectedHeader(tokens.access_token).alg).toBe("RS256");
+      }
+      if (testCase.scenario === "NONCE_MISSING") expect(payload).not.toHaveProperty("nonce");
+      if (testCase.scenario === "ALG_NONE")
+        for (const token of [tokens.id_token!, tokens.access_token]) {
+          expect(decodeProtectedHeader(token).alg).toBe("none");
+          expect(token.endsWith(".")).toBe(true);
+        }
+      if (testCase.scenario === "WRONG_TENANT") {
+        expect(payload.tid).toBe(wrongTenantId);
+        expect(accessPayload.tid).toBe(wrongTenantId);
+      }
+      if (testCase.scenario === "MISSING_CLAIM") {
+        expect(payload).not.toHaveProperty("oid");
+        expect(accessPayload).not.toHaveProperty("oid");
+        expect(payload.sub).toBeTypeOf("string");
+      }
+    }
+  });
+
+  it.each(["NONCE_MISMATCH", "NONCE_MISSING"] as const)(
+    "keeps %s armed for a Token response whose ID Token has no nonce",
+    async (scenario) => {
+      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      const { response: authorization, verifier } = await signIn({ nonce: null });
+      const code = String(new URL(String(authorization.headers.location)).searchParams.get("code"));
+      const unchanged = await exchange(code, verifier);
+      expect(unchanged.statusCode, unchanged.body).toBe(200);
+      const idToken = unchanged.json<{ id_token: string }>().id_token;
+      expect(decodeJwt(idToken)).not.toHaveProperty("nonce");
+      expect(context.store.get()).toMatchObject({ scenario, remainingFailures: 1, triggeredCount: 0 });
+
+      const flow = await authorize();
+      const faulted = await exchange(flow.code, flow.verifier);
+      expect(faulted.statusCode, faulted.body).toBe(200);
+      expect(context.store.get().scenario).toBe("NORMAL");
+      const nonce = decodeJwt(faulted.json<{ id_token: string }>().id_token).nonce;
+      expect(nonce).toBe(scenario === "NONCE_MISMATCH" ? "mock-mismatched-nonce" : undefined);
+    },
+  );
 
   it("preserves sid and the optional email claim through SIGNING_KEY_ROLLOVER", async () => {
     await context.clientStore.create({

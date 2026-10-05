@@ -148,6 +148,26 @@ describe("InMemoryScenarioStore", () => {
     ).toThrow();
   });
 
+  it("defaults MISSING_CLAIM to sub and accepts only supported claims", () => {
+    expect(parseScenarioInput({ scenario: "MISSING_CLAIM", mode: "CONTINUOUS" })).toMatchObject({
+      parameters: { claim: "sub" },
+    });
+    expect(
+      parseScenarioInput({ scenario: "MISSING_CLAIM", mode: "LIMITED", failureCount: 1, parameters: { claim: "tid" } }),
+    ).toMatchObject({ parameters: { claim: "tid" } });
+    for (const claim of ["nonce", "groups", "", 1])
+      expect(() =>
+        parseScenarioInput({ scenario: "MISSING_CLAIM", mode: "CONTINUOUS", parameters: { claim } }),
+      ).toThrow();
+  });
+
+  it.each(["NONCE_MISSING", "AUTH_STATE_MISMATCH", "TOKEN_400"] as const)(
+    "rejects the claim parameter for %s",
+    (scenario) => {
+      expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS", parameters: { claim: "sub" } })).toThrow();
+    },
+  );
+
   it.each(["UNKNOWN_GROUPS", "DISCOVERY_INVALID"])("rejects removed scenario %s", (scenario) => {
     expect(() => parseScenarioInput({ scenario, mode: "CONTINUOUS" })).toThrow();
   });

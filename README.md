@@ -500,6 +500,11 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `AUTH_INTERACTION_REQUIRED`    | Authorization OAuth       | `interaction_required`を検証済みredirect URIへ返す                                                                                                             |
 | `AUTH_TEMPORARILY_UNAVAILABLE` | Authorization OAuth       | `temporarily_unavailable`をredirect URIへ返す                                                                                                                  |
 | `AUTH_SERVER_ERROR`            | Authorization OAuth       | `server_error`をredirect URIへ返す                                                                                                                             |
+| `AUTH_STATE_MISMATCH`          | Authorization response    | 成功応答の`state`を固定のダミー値`mock-mismatched-state`に置換する                                                                                             |
+| `AUTH_STATE_MISSING`           | Authorization response    | 成功応答から`state`を削除する                                                                                                                                  |
+| `AUTH_CODE_INVALID`            | Authorization response    | 成功応答の`code`を無効なランダム値に置換する。そのcodeでToken交換すると`invalid_grant`になる                                                                   |
+| `AUTH_CODE_MISSING`            | Authorization response    | 成功応答から`code`を削除する（`error`も付けない）                                                                                                              |
+| `AUTH_CODE_WITH_ERROR`         | Authorization response    | 成功応答の`code`を残したまま`error=server_error`と`error_description`を追加する                                                                                |
 | `AUTH_400`                     | `HEAD` Connectivity Probe | HTTP 400を本文なしで返す                                                                                                                                       |
 | `AUTH_429`                     | `HEAD` Connectivity Probe | HTTP 429と任意の`Retry-After`を本文なしで返す                                                                                                                  |
 | `AUTH_500`                     | `HEAD` Connectivity Probe | HTTP 500と任意の`Retry-After`を本文なしで返す                                                                                                                  |
@@ -512,6 +517,12 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
 | `INVALID_SIGNATURE`            | ID/access token           | 非公開Key Bで署名し、公開Key Aの`kid`を設定                                                                                                                    |
 | `UNKNOWN_KID`                  | ID/access token           | Key Aで署名し、JWKSにない`kid`を設定                                                                                                                           |
 | `SIGNING_KEY_ROLLOVER`         | Token/JWKS                | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開                                                                                                                       |
+| `NONCE_MISMATCH`               | ID token                  | 正常鍵で署名し、`nonce`を固定のダミー値`mock-mismatched-nonce`に変更する。Access Tokenは改変しない                                                             |
+| `NONCE_MISSING`                | ID token                  | 正常鍵で署名し、`nonce`を削除する。Access Tokenは改変しない                                                                                                    |
+| `ALG_NONE`                     | ID/access token           | headerを`alg: none`（`kid`なし）にし、署名部を空にした未署名JWTを返す                                                                                          |
+| `WRONG_TENANT`                 | ID/access token           | 正常鍵で署名し、`tid`と`iss`内のtenant IDを固定の別テナント`ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb`へ変更する                                                    |
+| `MISSING_CLAIM`                | ID/access token           | 正常鍵で署名し、parameter `claim`で指定したclaimを削除する                                                                                                     |
+| `TOKEN_NO_ID_TOKEN`            | `POST` Token              | HTTP 200のToken responseから`id_token`を削除する                                                                                                               |
 | `TOKEN_400`                    | `POST` Token              | 設定可能なOAuth errorをHTTP 400で返す。`error`未指定時は`invalid_grant`を既定値とし、`error_description`は`errorDescription`パラメータを指定した場合だけ含める |
 | `TOKEN_429`                    | `POST` Token              | HTTP 429と任意の`Retry-After`を返す                                                                                                                            |
 | `TOKEN_500`                    | `POST` Token              | HTTP 500と任意の`Retry-After`を返す                                                                                                                            |
@@ -540,6 +551,7 @@ AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害で�
 ### Parametersと回復試験
 
 - `AUTH_429`, `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`, `AUTH_500`, `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`の`retryAfterSeconds`は1以上のsafe integerで任意です。指定した場合だけ`Retry-After`を返し、未指定時は`Retry-After`なしで応答します。
+- `MISSING_CLAIM`の`claim`は`sub`、`oid`、`tid`、`iss`、`aud`、`exp`、`iat`のいずれかで、未指定時は`sub`です。
 - `AUTH_TIMEOUT`, `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT`の`delayMs`は1〜300,000msで、未指定時は30,000msです。
 - Connectivity Probe Faultは`HEAD`、Token Faultは`POST`、JWKS/Discovery Faultは`GET`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`はLIMITED countを消費しません。Authorization endpointはHTTP faultの対象外です。
 - Mock自身は待機や再試行を行いません。429と5xxのどちらも、`Retry-After`があればそれが終わるまで再取得せず、なければ指数バックオフするクライアント動作を試験してください。Timeoutでも即時再試行を避けてください。
@@ -547,6 +559,18 @@ AuthorizationのOAuth errorとConnectivity ProbeのHTTP faultは別の障害で�
 Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、429と5xxでは`Retry-After`があればそれを尊重するクライアント動作を想定しています。特定のAADSTS番号には依存しません。
 
 `prompt=none`で`login_required`または`interaction_required`を受けたクライアントは、同じsilent requestを繰り返さずinteractive authenticationへ切り替えてください。[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は検証済みredirect URIだけへ返します。
+
+### 認証応答の不正
+
+`AUTH_STATE_*`, `AUTH_CODE_*`, `NONCE_*`, `ALG_NONE`, `WRONG_TENANT`, `MISSING_CLAIM`, `TOKEN_NO_ID_TOKEN`は、IdPから届いた不正な認証応答をRPが拒否できるかを試験するシナリオです。ブラウザを介したE2Eではテスト側からredirectやトークンを書き換えにくいため、Mock側で注入します。
+
+- `AUTH_STATE_*`と`AUTH_CODE_*`は、Providerが成功応答を組み立てた後、送信する直前のパラメータを書き換えます（oidc-providerの`authorization.success`）。`response_mode=query`と`form_post`のどちらにも作用し、LIMITED countは成功応答を返す要求（ログイン後の`.../authorize/{uid}`）でだけ消費されます。interactionへのredirectやOAuth error応答では消費しません。
+- `AUTH_CODE_INVALID`と`AUTH_CODE_MISSING`でも、実際に発行されたcodeは使われないままAuthorization CodeのTTL（600秒）で失効します。
+- シナリオstoreはグローバル状態なので、Authorization response系でも、無関係な認可フローが先に成功応答を受け取るとそちらがFaultを消費します（[シナリオ API](#シナリオ-api)の注意を参照）。
+- `AUTH_CODE_WITH_ERROR`を`response_mode=form_post`で使うと、自動送信フォームはHTTP 400で返ります（oidc-providerは`error`を含むform_post応答を400にするため）。`query`では通常どおり303のredirectです。
+- `NONCE_*`, `ALG_NONE`, `WRONG_TENANT`, `MISSING_CLAIM`, `TOKEN_NO_ID_TOKEN`は他のToken改変系と同じく、refresh_token grantを含むすべての成功したToken応答に作用します。LIMITEDで使う場合は、silent refreshが先にFaultを消費しないよう注意してください。
+- `NONCE_MISMATCH`/`NONCE_MISSING`は、ID Tokenに`nonce`がある応答（認可要求で`nonce`を送った場合）だけに作用します。`TOKEN_NO_ID_TOKEN`は`id_token`を含む応答だけに作用します。それ以外の応答は改変せず、LIMITED countも消費しません。
+- `NONCE_MISMATCH`/`NONCE_MISSING`はID Tokenだけを改変します。`WRONG_TENANT`は`iss`と`tid`の整合を保ったまま別テナントのトークンに見せかけ、`iss`だけを無関係な値にする`WRONG_ISSUER`とは区別します。
 
 ### Provider標準機能との責務分離
 
@@ -558,7 +582,7 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 - 不正なconfidential client secretによる`invalid_client`
 - Token交換時の`redirect_uri`不一致による`invalid_grant`
 
-このため、`AUTH_CODE_INVALID`, `AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。`state`と`nonce`もクライアント側検証を上書きするScenarioにはしません。任意のToken endpoint errorが必要な場合は`TOKEN_400`をescape hatchとして使用できます（`AUTH_400`は本文を持てないため、任意のOAuth errorを返す用途には使えません）。AADSTS50196のloop検出も、例えば次のように再現できます。
+このため、`AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。PKCE失敗をIdP側から再現したい場合は、`TOKEN_400`（既定の`error`は`invalid_grant`）を使用してください。任意のToken endpoint errorが必要な場合も`TOKEN_400`をescape hatchとして使用できます（`AUTH_400`は本文を持てないため、任意のOAuth errorを返す用途には使えません）。AADSTS50196のloop検出も、例えば次のように再現できます。
 
 ```json
 {
@@ -576,7 +600,7 @@ Microsoft Entraの[クライアントアプリケーションの回復性](https
 
 `UNKNOWN_GROUPS`は認可データのケースでありOIDC障害ではないため削除しました。必要なgroupsはテストユーザーで表現してください。`DISCOVERY_INVALID`も削除し、Discoveryの障害は429、500、Timeoutで表現します。`JWKS_INVALID`はkey metadata検証用として維持します。Microsoft GraphはProviderの対象外なのでGraph APIの429は扱いません。
 
-新しいシナリオを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
+新しいシナリオを追加するときは、`src/scenario/types.ts`の名前・入力型と`src/scenario/registry.ts`の対象endpoint、effect、parameter/UI metadataを追加します。HTTP Faultは`src/faults/http-fault.ts`、認可応答の改変は`src/faults/authorization-fault.ts`、claim生成は`src/oidc/provider.ts`、意図的なJWT異常は`src/faults/token-generator.ts`へ責務ごとに実装し、Store・Integration Testを追加してください。
 
 ## アクセスログ
 
@@ -607,7 +631,7 @@ curl --cacert "$CURL_CA" -X DELETE "$MOCK_ORIGIN/__mock/api/access-log"
 | `scenario`   | 受付時に有効だったシナリオ名。`NORMAL`を含む。対象外endpointへの要求やHost不一致などで作用しなかった場合も、有効だったシナリオ名がそのまま入る     |
 | `fault`      | この要求が実際に消費したFault。`scenario`, `endpoint`, `mode`, `parameters`, `remainingBefore`, `remainingAfter`を含む。作用しなかった場合は`null` |
 
-`scenario`と`fault`の違いが「シナリオは有効だったが作用しなかった要求」の切り分けに役立ちます。たとえば`TOKEN_500`を有効にした状態でJWKSを取得すると`scenario: "TOKEN_500"`かつ`fault: null`になり、Tokenへ`POST`すると`fault.scenario: "TOKEN_500"`が入ります。`LIMITED`では`remainingBefore`と`remainingAfter`で消費されたcountを追えます。Authorization系のOAuth redirect errorは、最初の`GET .../authorize`の行にFaultが付き、続くサインイン画面と`.../authorize/{uid}`への再開要求は`fault: null`のまま記録されます。
+`scenario`と`fault`の違いが「シナリオは有効だったが作用しなかった要求」の切り分けに役立ちます。たとえば`TOKEN_500`を有効にした状態でJWKSを取得すると`scenario: "TOKEN_500"`かつ`fault: null`になり、Tokenへ`POST`すると`fault.scenario: "TOKEN_500"`が入ります。`LIMITED`では`remainingBefore`と`remainingAfter`で消費されたcountを追えます。Authorization系のOAuth redirect errorは、最初の`GET .../authorize`の行にFaultが付き、続くサインイン画面と`.../authorize/{uid}`への再開要求は`fault: null`のまま記録されます。一方、`AUTH_STATE_*`や`AUTH_CODE_*`などのAuthorization response系は、成功応答を返した行にFaultが付きます。通常はサインイン後の`.../authorize/{uid}`、既存セッションがある場合は最初の`.../authorize`の行です。
 
 ## 鍵と状態
 

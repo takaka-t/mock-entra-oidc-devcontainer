@@ -5,6 +5,11 @@ export const scenarioNames = [
   "AUTH_INTERACTION_REQUIRED",
   "AUTH_TEMPORARILY_UNAVAILABLE",
   "AUTH_SERVER_ERROR",
+  "AUTH_STATE_MISMATCH",
+  "AUTH_STATE_MISSING",
+  "AUTH_CODE_INVALID",
+  "AUTH_CODE_MISSING",
+  "AUTH_CODE_WITH_ERROR",
   "AUTH_400",
   "AUTH_429",
   "AUTH_500",
@@ -17,6 +22,12 @@ export const scenarioNames = [
   "INVALID_SIGNATURE",
   "UNKNOWN_KID",
   "SIGNING_KEY_ROLLOVER",
+  "NONCE_MISMATCH",
+  "NONCE_MISSING",
+  "ALG_NONE",
+  "WRONG_TENANT",
+  "MISSING_CLAIM",
+  "TOKEN_NO_ID_TOKEN",
   "TOKEN_400",
   "TOKEN_429",
   "TOKEN_500",
@@ -35,13 +46,26 @@ export type FaultScenarioName = Exclude<ScenarioName, "NORMAL">;
 export type ScenarioMode = "CONTINUOUS" | "LIMITED";
 /**
  * `authorization` is the OAuth redirect fault on a real Authorization request.
+ * `authorization-response` rewrites the parameters of a successful
+ * Authorization response (`code`/`state`) before they reach the client.
  * `authorization-http` is the `common` connectivity probe (`HEAD`), which is a
  * separate failure from a sign-in and never affects one.
  */
 export type FaultEndpoint =
-  "authorization" | "authorization-http" | "claims" | "token-jwt" | "token" | "jwks" | "discovery";
+  | "authorization"
+  | "authorization-response"
+  | "authorization-http"
+  | "claims"
+  | "token-jwt"
+  | "token"
+  | "jwks"
+  | "discovery";
+
+export const missingClaimNames = ["sub", "oid", "tid", "iss", "aud", "exp", "iat"] as const;
+export type MissingClaimName = (typeof missingClaimNames)[number];
 
 export interface ScenarioParameters {
+  claim?: MissingClaimName;
   delayMs?: number;
   error?: string;
   errorDescription?: string;
@@ -86,9 +110,13 @@ export interface NormalScenarioInput {
 type TimeoutScenarioName = "AUTH_TIMEOUT" | "TOKEN_TIMEOUT" | "JWKS_TIMEOUT" | "DISCOVERY_TIMEOUT";
 type RetryAfterScenarioName =
   "AUTH_429" | "TOKEN_429" | "JWKS_429" | "DISCOVERY_429" | "AUTH_500" | "TOKEN_500" | "JWKS_500" | "DISCOVERY_500";
-type ParameterlessScenarioName = Exclude<FaultScenarioName, TimeoutScenarioName | "TOKEN_400" | RetryAfterScenarioName>;
+type ParameterlessScenarioName = Exclude<
+  FaultScenarioName,
+  TimeoutScenarioName | "TOKEN_400" | "MISSING_CLAIM" | RetryAfterScenarioName
+>;
 
 interface NoScenarioParameters {
+  claim?: never;
   delayMs?: never;
   error?: never;
   errorDescription?: never;
@@ -96,6 +124,7 @@ interface NoScenarioParameters {
 }
 
 interface TimeoutScenarioParameters {
+  claim?: never;
   delayMs?: number;
   error?: never;
   errorDescription?: never;
@@ -103,6 +132,7 @@ interface TimeoutScenarioParameters {
 }
 
 interface Token400ScenarioParameters {
+  claim?: never;
   delayMs?: never;
   error?: string;
   errorDescription?: string;
@@ -110,10 +140,19 @@ interface Token400ScenarioParameters {
 }
 
 interface RetryAfterScenarioParameters {
+  claim?: never;
   delayMs?: never;
   error?: never;
   errorDescription?: never;
   retryAfterSeconds?: number;
+}
+
+interface MissingClaimScenarioParameters {
+  claim?: MissingClaimName;
+  delayMs?: never;
+  error?: never;
+  errorDescription?: never;
+  retryAfterSeconds?: never;
 }
 
 type ScenarioSpecificInput =
@@ -132,6 +171,10 @@ type ScenarioSpecificInput =
   | {
       scenario: RetryAfterScenarioName;
       parameters?: RetryAfterScenarioParameters;
+    }
+  | {
+      scenario: "MISSING_CLAIM";
+      parameters?: MissingClaimScenarioParameters;
     };
 
 export type ContinuousScenarioInput = ScenarioSpecificInput & {
