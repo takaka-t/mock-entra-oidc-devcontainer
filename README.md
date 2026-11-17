@@ -1,8 +1,8 @@
 # Mock Entra ID / OIDC Provider
 
-Microsoft Entra IDをIdPとするアプリケーションのローカル開発・障害試験用OIDC Providerです。OIDCの正常処理は`oidc-provider`に委譲し、HTTP障害、遅延、不正JWT、claim変更を独立したシナリオ層で注入します。Entra ID完全互換ではなく、Microsoft Graph APIも提供しません。
+Microsoft Entra IDをIdPとするアプリケーションのローカル開発・障害試験用OIDC Providerです。正常処理は`oidc-provider`、HTTP障害・遅延・不正JWT・claim変更の注入は独立したシナリオ層が担います。Entra ID完全互換ではなく、Microsoft Graph APIも提供しません。
 
-> ローカル試験専用です。インターネットへ公開しないでください。HTTPSでもAdmin APIは認証されず、ユーザー認証も選択式です。Client Secretもローカル試験の利便性を優先し、設定ファイル、Admin API、Admin UIのすべてで平文として扱います。
+> ローカル試験専用です。インターネットへ公開しないでください。HTTPSでもAdmin APIは認証なし、ユーザー認証は選択式です。Client Secretは設定ファイル・Admin API・Admin UIで平文として扱います。
 
 ## 目次
 
@@ -19,7 +19,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 
 ## 起動
 
-devcontainerとNode.js 24を前提とします。Composeのservice名は`app`で、OIDCで公開するhostnameはservice名から分離したDocker network aliasの`mock-idp.test`です。Tenant ID、issuer、host、portは次の値に固定しており、実行時に変更できません。
+devcontainerとNode.js 24を使用します。Tenant ID、issuer、host、portは固定で、実行時に変更できません。
 
 ```text
 Tenant ID: aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
@@ -28,19 +28,21 @@ Issuer:    https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0
 
 ### devcontainer起動前の準備
 
-1. **外部Docker networkの作成**: Composeは外部Docker network `mock-idp-network`を使用するため、初回起動前に`docker network create mock-idp-network`を実行します。
-2. **hostsファイルへのエントリ追加**: ホストOS上のブラウザから同じURLへアクセスするため、hostsファイル（macOS / Linux: `/etc/hosts`、Windows: `C:\Windows\System32\drivers\etc\hosts`）へ`127.0.0.1 mock-idp.test`を追加します。管理者権限が必要です。アプリケーションからは自動変更しません。
+1. **外部networkを作成**: 初回起動前に`docker network create mock-idp-network`を実行します。
+2. **ホストの名前解決を設定**: 管理者権限でhostsファイルへ`127.0.0.1 mock-idp.test`を追加します（自動変更なし）。ファイルはmacOS / Linuxでは`/etc/hosts`、Windowsでは`C:\Windows\System32\drivers\etc\hosts`です。
 
 ### devcontainer起動後のセットアップ
 
-1. **依存関係の導入（自動）**: コンテナを起動するたびに`.devcontainer/docker/docker-compose.yml`の`command`が`npm ci`を実行するため、初回起動や`node_modules`用named volumeの再作成時だけでなく、`package-lock.json`の更新も次回起動時に反映されます。VS Codeの接続と並行して進むため、接続直後はまだ導入中のことがあります。進行状況と結果は`docker logs <コンテナ名>`（コンテナ名は`docker ps`で確認）で確認できます。自動実行が失敗した場合（コンテナ自体は利用できます）や、起動し直さずに依存関係を入れ直す場合は、コンテナ内のターミナルで`npm ci`を手動実行します。
-2. **TLS証明書の生成**: devcontainerを初めて起動したとき、または`tls-private`用named volumeを作り直したときに`npm run setup:tls`を実行します。ローカルCAと`mock-idp.test`用サーバー証明書を生成します（詳細は[TLS証明書とローカルCA](#tls証明書とローカルca)）。
-3. **Mock IdPの起動**: `npm run dev`を実行します。Composeは固定のコンテナport 9000（listen address `0.0.0.0:9000`）をホストの`127.0.0.1:9000`に公開します。`ca.crt`、`server.crt`、`server.key.pem`がない、または内容が不正な場合は起動に失敗します。`ca.key.pem`はサーバー起動では読み込まず、証明書更新時だけ使用します。利用できるURLは[エンドポイント](#エンドポイント)を参照してください。
-4. **接続元でローカルCAを信頼する**: ホストOSやブラウザ、別Composeのコンテナなどの接続元でローカルCAを信頼させないと、証明書エラーでHTTPS接続できません。手順は[接続元でローカルCAを信頼する](#接続元でローカルcaを信頼する)を参照してください。
+1. **依存関係の導入完了を確認**: `docker ps`でコンテナ名を調べ、`docker logs <コンテナ名>`で自動実行される`npm ci`の結果を確認します。失敗時や手動で入れ直す場合は、コンテナ内で`npm ci`を実行します。
+2. **TLS証明書を生成**: 初回起動時と`tls-private`用named volumeの再作成時に`npm run setup:tls`を実行します（[生成ファイルと更新方法](#tls証明書とローカルca)）。
+3. **Mock IdPを起動**: `npm run dev`を実行します。必要な証明書・秘密鍵の不足や不正があれば起動に失敗します（[読み込み対象](#生成されるファイル)）。
+4. **接続元でCAを信頼し、疎通確認**: [接続元でローカルCAを信頼する](#接続元でローカルcaを信頼する)に従って設定し、`/health`で確認します。利用可能なURLは[エンドポイント](#エンドポイント)を参照してください。
+
+依存関係は`.devcontainer/docker/docker-compose.yml`の`command`が起動ごとに導入します。初回・`node_modules`用named volumeの再作成・`package-lock.json`更新を反映しますが、VS Code接続直後は導入中の場合があります。導入に失敗してもコンテナは利用できます。
 
 ## エンドポイント
 
-Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待ち受けます。HTTP listenerやHTTPからHTTPSへのredirectは提供しません。OIDC endpointのpath構造はMicrosoft Entra ID (v2.0 endpoint)の[公式仕様](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)に準拠しています。
+Mock IdPは直接HTTPSで待ち受け、HTTP listenerやHTTPSへのredirectは提供しません。OIDC endpointのpathはMicrosoft Entra ID (v2.0 endpoint)の[公式仕様](https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc)に準拠します。
 
 | Endpoint                         | URL                                                                                                     |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -54,18 +56,18 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 | Admin API                        | `https://mock-idp.test:9000/__mock/api/*`                                                               |
 | Health                           | `https://mock-idp.test:9000/health`                                                                     |
 
-- tenant直下からの相対pathで見ると、Discoveryはissuerと同じ`/v2.0`配下（`/v2.0/.well-known/openid-configuration`）ですが、authorize/token/logout（`/oauth2/v2.0/authorize`、`/oauth2/v2.0/token`、`/oauth2/v2.0/logout`）とJWKS（`/discovery/v2.0/keys`）はissuerの`/v2.0`とは別の、tenant直下の兄弟pathです。Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下です。
-- Discoveryが返す各endpointとID Tokenの正常系`iss`はissuerを基準に生成されます。SPAなどのOIDCクライアントのauthority/issuerにも上記のv2.0 issuerを設定してください。Access Tokenのissuerは[アクセストークンのバージョン](#アクセストークンのバージョン)を参照してください。JWTの`tid`には固定Tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
-- LogoutはRP-Initiated Logoutの確認ページを経由します。確認ページの送信先とサインアウト完了ページはLogout pathのsub pathの`/oauth2/v2.0/logout/confirm`、`/oauth2/v2.0/logout/success`です（クライアントが直接呼ぶpathではありません）。`post_logout_redirect_uri`は、そのクライアントのPost Logout Redirect URIに登録済みの場合だけ受け付けます。
-- `common`はEntraのmulti-tenant aliasです。クライアントライブラリはsign-inを始める前に`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`で到達性を確認するため、このMockはこの接続性プローブだけをtenant直下ではなくorigin直下で提供します。受け付けるのは`HEAD`だけです（CORS preflightの`OPTIONS`は204、他のmethodは404）。tenant aliasとしての`common`は実装していないため、このpathで認証フローは開始できません。
-- Microsoft Entra IDのDiscoveryドキュメントには`pushed_authorization_request_endpoint`（PAR）が含まれないため、PAR機能は無効化しています。
+- **path**: tenant直下の`/v2.0`はissuerとDiscovery用です。authorize/token/logoutは`/oauth2/v2.0`、JWKSは`/discovery/v2.0`配下にあります。Admin UI・Admin API・Healthはorigin直下です。
+- **issuer**: SPAなどのauthority/issuerには固定のv2.0 issuerを設定します。Discoveryの各endpointと正常なID Tokenの`iss`はこれを基準に生成し、`tid`は固定Tenant IDです。Access Tokenは[バージョン別の設定](#アクセストークンのバージョン)を参照してください。OIDC要求のscheme・Hostがissuerのoriginと一致しない場合は`400 invalid_request_origin`です。
+- **Logout**: 確認ページを経由します。送信先はtenant直下の`/oauth2/v2.0/logout/confirm`、完了ページは`/oauth2/v2.0/logout/success`で、クライアントから直接呼びません。`post_logout_redirect_uri`は対象クライアントのPost Logout Redirect URIに登録済みの値だけを受け付けます。
+- **Connectivity Probe**: Entraへのサインイン前の到達性確認（`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`）に対応します。Mockでは表のorigin直下のURLを使用し、`HEAD`のみ受け付けます（CORS preflightの`OPTIONS`は204、他のmethodは404）。Entraのmulti-tenant aliasである`common`を使った認証フローは未対応です。
+- **PAR**: EntraのDiscoveryと同じく`pushed_authorization_request_endpoint`を公開せず、機能を無効化しています。
 
 ### MSAL利用時の注意
 
-HTTPSで提供していても、MSALがcustom authorityを受け入れるとは限りません。`mock-idp.test:9000`はMicrosoftの既知クラウドインスタンスではないため、MSAL側のinstance discovery（既知authority検証）でブロックされます。
+`mock-idp.test:9000`はMicrosoftの既知クラウドインスタンスではないため、HTTPSでもMSALのinstance discovery（既知authority検証）でブロックされます。
 
-- MSAL.js（Browser / Node）では、使用するversionの設定方法に従って`knownAuthorities`へ`mock-idp.test:9000`を追加してください。MSAL Node v5では設定先が`auth`から`system`へ移動しているため、[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。
-- endpointのpath構造はEntraに準拠しているため、`protocolMode`を`OIDC`にする必要はない可能性があります。既定の`protocolMode`（AAD）で動作するかは使用するMSAL SDK/バージョンで実際に確認してください。
+- MSAL.js（Browser / Node）は`knownAuthorities`へ`mock-idp.test:9000`を追加します。MSAL Node v5の設定先は`system`です。[custom OIDC authorityの説明](https://learn.microsoft.com/en-us/entra/msal/javascript/node/initialize-public-client-application)と[使用versionの設定リファレンス](https://learn.microsoft.com/en-us/entra/msal/javascript/node/configuration)を確認してください。
+- endpointのpathはEntra準拠です。`protocolMode`の既定値（AAD）で動作するかを使用するSDK/バージョンで確認してください。`OIDC`への変更は不要な場合があります。
 - MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。
 - authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
 
@@ -73,29 +75,28 @@ HTTPSで提供していても、MSALがcustom authorityを受け入れるとは�
 
 ### 生成されるファイル
 
-`setup:tls`は公開証明書と秘密鍵を別々のディレクトリへ書き込みます。
+`npm run setup:tls`でローカルCAと`mock-idp.test`用サーバー証明書を生成します。
 
-| ファイル                           | 用途                                     |
-| ---------------------------------- | ---------------------------------------- |
-| `.data/tls/ca.crt`                 | 接続元へ登録する公開CA証明書             |
-| `.data/tls/server.crt`             | Mock IdPが提示するサーバー証明書         |
-| `.data/tls-private/ca.key.pem`     | CA秘密鍵。外部へ配布・コピーしない       |
-| `.data/tls-private/server.key.pem` | サーバー秘密鍵。外部へ配布・コピーしない |
+| ファイル                           | 用途                                                           |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `.data/tls/ca.crt`                 | 接続元へ登録する公開CA証明書。起動時に検証用に読み込む         |
+| `.data/tls/server.crt`             | Mock IdPが提示するサーバー証明書。起動時に読み込む             |
+| `.data/tls-private/ca.key.pem`     | CA秘密鍵。証明書更新時のみ使用し、サーバー起動時は読み込まない |
+| `.data/tls-private/server.key.pem` | サーバー秘密鍵。起動時に読み込む                               |
 
-- **ディレクトリを分ける理由**: `.data/tls`（公開証明書）はリポジトリのbind mountにそのまま含まれ、ホストからも参照できます。`.data/tls-private`（秘密鍵）は`node_modules`と同様に専用のnamed volume（`tls-private`）としてマウントされ、ホストのファイルシステムからは直接見えません。Windows Docker DesktopのBind Mountは常にPOSIXのpermissionを正しく保持できるとは限らず、秘密鍵の0700/0600チェックが失敗しうるためです。named volumeの実体はLinux VM側の通常のファイルシステムなので、この問題を回避できます。公開証明書（`ca.crt`/`server.crt`）は機密情報ではないため、bind mount側での正確なpermission一致は要求しません。
-- `.data/tls-private`は0700、秘密鍵は0600で作成され、常に検証されます。permission検査を回避したり秘密鍵を読みやすくしたりしないでください。
-- `--output-dir`と`--private-dir`には、同一でも親子関係でもない独立したディレクトリを指定してください。パスを正規化して重複・包含を検出した場合、セットアップはファイル生成前にエラーで終了します。
-- `ca.key.pem`と`server.key.pem`は共有ストレージ、接続元コンテナ（mount・COPYを含む）、ホストOSのtrust storeへコピーしないでください。接続元へ登録・配布するのは公開CAの`ca.crt`だけです。
+- **保存先とpermission**: 公開証明書はリポジトリのbind mountに含まれ、ホストから参照できます。秘密鍵は`node_modules`と同様に専用named volume（`tls-private`）へ保存し、ホストのファイルシステムからは直接見えません。Linux VM上のファイルシステムを使うことで、Windows Docker Desktopのbind mountでPOSIX permissionを保持できない問題を回避します。
+- `.data/tls-private`は0700、秘密鍵は0600で作成・検証します。検査の回避や権限の緩和はしないでください。機密情報でない公開証明書には、bind mount側での正確なpermission一致を要求しません。
+- `--output-dir`と`--private-dir`は独立したディレクトリを指定します。正規化後に同一・親子関係となる場合は、ファイル生成前にエラーで終了します。
+- **配布対象は`ca.crt`だけ**です。両秘密鍵を共有ストレージ、接続元コンテナ（mount・COPYを含む）、ホストOSのtrust storeへコピーしないでください。
 
 ### 接続元でローカルCAを信頼する
 
-CAの信頼設定が必要なのは、HTTPSクライアントが動作する接続元です。Mock IdPコンテナ自身のOS trust storeへCAを登録する必要はありません（Mock IdPは起動時の証明書検証に`.data/tls/ca.crt`と`.data/tls-private/server.key.pem`等を読み込みます）。
+HTTPS接続には、接続元で公開CAの`.data/tls/ca.crt`を信頼させる必要があります。Mock IdPコンテナ自身のOS trust storeへの登録は不要です。
 
-- **ホスト上のブラウザやアプリケーション**: ホストOS、ブラウザ、runtimeの該当するtrust storeへ設定します。
-- **別Composeのアプリケーション**: `.data/tls/ca.crt`をread-only mountする、接続元imageへ組み込むなどの方法で公開CAだけを渡し、接続元コンテナのOS、runtime、SDKが提供する方法で信頼を設定します。imageへ組み込む場合はCAローテーション後にimageを再buildし、mountする場合もCAを読み込む接続元プロセスの再起動またはreloadが必要です。
-- 登録・解除方法はOS、ブラウザ、runtime、SDK、base image、組織のセキュリティポリシーによって異なるため、それぞれの公式ドキュメントを参照してください。
-- このCAは開発端末とテスト用コンテナだけで信頼し、不要になったら解除してください。
-- curlの`-k`/`--insecure`やruntime、SDKの設定で証明書検証を無効化せず、CAを正しく登録してください。devcontainer内では次のように疎通を確認できます。
+- **ホストのブラウザ・アプリ**: ホストOS、ブラウザ、runtimeのtrust storeへ登録します。
+- **別Composeのアプリ**: 公開CAをread-only mountまたはimageへ組み込み、接続元のOS・runtime・SDKで信頼を設定します。CA更新後はimageの再build、またはmount先プロセスの再起動・reloadが必要です。
+- 登録・解除は利用環境（OS・ブラウザ・runtime・SDK・base image）の公式手順と組織のセキュリティポリシーに従います。信頼するのは開発端末・テスト用コンテナだけとし、不要になったら解除してください。
+- curlの`-k`/`--insecure`やruntime・SDKの設定で証明書検証を無効化しないでください。devcontainer内の疎通確認例:
 
 ```bash
 curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
@@ -103,14 +104,14 @@ curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
 
 ### 証明書の更新とCAローテーション
 
-`npm run setup:tls`を再実行すると、状態に応じて次のように動作します。更新された証明書を反映するにはMock IdPを再起動してください。
+`npm run setup:tls`の再実行時の動作は次のとおりです。更新後はMock IdPを再起動します。
 
-| 状態                                                                                                                             | 結果                                                                     |
-| -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `.data/tls`と`.data/tls-private`それぞれに有効な2ファイルが揃い、CAの残存期間が397日より長く、サーバー証明書の残存期間が30日以上 | 何も変更しない                                                           |
-| サーバー証明書の残存期間が30日未満、または期限切れ（CAはまだ有効）                                                               | まだ有効な同じCAを使ってサーバー証明書だけを更新する（CAの再登録は不要） |
-| CAの残存期間が397日以下                                                                                                          | 失敗する（有効期限内のローテーションを案内）                             |
-| CAが期限切れ、ファイル一式が不完全・不正、または`.data/tls`と`.data/tls-private`の状態が食い違っている                           | 失敗する（自動上書きしない）                                             |
+| 状態                                                                                             | 結果                                             |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| 両ディレクトリに有効な2ファイルずつが揃い、CAの残存期間が397日より長く、サーバー証明書が30日以上 | 変更なし                                         |
+| サーバー証明書の残存期間が30日未満または期限切れで、CAの残存期間は397日より長い                  | 同じCAでサーバー証明書だけ更新（CAの再登録不要） |
+| CAの残存期間が397日以下                                                                          | 失敗。有効期限内のCAローテーションが必要         |
+| CAが期限切れ、ファイルが不足・不正、または両ディレクトリの状態が不一致                           | 失敗。自動上書きしない                           |
 
 **CAのローテーション手順**
 
@@ -118,19 +119,27 @@ curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
 2. 旧CAをすべての接続元のtrust storeから解除する。
 3. `npm run setup:tls -- --rotate-ca`で新規CAを生成する。
 4. 新しい`ca.crt`をすべての接続元へ再登録する。
-5. Mock IdPと接続元プロセスを再起動する。CAが変わるため、古い証明書を組み込んだコンテナイメージも再buildする。
+5. [接続元への反映方法](#接続元でローカルcaを信頼する)に従ってimageを再buildし、Mock IdPと接続元プロセスを再起動する。
 
-> CAを期限切れまで放置した場合、`--rotate-ca`も既存の不正なdirectoryを上書きしません。Mock IdPを停止し、`.data/tls`と`.data/tls-private`をそれぞれ明示的に別名へ退避してから手順3を実行してください。
+> CAが期限切れの場合も`--rotate-ca`は不正なディレクトリを上書きしません。Mock IdPを停止し、`.data/tls`と`.data/tls-private`をそれぞれ別名へ退避してから手順3を実行してください。
 
 **異常終了時の復旧手順**
 
-セットアップが異常終了すると、同時実行防止用の`.data/tls.setup.lock`、各ディレクトリ内の`<ファイル名>.backup-<pid>-<uuid>`形式のbackupファイル（例: `.data/tls/ca.crt.backup-*`、`.data/tls-private/server.key.pem.backup-*`）、`.tls-setup-*`形式の一時directory（例: `.data/tls/.tls-setup-*`、`.data/tls-private/.tls-setup-*`）が残る場合があります。復旧候補が残っている間、scriptは新しいCAの生成を拒否します。ロックだけを削除して再実行せず、次の手順で復旧してください。
+異常終了時は次のファイルが残る場合があります。復旧候補がある間は新しいCAを生成できません。ロックだけを削除して再実行しないでください。
+
+| 残存ファイル       | 場所・形式                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 同時実行防止ロック | `.data/tls.setup.lock`                                                                                                               |
+| backup             | 各ディレクトリ内の`<ファイル名>.backup-<pid>-<uuid>`（例: `.data/tls/ca.crt.backup-*`、`.data/tls-private/server.key.pem.backup-*`） |
+| 一時ディレクトリ   | `.data/tls/.tls-setup-*`、`.data/tls-private/.tls-setup-*`                                                                           |
 
 1. 別の`setup:tls`プロセスが動いていないことを確認する。
-2. 正規の`.data/tls`・`.data/tls-private`と、上記の復旧用directoryの状態を確認する。
-3. 正規directoryがない場合は、確立済みCAを含むbackupをそれぞれ元のパスへ戻し、内容を検証する。
+2. 正規の`.data/tls`・`.data/tls-private`と上記の復旧候補を確認する。
+3. 正規ディレクトリがなければ、確立済みCAを含むbackupをそれぞれ元のパスへ戻して検証する。
 
 ## ホストと別Composeからの接続
+
+Composeのservice名は`app`、公開hostnameはDocker network aliasの`mock-idp.test`です。コンテナの`0.0.0.0:9000`をホストの`127.0.0.1:9000`へ公開します。
 
 ```text
 ホストのブラウザ:
@@ -140,7 +149,7 @@ curl --cacert .data/tls/ca.crt https://mock-idp.test:9000/health
   https://mock-idp.test:9000 → Docker DNS / network alias → mock-idp-network → app (Mock IdP) Container
 ```
 
-別Composeで起動するアプリケーションは、同じexternal networkへ参加させます。Composeのproject名に依存するnetwork名は使用しません。別コンテナからはDocker DNSがnetwork aliasを解決するため、コンテナ内のhosts設定や`localhost`への置き換えは不要です。接続元コンテナも公開CAを信頼する必要があります（[接続元でローカルCAを信頼する](#接続元でローカルcaを信頼する)）。
+別Composeのアプリを同じexternal networkへ参加させ、[公開CAを信頼](#接続元でローカルcaを信頼する)させます。名前解決はDocker DNSが行うため、コンテナ内のhosts設定は不要です。network名はComposeのproject名に依存しません。
 
 ```yaml
 services:
@@ -153,21 +162,19 @@ networks:
     external: true
 ```
 
-- `localhost`は実行環境自身を指すため、ホストではホストを、アプリケーションコンテナではそのコンテナ自身を指します。接続元によってissuerを切り替えるとDiscoveryやJWTの`iss`検証が不整合になるため、issuerには使用しません。
-- `.local`はmDNSで使用され、OSやネットワーク環境によって名前解決と衝突する可能性があるため、テスト用に予約された`.test`を使用します。
+- issuerを`localhost`へ置き換えないでください。`localhost`は各実行環境自身を指し、接続元ごとにissuerを変えるとDiscoveryやJWTの`iss`検証が不整合になります。
+- hostnameにはテスト用の予約ドメイン`.test`を使います。`.local`はmDNSの名前解決と衝突する可能性があります。
 
 ## OIDCクライアントとテストユーザー
 
 ### 共通の動作
 
-- 初回起動時に初期データ（[初期クライアント](#oidcクライアント)・[初期ユーザー](#テストユーザー)）を作成します。Admin UIの「OIDC クライアント一覧」「テストユーザー一覧」またはAdmin APIで追加・編集・削除でき、変更は再起動なしで反映されます（テストユーザーはサインイン画面とトークンに反映）。設定はそれぞれ`.data/clients.json`、`.data/users.json`へ0600で保存されます。
-- Admin UIでの登録・編集はダイアログで行います。保存に成功するとダイアログが閉じて結果の通知が表示され、失敗した場合は入力を保持したままダイアログ内にエラーを表示します。保存後の一覧更新だけが失敗した場合は「一覧を再読み込み」で一覧取得だけを再試行できます。未保存の変更がある状態で閉じるときは確認します。
-- Client IDとユーザーの`sub`は、前後の空白を除いて1〜100文字の印字可能ASCIIとし、`.`・`..`は指定できません。作成後は変更できないため、変更する場合は削除して再作成してください。
-- Admin APIで必須項目を省略すると400になります。
-- `.data/clients.json`と`.data/users.json`にも同じ入力検証を適用します。不適合なIDや改行入りの項目が保存されている場合は自動変換せず起動に失敗するため、設定ファイルを修正してください。
-- `POST /__mock/api/clients/reset`はクライアントだけ、`POST /__mock/api/users/reset`はテストユーザーだけを初期状態へ戻します。シナリオや互いのリセットには影響しません。
-- 永続化するのは設定だけです。認可コード、Session、Grant、Access Token、Refresh TokenのProvider内部状態はProviderインスタンス単位のメモリだけに保持するため、Client・ユーザーを削除またはresetしても発行済みartifact（発行済みJWTを含む）は完全には失効しません。Providerを含むappの再構築またはプロセス再起動で破棄されます。
-- 削除・resetで消えたユーザーのブラウザセッションでは、次の通常の認可要求でユーザー選択をやり直し、`prompt=none`では`login_required`を返します。そのユーザーの発行済み認可コード・Refresh Tokenの交換は`invalid_grant`になります。同じ`sub`を再作成すると、残存するセッションやGrantが再び利用される場合があります。
+- **初期化と保存**: 初回起動で[初期クライアント](#oidcクライアント)・[初期ユーザー](#テストユーザー)を作成します。Admin UIの「OIDC クライアント一覧」「テストユーザー一覧」またはAdmin APIで追加・編集・削除でき、再起動なしで反映します（ユーザーはサインイン画面・トークンに反映）。保存先とpermissionは[鍵と状態](#鍵と状態)を参照してください。
+- **Admin UI**: 登録・編集ダイアログは保存成功で閉じて通知し、失敗時は入力を保持してエラーを表示します。一覧更新だけの失敗は「一覧を再読み込み」で再試行できます。未保存で閉じる場合は確認します。シナリオ以外のカードは見出しで折りたため、初回は閉じた状態です。開閉状態はブラウザに保存します。
+- **IDと検証**: Client ID・`sub`は前後の空白を除いて1〜100文字の印字可能ASCII（`.`・`..`は不可）。作成後の変更は削除・再作成が必要です。Admin APIの必須項目不足は400です。設定ファイルにも同じ検証を適用し、不適合なIDや改行入りの項目は自動変換せず起動に失敗します。該当ファイルを修正してください。
+- **reset**: `POST /__mock/api/clients/reset`はクライアントだけ、`POST /__mock/api/users/reset`はユーザーだけを初期化し、シナリオや他方へ影響しません。
+- **発行済み状態**: 設定の削除・resetでは、発行済みJWTを含むartifactは完全には失効しません。Provider内部状態はインスタンス単位のメモリに保持し、Providerを含むappの再構築・プロセス再起動で破棄します（[保持対象](#鍵と状態)）。
+- **ユーザー削除・reset後**: 消えたユーザーのセッションは次の認可要求でユーザーを再選択し、`prompt=none`なら`login_required`を返します。そのユーザーの認可コード・Refresh Token交換は`invalid_grant`です。同じ`sub`を再作成すると残存セッション・Grantを再利用できる場合があります。
 
 ### OIDCクライアント
 
@@ -181,12 +188,20 @@ networks:
 | Redirect URI                   | `http://localhost:3000/callback`   |
 | Access token audience/resource | `urn:mock-api`                     |
 
-通常のOIDCフローでは全clientでAuthorization Code FlowとS256 PKCEが必須です。バックエンドAPIだけを検証する場合は[開発用アクセストークンの直接発行](#開発用アクセストークンの直接発行)も利用できます。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
+通常のOIDCフローでは全クライアントでAuthorization Code FlowとS256 PKCEが必須です。APIだけの検証には[アクセストークンの直接発行](#開発用アクセストークンの直接発行)も使えます。Discovery・issuer・audience・期限・署名・JWKS・redirect URI・client IDの検証は無効化しないでください。
 
-- **設定項目**: Client ID、Public/Confidential種別、secret、Token Endpoint認証方式（Publicは`none`、Confidentialは`client_secret_basic`または`client_secret_post`）、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、Access Tokenのバージョン、emailのoptional claim化。
-- `accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
-- **標準OIDC scope**: `openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`offline_access`を要求するとRefresh Tokenが発行されます。`email`の扱いは[トークンのclaim](#トークンのclaim)を参照してください。
-- **対象外**: Access Tokenの`scp` claimはクライアントごとに設定した単一の委任scope名をそのまま返すだけの簡易モデルです。Microsoft Graphや独自Web APIの複数permissionの管理、admin consent、Expose an APIの管理UIは対象外です。
+| 設定項目               | 内容                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| クライアント           | Client ID、Public/Confidential種別、secret                                                      |
+| Token Endpoint認証方式 | Public: `none`。Confidential: `client_secret_basic`または`client_secret_post`                   |
+| Redirect先             | Redirect URI、Post Logout Redirect URI                                                          |
+| Access Token           | Audience、`accessTokenScope`（`scp`の委任scope名）、[バージョン](#アクセストークンのバージョン) |
+| email                  | `emailOptionalClaim`（[emailを常に含める設定](#トークンのclaim)）                               |
+
+`accessTokenScope`・`emailOptionalClaim`はAdmin APIの作成（`POST`）・更新（`PUT`）で必須です。Admin UIの新規作成時はscopeに`access_as_user`を入力済みです。
+
+- **標準OIDC scope**: 全クライアントで`openid`, `profile`, `email`, `offline_access`を利用できます。Entra IDのアプリ登録項目ではなく、認可リクエストの`scope`で要求します。`offline_access`でRefresh Tokenを発行し、`email`は[claimの条件](#トークンのclaim)に従います。
+- **制限**: `scp`はクライアントに設定した単一の委任scope名を返す簡易モデルです。Microsoft Graph・独自Web APIの複数permission、admin consent、Expose an APIの管理UIは対象外です。
 
 ```bash
 CURL_CA=.data/tls/ca.crt
@@ -214,11 +229,11 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/r
 
 ### アクセストークンのバージョン
 
-Admin UIのクライアント編集で「アクセストークンのバージョン」を選ぶか、Admin APIの作成・更新リクエストに`"accessTokenVersion":"1.0"`または`"accessTokenVersion":"2.0"`を指定します。作成時の省略は`"2.0"`、更新時の省略は現在の設定を維持します。既存の`clients.json`に項目がなくてもv2.0として読み込めます。変更後に取得・更新したAccess Tokenから反映され、発行済みトークンは変わりません。
+Admin UIのクライアント編集、またはAdmin APIの`accessTokenVersion`で`"1.0"`・`"2.0"`を選びます。作成時・`clients.json`での省略は`"2.0"`、更新時の省略は現在値を維持します。変更は次の取得・更新から反映し、発行済みトークンは変わりません。
 
-SPAのauthority、Authorization/Token endpoint、ID Tokenは引き続きv2.0です。Authorization CodeとRefresh Tokenのどちらからでも、選んだバージョンのAccess Tokenが発行されます。Entra IDでも[アクセストークンのバージョンは認証エンドポイントのバージョンと独立](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-ownership)しています。
+SPAのauthority・Authorization/Token endpoint・ID Tokenはv2.0です。Access TokenはAuthorization Code・Refresh Tokenのどちらでも選択したバージョンになります。これはEntra IDの[認証エンドポイントから独立したバージョン指定](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-ownership)に相当します。
 
-バックエンドAPIには、使用するAccess Tokenに応じて次を設定してください。`aud`は両バージョンともクライアント設定の`accessTokenAudience`です。
+バックエンドAPIの検証設定は次のとおりです。`aud`は両バージョンとも`accessTokenAudience`です。
 
 | バックエンドの検証設定 | v1.0                                                                                               | v2.0                                                                                                    |
 | ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -226,13 +241,13 @@ SPAのauthority、Authorization/Token endpoint、ID Tokenは引き続きv2.0で�
 | メタデータURL          | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/.well-known/openid-configuration` | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration` |
 | JWKS URL               | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/keys`                   | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`                   |
 
-v1.0のメタデータはAPIのアクセストークン検証専用で、`issuer`、`jwks_uri`、`id_token_signing_alg_values_supported`を返します。SPAのサインイン用Discoveryにはv2.0を使ってください。v1.0のAuthorization/Token endpointや`resource`パラメーターによる認証要求は実装していません。v1.0のメタデータとJWKSにも、既存のorigin検証、CORS、Discovery/JWKS障害シナリオ、署名鍵ローテーション、アクセスログが適用されます。
+v1.0のメタデータはAPIのAccess Token検証専用で、`issuer`・`jwks_uri`・`id_token_signing_alg_values_supported`を返します。メタデータ・JWKSにはorigin検証、CORS、Discovery/JWKS障害、署名鍵ローテーション、アクセスログを適用します。v1.0のAuthorization/Token endpointや`resource`による認証要求は未対応です。SPAのサインイン用Discoveryにはv2.0を使ってください。
 
-実際のEntra IDではバージョンをAPI側の`requestedAccessTokenVersion`で指定します。このMockはAPI登録を独立して持たない簡易モデルのため、Audienceやscopeと同じくクライアント設定に保持します。同じAPIを利用する複数クライアントには同じバージョンを設定してください。また、実環境のv1.0 issuerの`sts.windows.net`は使用せず、Mockのoriginに置き換えています。
+Entra IDはAPI側の`requestedAccessTokenVersion`で指定しますが、MockはAPI登録を持たず、Audience・scopeと同じくクライアントに保持します。同じAPIを使うクライアントには同じバージョンを設定してください。v1.0 issuerは実環境の`sts.windows.net`を使わず、Mockのoriginです。
 
 ### テストユーザー
 
-初期ユーザーは次のとおりです。`tid`は常にこのMockのTenant IDです。
+初期ユーザーは次のとおりです。
 
 | sub                 | 表示名            | username                   | oid                                    | groups                                    |
 | ------------------- | ----------------- | -------------------------- | -------------------------------------- | ----------------------------------------- |
@@ -240,20 +255,18 @@ v1.0のメタデータはAPIのアクセストークン検証専用で、`issuer
 | `user-normal`       | Normal User       | `user@example.com`         | `22222222-2222-2222-2222-222222222222` | `app-user-group-id`                       |
 | `user-unauthorized` | Unauthorized User | `unauthorized@example.com` | `33333333-3333-3333-3333-333333333333` | なし                                      |
 
-| 項目                 | 内容                                                                                                                                                                                                                                                   |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `sub`                | ユーザーの識別子。サインイン画面の選択値とトークンの`sub`になる。Admin UIでは新規作成時にランダムなUUIDが初期値として入力され、保存前は編集できる。空欄で保存した場合やAdmin APIで省略した場合は、サーバー側でランダムなUUIDを一度だけ生成して保存する |
-| `oid`                | GUID形式。小文字に正規化して保存する。Admin UIでは新規作成時にランダムなUUIDが初期値として入力され、編集できる                                                                                                                                         |
-| `name`               | 表示名                                                                                                                                                                                                                                                 |
-| `preferred_username` | UPN相当の値                                                                                                                                                                                                                                            |
-| `mail`               | メール形式。`email` claimとして返される                                                                                                                                                                                                                |
-| `groups`             | Admin UIでは1行に1件、Admin APIでは文字列配列。重複は除去され、空も指定できる                                                                                                                                                                          |
+| 項目                 | 内容                                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sub`                | サインイン画面の選択値・トークンの`sub`。新規作成時のAdmin UIは編集可能なランダムUUIDを入力済み。空欄保存・Admin APIでの省略時はサーバーがUUIDを一度生成して保存 |
+| `oid`                | GUID形式で、小文字に正規化して保存。新規作成時のAdmin UIは編集可能なランダムUUIDを入力済み                                                                       |
+| `name`               | 表示名                                                                                                                                                           |
+| `preferred_username` | UPN相当の値                                                                                                                                                      |
+| `mail`               | メール形式。`email` claimとして返される                                                                                                                          |
+| `groups`             | Admin UIは1行1件、Admin APIは文字列配列。重複を除去し、空も指定可能                                                                                              |
 
-- `name`・`preferred_username`・各グループ名は前後の空白を除去し、内部の改行（CR/LF）を拒否します。日本語などのUnicodeや内部の空白は保持します。
-- `oid`と`preferred_username`はユーザー間で重複できません（`preferred_username`は大文字小文字を区別しません）。
-- `tid`は設定項目ではありません。`users.json`に`tid`を含めると起動時に検証エラーになります。
-- Admin APIでは作成時（`POST /__mock/api/users`）は`sub`以外の全項目、更新時（`PUT /__mock/api/users/:sub`）は全項目が必須です。
-- エラーは`invalid_user`（400）、`user_conflict`（409）、`user_not_found`（404）で返します。
+- `name`・`preferred_username`・各グループ名は前後の空白を除去し、改行（CR/LF）を拒否します。Unicode・内部の空白は保持します。
+- `oid`・`preferred_username`はユーザー間で重複不可（後者は大文字小文字を区別しない）。`tid`は固定Tenant IDで設定不可です。`users.json`に含めると起動時に検証エラーになります。
+- Admin APIの作成（`POST /__mock/api/users`）は`sub`以外の全項目、更新（`PUT /__mock/api/users/:sub`）は全項目が必須です。エラーは`invalid_user`（400）、`user_conflict`（409）、`user_not_found`（404）です。
 
 ```bash
 CURL_CA=.data/tls/ca.crt
@@ -290,24 +303,36 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users/res
 
 ### トークンのclaim
 
-- **ID Token・Access Token共通**: `sub`, `oid`, `tid`, `name`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`
-- **ID Token・v2.0 Access Token**: `preferred_username`。ID Tokenの`ver`は常に`"2.0"`です。
-- **v2.0 Access Tokenのみ**: `azp`（client_id）、`azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）。`ver`は`"2.0"`です。
-- **v1.0 Access Tokenのみ**: `appid`（client_id）、`appidacr`（上記`azpacr`と同じ値）、`unique_name`（ユーザーの`preferred_username`の値）。`ver`は`"1.0"`です。`azp`、`azpacr`、`preferred_username`は含みません。[Entra IDのclaimのバージョン差](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)に対応しています。
-- **Access Token共通**: `scp`（クライアント設定の委任scope名）。JWTペイロードには`scope` claimを含めません。トークン応答の`scope`とOIDCのスコープ処理は従来どおりです。
-- **`email`**: ユーザーの`mail`の値です。`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）だけ含まれます。表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
-- `mail` claimは含みません。Microsoft Graphのユーザープロパティ名であり、Entra IDのトークンclaimには存在しないためです。
-- Access TokenのJWTヘッダーは、v1.0／v2.0ともEntra IDと同じ`typ:"JWT"`です。従来の`typ:"at+jwt"`またはJWTの`scope` claimに依存している検証・権限取得処理は、`typ:"JWT"`と`scp`に合わせてください。**既知の制限**として、ID Tokenには実際のEntra IDが付与する`typ:"JWT"`を設定していません。
+通常のOIDCフローの共通claimは`sub`, `oid`, `tid`, `name`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`です。[Entra IDのバージョン差](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)に対応する違いは次のとおりです（`—`は含まない項目）。
+
+| 項目                 | ID Token             | v1.0 Access Token | v2.0 Access Token    |
+| -------------------- | -------------------- | ----------------- | -------------------- |
+| `ver`                | `"2.0"`              | `"1.0"`           | `"2.0"`              |
+| ユーザー名           | `preferred_username` | `unique_name`     | `preferred_username` |
+| client_id            | —                    | `appid`           | `azp`                |
+| クライアント認証方式 | —                    | `appidacr`        | `azpacr`             |
+| 委任scope名          | —                    | `scp`             | `scp`                |
+| JWTヘッダーの`typ`   | 未設定（既知の制限） | `"JWT"`           | `"JWT"`              |
+
+- `unique_name`はユーザーの`preferred_username`の値です。`appidacr`・`azpacr`はPublicで`0`、client secretで認証するConfidentialで`1`です。v1.0 Access Tokenに`azp`・`azpacr`・`preferred_username`は含めません。
+- `scp`はクライアント設定の委任scope名です。JWTに`scope` claimは含めず、`scope`はToken応答とOIDCのスコープ処理で使用します。
+- `email`はユーザーの`mail`の値です。`email` scopeの要求時、または`emailOptionalClaim`有効時に含めます（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)相当）。表示・連絡先に使い、ユーザー識別には`oid`と`tid`の組または`sub`を使ってください。
+- `mail`はMicrosoft Graphのプロパティ名であり、Entra IDのトークンclaimには含まれません。Access Tokenの`typ:"JWT"`はEntra IDと同じですが、ID Tokenの`typ`はEntra IDと異なり未設定です。
 
 ## 開発用アクセストークンの直接発行
 
-フロントエンドやブラウザのサインイン操作を経由せず、バックエンドAPIの検証用アクセストークンを発行できます。Admin UIの「アクセストークン発行」を開き、登録済みクライアントとテストユーザーを選択して「発行」を押します。表示されたトークンは「アクセストークンをコピー」でコピーできます。候補を取得できない場合や別の画面で設定を変更した場合は「候補を再読み込み」を使用してください。
+サインイン操作なしで、バックエンドAPI検証用のAccess Tokenを発行できます。
+
+1. Admin UIの「アクセストークン発行」で登録済みクライアント・ユーザーを選び、「発行」を押す。
+2. 「アクセストークンをコピー」で取得する。コピー失敗時は表示されたトークンを手動でコピーする。
+
+候補の取得失敗時や別画面での設定変更後は「候補を再読み込み」を使ってください。
 
 ### Admin APIで発行してAPIを呼び出す
 
-`POST /__mock/api/tokens`はJSONの`clientId`と`userSub`を必須として受け付けます。PUBLIC／CONFIDENTIALのどちらも選択でき、クライアントシークレットは不要です。既存の管理APIと同じくローカル試験専用で、Host・Origin・JSON本文の検証とキャッシュ抑止を適用します。
+`POST /__mock/api/tokens`にJSONで`clientId`・`userSub`を指定します（両方必須）。PUBLIC／CONFIDENTIALともsecret不要です。ローカル試験専用で、Host・Origin・JSON本文の検証とキャッシュ抑止を適用します。
 
-以下の例は`jq`を使用します。呼び出し先のURLは検証対象のバックエンドAPIに置き換えてください。
+以下は`jq`を使用します。呼び出し先URLを検証対象のバックエンドAPIに置き換えてください。
 
 ```bash
 CURL_CA=.data/tls/ca.crt
@@ -334,22 +359,27 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8080/api/example
 }
 ```
 
-入力不正は400（`invalid_token_request`）、未登録のクライアントは404（`client_not_found`）、未登録のユーザーは404（`user_not_found`）です。日本語の`message`を返します。
+入力不正は400（`invalid_token_request`）、クライアント未登録は404（`client_not_found`）、ユーザー未登録は404（`user_not_found`）で、日本語の`message`を返します。
 
-- `aud`、`scp`、バージョン、issuerは発行時のクライアント設定に従います。署名鍵は通常のOIDCフローと共通で、バックエンドは既存のDiscovery・JWKSで検証できます。
-- ユーザー情報とgroupsを含めます。emailは`emailOptionalClaim: true`のときに含めます。ブラウザセッションを作成しないため`sid`は付与せず、ID Token・Refresh Token・アプリ権限のトークンは発行しません。
-- 通常の有効期間は3,600秒です。`expires_in`は通常のToken endpointと同様に障害適用前の有効期間を示すため、期限切れ障害などの適用後はJWTの実際の期限と異なります。
-- JWTはファイルやブラウザストレージへ保存せず、管理APIの要求は既存どおりアクセスログへ記録しません。コピー失敗時は表示されたトークンを手動でコピーできます。
+- `aud`・`scp`・バージョン・issuerは発行時のクライアント設定に従います。署名鍵は通常のOIDCフローと共通で、同じDiscovery・JWKSで検証できます。
+- ユーザー情報・groupsを含め、emailは`emailOptionalClaim: true`のときだけ含めます。ブラウザセッションと`sid`、ID Token、Refresh Token、アプリ権限のトークンは生成しません。
+- 有効期間は通常3,600秒です。`expires_in`は通常のToken endpointと同じく障害適用前の値で、期限切れ障害などではJWTの実際の期限と異なります。
+- JWTはファイル・ブラウザストレージに保存せず、管理APIの要求は[アクセスログ](#アクセスログ)の対象外です。
 
 ### 適用する障害シナリオ
 
-現在有効な`NO_GROUPS`、`WRONG_AUDIENCE`、`WRONG_ISSUER`、`EXPIRED_TOKEN`、`FUTURE_NBF`、`INVALID_SIGNATURE`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`、`ALG_NONE`、`WRONG_TENANT`、`MISSING_CLAIM`を自動適用します。既存のパラメーターを使用し、適用時は`fault`にシナリオ名・モード・パラメーター・残り回数などの`FaultDecision`を返します。Admin UIにも適用した障害を表示し、発行後にシナリオ状態を更新します。
+有効なシナリオが次のいずれかなら、設定済みパラメーターで自動適用します。
 
-LIMITEDは1要求につき最大1回消費し、残り0でNORMALへ戻ります。入力不正・対象未登録では消費しません。ID Token専用の`NONCE_MISMATCH`、`NONCE_MISSING`、`TOKEN_NO_ID_TOKEN`と、HTTP・認可・Discovery・JWKS障害は直接発行に適用せず、回数も消費しません。JWKSやDiscovery自体に設定された障害は、それらのURLを取得したときに従来どおり作用します。
+- `NO_GROUPS`、`WRONG_AUDIENCE`、`WRONG_ISSUER`、`WRONG_TENANT`、`MISSING_CLAIM`
+- `EXPIRED_TOKEN`、`FUTURE_NBF`、`INVALID_SIGNATURE`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`、`ALG_NONE`
+
+適用時は`fault`にシナリオ名・モード・パラメーター・残り回数などの`FaultDecision`を返します。Admin UIにも障害を表示し、発行後にシナリオ状態を更新します。
+
+LIMITEDは[共通ルール](#シナリオの適用ルール)に従い、1要求で最大1回消費します。入力不正・対象未登録では消費しません。ID Token専用（`NONCE_MISMATCH`・`NONCE_MISSING`・`TOKEN_NO_ID_TOKEN`）、HTTP・認可・Discovery・JWKS障害は直接発行に適用せず、回数も消費しません。Discovery・JWKS障害は、それぞれのURL取得時に作用します。
 
 ## シナリオ API
 
-issuerがpath付きの場合も、Admin APIのbase URLにはoriginだけを指定します。
+Admin APIのbase URLは[エンドポイント](#エンドポイント)のとおりorigin直下です。
 
 ```bash
 MOCK_ORIGIN=https://mock-idp.test:9000
@@ -375,91 +405,101 @@ curl --cacert "$CURL_CA" -X POST "$MOCK_ORIGIN/__mock/api/reset" \
   -d '{}'
 ```
 
-- **`CONTINUOUS`**: 解除またはResetまで対象要求すべてへFaultを適用します。
-- **`LIMITED`**: 1以上の`failureCount`が必須で、対象endpointへ到達した要求だけを同期的に消費します。最後の対象要求にもFaultを返し、その後の現在状態はNORMALになります。Timeoutも遅延開始時にcountを消費し、クライアントが切断しても戻しません。
-- **単一のグローバル状態**: シナリオstoreはプロセス全体で共有され、`client_id`やredirect_uri、セッション単位のスコープを持ちません。シナリオをarmedにしてから対象の要求が到達するまでに、無関係な別の要求（並行実行中の別テスト・別アプリ、同一アプリのsilent SSO用iframeなどによる認可endpointへの`GET`要求）が先に到達するとそちらがFaultを消費し、意図した対象には何も起こらない一方で無関係な相手にerrorが返ることがあります。mockインスタンスは同時に1つの認可フローのみが進行する直列実行を前提とし、並列にテストを実行する場合はmock IdPインスタンスをテストワーカーごとに分離してください。
+### シナリオの適用ルール
 
-| シナリオ                                                                                                                 | 対象                                        | 動作                                                                                                                                     |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `NORMAL`                                                                                                                 | なし                                        | Faultを適用しない                                                                                                                        |
-| `ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR` | Authorization OAuth                         | それぞれ`access_denied`, `login_required`, `interaction_required`, `temporarily_unavailable`, `server_error`を検証済みredirect URIへ返す |
-| `AUTH_STATE_MISMATCH`                                                                                                    | Authorization response                      | 成功応答の`state`を固定のダミー値`mock-mismatched-state`に置換する                                                                       |
-| `AUTH_STATE_MISSING`                                                                                                     | Authorization response                      | 成功応答から`state`を削除する                                                                                                            |
-| `AUTH_CODE_INVALID`                                                                                                      | Authorization response                      | 成功応答の`code`を無効なランダム値に置換する。そのcodeでToken交換すると`invalid_grant`になる                                             |
-| `AUTH_CODE_MISSING`                                                                                                      | Authorization response                      | 成功応答から`code`を削除する（`error`も付けない）                                                                                        |
-| `AUTH_CODE_WITH_ERROR`                                                                                                   | Authorization response                      | 成功応答の`code`を残したまま`error=server_error`と`error_description`を追加する                                                          |
-| `AUTH_400`                                                                                                               | `HEAD` Connectivity Probe                   | HTTP 400を本文なしで返す                                                                                                                 |
-| `AUTH_429`, `AUTH_500`                                                                                                   | `HEAD` Connectivity Probe                   | HTTP 429/500と任意の`Retry-After`を本文なしで返す                                                                                        |
-| `AUTH_TIMEOUT`                                                                                                           | `HEAD` Connectivity Probe                   | 指定時間遅延してからHTTP 200を返す                                                                                                       |
-| `NO_GROUPS`                                                                                                              | ID/access token claim生成                   | `groups` claimを（空配列ではなく）完全に削除する。ID Token・Access Tokenの両方が対象                                                     |
-| `WRONG_AUDIENCE`                                                                                                         | ID/access token                             | 正常鍵で署名し、`aud`を実際の`client_id`とは無関係な固定のダミー値に変更する                                                             |
-| `WRONG_ISSUER`                                                                                                           | ID/access token                             | 正常鍵で署名し、`iss`を実際のissuerとは異なる固定のダミー値に変更する                                                                    |
-| `WRONG_TENANT`                                                                                                           | ID/access token                             | 正常鍵で署名し、`tid`と`iss`内のtenant IDを固定の別テナント`ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb`へ変更する                              |
-| `EXPIRED_TOKEN`                                                                                                          | ID/access token                             | 正常鍵で署名し、`exp`をparameter `expiredAgoSeconds`秒だけ過去、`iat`/`nbf`をそこからさらに1時間前に設定する（3者の前後関係は維持）      |
-| `FUTURE_NBF`                                                                                                             | ID/access token                             | 正常鍵で署名し、`nbf`をparameter `nbfAheadSeconds`秒だけ未来（ただし`exp`の1秒前を超えない）に設定する                                   |
-| `MISSING_CLAIM`                                                                                                          | ID/access token                             | 正常鍵で署名し、parameter `claim`で指定したclaimを削除する                                                                               |
-| `INVALID_SIGNATURE`                                                                                                      | ID/access token                             | 非公開Key Bで署名し、公開Key Aの`kid`を設定                                                                                              |
-| `UNKNOWN_KID`                                                                                                            | ID/access token                             | Key Aで署名し、JWKSにない`kid`を設定                                                                                                     |
-| `ALG_NONE`                                                                                                               | ID/access token                             | headerを`alg: none`（`kid`なし）にし、署名部を空にした未署名JWTを返す                                                                    |
-| `SIGNING_KEY_ROLLOVER`                                                                                                   | Token/JWKS                                  | 新しい鍵で署名し、旧鍵と新鍵をJWKSへ公開                                                                                                 |
-| `NONCE_MISMATCH`                                                                                                         | ID token                                    | 正常鍵で署名し、`nonce`を固定のダミー値`mock-mismatched-nonce`に変更する。Access Tokenは改変しない                                       |
-| `NONCE_MISSING`                                                                                                          | ID token                                    | 正常鍵で署名し、`nonce`を削除する。Access Tokenは改変しない                                                                              |
-| `TOKEN_NO_ID_TOKEN`                                                                                                      | `POST` Token                                | HTTP 200のToken responseから`id_token`を削除する                                                                                         |
-| `TOKEN_400`                                                                                                              | `POST` Token                                | 設定可能なOAuth errorをHTTP 400で返す                                                                                                    |
-| `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`                                                                                 | `POST` Token / `GET` JWKS / `GET` Discovery | HTTP 429と任意の`Retry-After`を返す。JSON本文の`error`は`temporarily_unavailable`、`error_description`に注入したScenario名を含む         |
-| `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`                                                                                 | `POST` Token / `GET` JWKS / `GET` Discovery | HTTP 500と任意の`Retry-After`を返す。JSON本文の`error`は`server_error`、`error_description`に注入したScenario名を含む                    |
-| `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT`                                                                     | `POST` Token / `GET` JWKS / `GET` Discovery | 指定時間遅延してから通常処理を続行                                                                                                       |
-| `JWKS_INVALID`                                                                                                           | `GET` JWKS                                  | HTTP 200で、`keys`に1件だけ含むがRSA鍵として必須の`n`/`e`を欠いた不完全なkeyオブジェクトを返す（配列自体は空にしない）                   |
+- **`CONTINUOUS`**: 解除・Resetまで対象要求すべてに適用します。
+- **`LIMITED`**: 1以上の`failureCount`が必須です。対象要求だけが同期的に回数を消費し、最後の1回にもFaultを返してNORMALへ戻ります。Timeoutは遅延開始時に消費し、クライアント切断でも戻しません。対象外endpoint・method・`OPTIONS`では消費しません。
+- **対象method**: Connectivity Probeは`HEAD`、Tokenは`POST`、JWKS・Discoveryは`GET`です。Authorization endpointはHTTP faultの対象外です。認可応答・Token改変の消費条件は[認証応答の不正](#認証応答の不正)、直接発行は[適用する障害シナリオ](#適用する障害シナリオ)を参照してください。
+- **共有範囲**: 状態はプロセス全体で1つです。`client_id`・redirect URI・セッション単位では分離されず、別テスト・別アプリ・silent SSOのiframeなどの対象要求が先にFaultを消費すると、そちらに作用し、意図した要求には作用しない場合があります。1インスタンス内では認可フローを直列実行し、並列テストではワーカーごとにMock IdPを分離してください。
+
+### シナリオ一覧
+
+`WRONG_*`・`EXPIRED_TOKEN`・`FUTURE_NBF`・`MISSING_CLAIM`・`NONCE_*`は通常鍵で署名します。
+
+| シナリオ                                             | 対象                                 | 動作                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `NORMAL`                                             | なし                                 | Faultなし                                                                                              |
+| `ACCESS_DENIED`                                      | Authorization OAuth                  | 検証済みredirect URIへ`access_denied`                                                                  |
+| `AUTH_LOGIN_REQUIRED`                                | Authorization OAuth                  | 検証済みredirect URIへ`login_required`                                                                 |
+| `AUTH_INTERACTION_REQUIRED`                          | Authorization OAuth                  | 検証済みredirect URIへ`interaction_required`                                                           |
+| `AUTH_TEMPORARILY_UNAVAILABLE`                       | Authorization OAuth                  | 検証済みredirect URIへ`temporarily_unavailable`                                                        |
+| `AUTH_SERVER_ERROR`                                  | Authorization OAuth                  | 検証済みredirect URIへ`server_error`                                                                   |
+| `AUTH_STATE_MISMATCH`                                | Authorization response               | 成功応答の`state`を固定値`mock-mismatched-state`に置換                                                 |
+| `AUTH_STATE_MISSING`                                 | Authorization response               | 成功応答の`state`を削除                                                                                |
+| `AUTH_CODE_INVALID`                                  | Authorization response               | 成功応答の`code`を無効なランダム値に置換。交換時は`invalid_grant`                                      |
+| `AUTH_CODE_MISSING`                                  | Authorization response               | 成功応答の`code`を削除（`error`なし）                                                                  |
+| `AUTH_CODE_WITH_ERROR`                               | Authorization response               | 成功応答の`code`を残し、`error=server_error`・`error_description`を追加                                |
+| `AUTH_400`                                           | `HEAD` Connectivity Probe            | HTTP 400、本文なし                                                                                     |
+| `AUTH_429`, `AUTH_500`                               | `HEAD` Connectivity Probe            | HTTP 429/500、任意の`Retry-After`、本文なし                                                            |
+| `AUTH_TIMEOUT`                                       | `HEAD` Connectivity Probe            | 指定時間遅延後にHTTP 200                                                                               |
+| `NO_GROUPS`                                          | ID/Access Token                      | `groups`を削除（空配列にはしない）                                                                     |
+| `WRONG_AUDIENCE`                                     | ID/Access Token                      | `aud`を実際の`client_id`と無関係な固定値に変更                                                         |
+| `WRONG_ISSUER`                                       | ID/Access Token                      | `iss`を実際のissuerと異なる固定値に変更                                                                |
+| `WRONG_TENANT`                                       | ID/Access Token                      | `tid`・`iss`内のtenant IDを固定値`ffffffff-eeee-4ddd-8ccc-bbbbbbbbbbbb`に変更                          |
+| `EXPIRED_TOKEN`                                      | ID/Access Token                      | `exp`を`expiredAgoSeconds`秒前、`iat`・`nbf`をその1時間前に設定（前後関係を維持）                      |
+| `FUTURE_NBF`                                         | ID/Access Token                      | `nbf`を`nbfAheadSeconds`秒先に設定（上限は`exp`の1秒前）                                               |
+| `MISSING_CLAIM`                                      | ID/Access Token                      | `claim`で指定したclaimを削除                                                                           |
+| `INVALID_SIGNATURE`                                  | ID/Access Token                      | 非公開Key Bで署名し、公開Key Aの`kid`を設定                                                            |
+| `UNKNOWN_KID`                                        | ID/Access Token                      | Key Aで署名し、JWKSにない`kid`を設定                                                                   |
+| `ALG_NONE`                                           | ID/Access Token                      | `alg: none`、`kid`なし、署名部が空の未署名JWT                                                          |
+| `SIGNING_KEY_ROLLOVER`                               | Token/JWKS                           | 新鍵で署名し、旧鍵・新鍵をJWKSへ公開                                                                   |
+| `NONCE_MISMATCH`                                     | ID Token                             | `nonce`を固定値`mock-mismatched-nonce`に変更（Access Tokenは変更なし）                                 |
+| `NONCE_MISSING`                                      | ID Token                             | `nonce`を削除（Access Tokenは変更なし）                                                                |
+| `TOKEN_NO_ID_TOKEN`                                  | `POST` Token                         | HTTP 200応答から`id_token`を削除                                                                       |
+| `TOKEN_400`                                          | `POST` Token                         | 設定したOAuth errorをHTTP 400で返す                                                                    |
+| `TOKEN_429`, `JWKS_429`, `DISCOVERY_429`             | `POST` Token / `GET` JWKS・Discovery | HTTP 429、任意の`Retry-After`、JSONの`error: temporarily_unavailable`。`error_description`にシナリオ名 |
+| `TOKEN_500`, `JWKS_500`, `DISCOVERY_500`             | `POST` Token / `GET` JWKS・Discovery | HTTP 500、任意の`Retry-After`、JSONの`error: server_error`。`error_description`にシナリオ名            |
+| `TOKEN_TIMEOUT`, `JWKS_TIMEOUT`, `DISCOVERY_TIMEOUT` | `POST` Token / `GET` JWKS・Discovery | 指定時間遅延後に通常処理を続行                                                                         |
+| `JWKS_INVALID`                                       | `GET` JWKS                           | HTTP 200。`keys`は1件で、RSA必須の`n`・`e`を欠くkey（空配列にはしない）                                |
 
 ### Parameters
 
-| Parameter                   | 対象シナリオ     | 値                                                                                                                                                               |
-| --------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `retryAfterSeconds`         | `*_429`, `*_500` | 1以上のsafe integer。任意で、指定した場合だけ`Retry-After`を返す                                                                                                 |
-| `delayMs`                   | `*_TIMEOUT`      | 1〜300,000ms。未指定時は30,000ms                                                                                                                                 |
-| `expiredAgoSeconds`         | `EXPIRED_TOKEN`  | 1〜31,536,000（365日）の整数。未指定時は600秒。既定値はSpring Security（60秒）や.NET（300秒）の既定のclock skew許容を超える                                      |
-| `nbfAheadSeconds`           | `FUTURE_NBF`     | 1〜3,599の整数（ID/Access TokenのTTL 3,600秒未満）。未指定時は600秒。既定値の理由は`expiredAgoSeconds`と同じ                                                     |
-| `claim`                     | `MISSING_CLAIM`  | `sub`、`oid`、`tid`、`iss`、`aud`、`exp`、`iat`のいずれか。未指定時は`sub`                                                                                       |
-| `error`, `errorDescription` | `TOKEN_400`      | `error`未指定時は`invalid_grant`。`error_description`は`errorDescription`を指定した場合だけ含める。`AUTH_400`で指定するとAdmin APIが`400 invalid_scenario`を返す |
+| Parameter                   | 対象シナリオ     | 値                                                                                                                              |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `retryAfterSeconds`         | `*_429`, `*_500` | 1以上のsafe integer。任意。指定時だけ`Retry-After`を返す                                                                        |
+| `delayMs`                   | `*_TIMEOUT`      | 1〜300,000ms。既定30,000ms                                                                                                      |
+| `expiredAgoSeconds`         | `EXPIRED_TOKEN`  | 1〜31,536,000（365日）の整数。既定600秒                                                                                         |
+| `nbfAheadSeconds`           | `FUTURE_NBF`     | 1〜3,599の整数（ID/Access TokenのTTL 3,600秒未満）。既定600秒                                                                   |
+| `claim`                     | `MISSING_CLAIM`  | `sub`・`oid`・`tid`・`iss`・`aud`・`exp`・`iat`。既定`sub`                                                                      |
+| `error`, `errorDescription` | `TOKEN_400`      | `error`は既定`invalid_grant`。`error_description`は`errorDescription`指定時だけ返す。`AUTH_400`への指定は`400 invalid_scenario` |
 
-Connectivity Probe Faultは`HEAD`、Token Faultは`POST`、JWKS/Discovery Faultは`GET`だけが対象です。対象外endpoint、異なるmethod、`OPTIONS`はLIMITED countを消費しません。Authorization endpointはHTTP faultの対象外です。
+時刻改変の既定600秒は、Spring Security（60秒）・.NET（300秒）の既定clock skew許容を超える値です。
 
 ### OAuth redirect errorとConnectivity ProbeのHTTP fault
 
-両者は別の障害です。前者は通常の認証要求そのもの（アプリケーションのcallbackへ届くOAuth response）に、後者は認証を始める前の到達性確認（クライアントとMicrosoft Entra IDとの間の接続性の問題）に作用します。そのため`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は統合しません。
+OAuth redirect errorは認証要求のcallback応答、Connectivity Probe faultは認証前の到達性確認に作用します。`AUTH_SERVER_ERROR`と`AUTH_500`、`AUTH_TEMPORARILY_UNAVAILABLE`と`AUTH_429`は用途が異なります。
 
-- **OAuth redirect error**（`ACCESS_DENIED`, `AUTH_LOGIN_REQUIRED`, `AUTH_INTERACTION_REQUIRED`, `AUTH_TEMPORARILY_UNAVAILABLE`, `AUTH_SERVER_ERROR`）: Authorization requestをProviderが検証した後、OAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`と`form_post`はProviderの標準処理に従います。`error_description`はシナリオ名ではなく固定の説明文（例: "Login required by mock scenario"）です。
-- **Connectivity Probe fault**（`AUTH_400`, `AUTH_429`, `AUTH_500`, `AUTH_TIMEOUT`）: `HEAD .../common/oauth2/v2.0/authorize`だけに作用します。正常時のEntraはこのプローブへHTTP 200を返すので、Mockも既定では200を返し、Scenario適用時だけ400、429、500、遅延を再現します（`AUTH_TIMEOUT`は待機後に通常どおり200）。`HEAD`は本文を持てないためHTTP statusとheaderだけを返し、`content-type`は正常時の200と同じ`text/html; charset=utf-8`です。`AUTH_400`が`TOKEN_400`と違い`error`・`errorDescription`を受け付けないのもこのためです。通常の認証要求には一切影響せず、`AUTH_500`をCONTINUOUSで有効にしていても`GET {tenant}/oauth2/v2.0/authorize`は通常のAuthorization処理を続け、LIMITED countも消費しません。
+- **OAuth redirect error**: [一覧](#シナリオ一覧)の5種類が対象です。Providerの要求検証後にOAuth errorと元の`state`を登録済みredirect URIへ返します。`response_mode=query`・`form_post`はProviderの標準処理です。`error_description`は固定文（例: "Login required by mock scenario"）です。
+- **Connectivity Probe fault**（`AUTH_400`・`AUTH_429`・`AUTH_500`・`AUTH_TIMEOUT`）: `HEAD .../common/oauth2/v2.0/authorize`だけに作用します。正常時はEntraと同じ200、障害時は一覧のstatus・遅延を返します。本文はなく、`content-type`は正常・障害とも`text/html; charset=utf-8`です。`AUTH_400`は`error`・`errorDescription`を受け付けません。通常の`GET {tenant}/oauth2/v2.0/authorize`にはCONTINUOUSでも影響せず、LIMITED回数も消費しません。
 
 ### 認証応答の不正
 
-`AUTH_STATE_*`, `AUTH_CODE_*`, `NONCE_*`, `ALG_NONE`, `WRONG_TENANT`, `MISSING_CLAIM`, `TOKEN_NO_ID_TOKEN`は、IdPから届いた不正な認証応答をRPが拒否できるかを試験するシナリオです。ブラウザを介したE2Eではテスト側からredirectやトークンを書き換えにくいため、Mock側で注入します。
+`AUTH_STATE_*`・`AUTH_CODE_*`・`NONCE_*`・`ALG_NONE`・`WRONG_TENANT`・`MISSING_CLAIM`・`TOKEN_NO_ID_TOKEN`で、不正な認証応答をRPが拒否できるかを試験します。ブラウザE2Eで書き換えにくいredirectやトークンをMock側で改変します。
 
-- `AUTH_STATE_*`と`AUTH_CODE_*`は、Providerが成功応答を組み立てた後、送信する直前のパラメータを書き換えます（oidc-providerの`authorization.success`）。`response_mode=query`と`form_post`のどちらにも作用し、LIMITED countは成功応答を返す要求（ログイン後の`.../authorize/{uid}`）でだけ消費されます。interactionへのredirectやOAuth error応答では消費しません。グローバル状態のため、無関係な認可フローが先に成功応答を受け取るとそちらがFaultを消費します。
-- `AUTH_CODE_INVALID`と`AUTH_CODE_MISSING`でも、実際に発行されたcodeは使われないままAuthorization CodeのTTL（600秒）で失効します。
-- `AUTH_CODE_WITH_ERROR`を`response_mode=form_post`で使うと、自動送信フォームはHTTP 400で返ります（oidc-providerは`error`を含むform_post応答を400にするため）。`query`では通常どおり303のredirectです。
-- `NONCE_*`, `ALG_NONE`, `WRONG_TENANT`, `MISSING_CLAIM`, `TOKEN_NO_ID_TOKEN`は他のToken改変系と同じく、refresh_token grantを含むすべての成功したToken応答に作用します。LIMITEDで使う場合は、silent refreshが先にFaultを消費しないよう注意してください。
-- `NONCE_*`はID Tokenに`nonce`がある応答（認可要求で`nonce`を送った場合）だけ、`TOKEN_NO_ID_TOKEN`は`id_token`を含む応答だけに作用します。それ以外の応答は改変せず、LIMITED countも消費しません。
-- `WRONG_TENANT`は`iss`と`tid`の整合を保ったまま別テナントのトークンに見せかけるもので、`iss`だけを無関係な値にする`WRONG_ISSUER`とは区別します。
+- **認可応答の改変**: `AUTH_STATE_*`・`AUTH_CODE_*`は成功応答の送信直前（`authorization.success`）に`query`・`form_post`のパラメーターを変更します。LIMITEDは成功応答を返す要求だけで消費し、interactionへのredirect・OAuth errorでは消費しません。先に成功した別フローが消費しうる点は[共有範囲](#シナリオの適用ルール)を参照してください。
+- **codeの扱い**: `AUTH_CODE_INVALID`・`AUTH_CODE_MISSING`でも実際のcodeは未使用のままTTL（600秒）で失効します。`AUTH_CODE_WITH_ERROR`は`query`で303 redirect、`form_post`では`error`を含むため自動送信フォームをHTTP 400で返します。
+- **Token改変**: refresh_token grantを含むすべての成功したToken応答が対象です。LIMITEDではsilent refreshが先に消費しないよう注意してください。`NONCE_*`は`nonce`を持つID Token（認可要求で`nonce`指定）、`TOKEN_NO_ID_TOKEN`は`id_token`を持つ応答だけに作用し、それ以外では改変・回数消費しません。
+- **テナントの不正**: `WRONG_TENANT`は`iss`・`tid`の整合を保って別テナントに変更します。`WRONG_ISSUER`は`iss`だけを無関係な値にします。
 
 ### 回復試験
 
-Mock自身は待機や再試行を行いません。Microsoft Entraの[クライアントアプリケーションの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に合わせ、特定のAADSTS番号には依存せず、次のクライアント動作を試験することを想定しています。
+Mock自身は回復のための待機・再試行を行いません。Entraの[クライアントの回復性](https://learn.microsoft.com/en-us/entra/architecture/resilience-client-app)と[MSALのthrottling例](https://learn.microsoft.com/en-us/entra/msal/dotnet/advanced/client-and-server-throttling)に沿って、特定のAADSTS番号に依存せず次を試験します。
 
-- 429と5xxのどちらも、`Retry-After`があればそれが終わるまで再取得せず、なければ指数バックオフする。Timeoutでも即時再試行を避ける。
-- `prompt=none`で`login_required`または`interaction_required`を受けたら、同じsilent requestを繰り返さずinteractive authenticationへ切り替える。[Authorization endpointのエラー](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)は検証済みredirect URIだけへ返します。
+- 429・5xxでは`Retry-After`の終了まで待ち、指定がなければ指数バックオフする。Timeoutでも即時再試行を避ける。
+- `prompt=none`で`login_required`・`interaction_required`を受けたら、silent requestを繰り返さず対話型認証へ切り替える。[Authorization error](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#error-codes-for-authorization-endpoint-errors)の返却先は検証済みredirect URIだけです。
 
 ### Provider標準機能との責務分離
 
-通常の入力で再現できるOAuth protocol validationはScenarioとして重複実装せず、`oidc-provider`自身のAuthorization Code lifecycle、PKCE、client authentication、redirect URI検証を利用します。対象は次のケースです。
+正常なAuthorization Code Flow・PKCEと、次の入力検証は`oidc-provider`の標準機能で試験します。
 
-- 正常なAuthorization Code FlowとPKCE
-- 不正・期限切れ・再利用済みAuthorization Codeによる`invalid_grant`
-- 不一致の`code_verifier`による`invalid_grant`
-- 不正なconfidential client secretによる`invalid_client`
-- Token交換時の`redirect_uri`不一致による`invalid_grant`
+| 入力                                         | エラー           |
+| -------------------------------------------- | ---------------- |
+| 不正・期限切れ・再利用済みAuthorization Code | `invalid_grant`  |
+| `code_verifier`不一致                        | `invalid_grant`  |
+| Confidential client secret不正               | `invalid_client` |
+| Token交換時の`redirect_uri`不一致            | `invalid_grant`  |
 
-このため`AUTH_CODE_EXPIRED`, `AUTH_CODE_REUSED`, `PKCE_MISMATCH`, `INVALID_CLIENT`, `REDIRECT_URI_MISMATCH`という専用Scenarioはありません。PKCE失敗をIdP側から再現したい場合や任意のToken endpoint errorが必要な場合は、`TOKEN_400`（既定の`error`は`invalid_grant`）をescape hatchとして使用してください（`AUTH_400`は本文を持てないためこの用途には使えません）。例えばAADSTS50196のloop検出は次のように再現できます。
+専用シナリオ`AUTH_CODE_EXPIRED`・`AUTH_CODE_REUSED`・`PKCE_MISMATCH`・`INVALID_CLIENT`・`REDIRECT_URI_MISMATCH`はありません。IdP側からPKCE失敗や任意のToken errorを返すには`TOKEN_400`を使います（本文のない`AUTH_400`は使用不可）。AADSTS50196のloop検出を再現する例:
 
 ```json
 {
@@ -475,8 +515,8 @@ Mock自身は待機や再試行を行いません。Microsoft Entraの[クライ
 
 ### 署名鍵のシナリオ
 
-- `JWKS_INVALID`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`は、Microsoft Entraの[signing key rollover guidance](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)にある、複数鍵の保持、未知の`kid`でのmetadata再取得、不正なkey metadata受信時のlast-known-good継続を試験するためのシナリオです。
-- `SIGNING_KEY_ROLLOVER`で公開した新しい鍵は、シナリオ完了、NORMALへの変更、別Scenarioへの切り替え後もJWKSに残り、Reset時だけ初期鍵へ戻ります。
+- `JWKS_INVALID`・`UNKNOWN_KID`・`SIGNING_KEY_ROLLOVER`で、[Entraの推奨動作](https://learn.microsoft.com/en-us/entra/identity-platform/signing-key-rollover#best-practices-for-keys-metadata-caching-and-validation)（複数鍵の保持、未知の`kid`でmetadata再取得、不正metadata受信時のlast-known-good継続）を試験します。
+- rollover鍵はシナリオ完了・NORMALへの変更・別シナリオへの切り替え後もJWKSに残り、Reset時だけ初期鍵へ戻ります。
 
 ### シナリオの追加
 
@@ -484,47 +524,49 @@ Mock自身は待機や再試行を行いません。Microsoft Entraの[クライ
 
 ## アクセスログ
 
-Mock IdPが受け付けたリクエストを、そのとき有効だったシナリオと紐づけて記録します。Admin UIの「アクセスログ」カードで新しい順に一覧でき、障害を注入した行は「適用」の表示と赤い背景で区別されます。アプリケーション側で認証を試した後にこの一覧を再読み込みすると、どの要求が届き、どのシナリオが実際に作用したかを確認できます。
+受け付けた要求とその時点のシナリオを記録します。認証を試した後、Admin UIの「アクセスログ」を再読み込みすると、要求の到達と障害の適用を確認できます。受付の新しい順に表示し、適用した行は「適用」と赤い背景で示します。
 
-- **記録対象**: `/__mock`配下（Admin UI/Admin API）、`/health`、ブラウザが管理画面やサインイン画面を開いたときに自動的に要求する`/favicon.ico`以外のすべてのリクエストです。Host不一致で`400 invalid_request_origin`になった要求も記録されます。
-- **分類**: Discovery、Authorization、サインイン画面（interaction）、Token、JWKS、Logout、Connectivity Probe（`HEAD .../common/oauth2/v2.0/authorize`のみ）に分類し、それ以外のpath（typo、未対応の`common`/`organizations` authorityへの要求など）は`other`として残します。
-- **記録内容**: pathnameだけです。`code`、`client_secret`、`code_verifier`などを残さないため、query、リクエスト本文、ヘッダーは記録しません。
-- **保持**: 最新200件をプロセスのメモリ上に保持し、超過分は古い順に破棄します。永続化せず、再起動で消えます。
-- **Admin UI**: 自動更新しません。「アクセスログを再読み込み」で最新の状態を取得し、「アクセスログをクリア」で全件削除します。シナリオの「初期状態に戻す」（`POST /__mock/api/reset`）ではアクセスログは消えません。シナリオ以外のカードは見出しのクリックで折りたためます。初回表示では折りたたまれており、開閉状態はブラウザに保存されます。
+- **対象**: `/__mock`配下（Admin UI/API）・`/health`・ブラウザが自動要求する`/favicon.ico`を除く全要求。Host不一致の`400 invalid_request_origin`も記録します。
+- **機密情報の除外**: URLはpathnameだけを記録し、query・本文・ヘッダーは残しません（`code`・`client_secret`・`code_verifier`などの記録を防止）。
+- **保持**: メモリ上に最新200件を保持し、超過分は古い順に破棄します。[永続化対象外](#鍵と状態)で、再起動すると消えます。
+- **操作**: 自動更新はありません。「アクセスログを再読み込み」で取得、「アクセスログをクリア」で全件削除します。シナリオの「初期状態に戻す」（`POST /__mock/api/reset`）では消えません。カードの開閉は[Admin UIの共通動作](#共通の動作)に従います。
 
 ```bash
+CURL_CA=.data/tls/ca.crt
+MOCK_ORIGIN=https://mock-idp.test:9000
+
 curl --cacert "$CURL_CA" "$MOCK_ORIGIN/__mock/api/access-log"
 curl --cacert "$CURL_CA" -X DELETE "$MOCK_ORIGIN/__mock/api/access-log"
 ```
 
-`GET`は受付の新しい順の配列を返し、`DELETE`は204を返します。各エントリの項目は次のとおりです。
+`GET`は受付の新しい順の配列、`DELETE`は204を返します。
 
-| 項目         | 内容                                                                                                                                               |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | 受付順にプロセス内で単調増加する番号（応答完了順ではない）。クリアしてもリセットしない                                                             |
-| `receivedAt` | 受付時刻（ISO 8601）                                                                                                                               |
-| `method`     | HTTP method                                                                                                                                        |
-| `path`       | pathname（queryを含まない）                                                                                                                        |
-| `endpoint`   | `discovery`, `authorization`, `interaction`, `token`, `jwks`, `logout`, `connectivity-probe`, `other`のいずれか                                    |
-| `statusCode` | 返したHTTP status。応答を返す前にクライアントが切断した場合は`null`（Timeout系シナリオでクライアントが先に諦めたケースの確認に使える）             |
-| `durationMs` | 受付から応答完了（または切断）までのミリ秒                                                                                                         |
-| `scenario`   | 受付時に有効だったシナリオ名。`NORMAL`を含む。対象外endpointへの要求やHost不一致などで作用しなかった場合も、有効だったシナリオ名がそのまま入る     |
-| `fault`      | この要求が実際に消費したFault。`scenario`, `endpoint`, `mode`, `parameters`, `remainingBefore`, `remainingAfter`を含む。作用しなかった場合は`null` |
+| 項目         | 内容                                                                                                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | プロセス内で受付順に単調増加（応答完了順ではない）。クリアでもリセットしない                                                                                           |
+| `receivedAt` | 受付時刻（ISO 8601）                                                                                                                                                   |
+| `method`     | HTTP method                                                                                                                                                            |
+| `path`       | pathname（queryを含まない）                                                                                                                                            |
+| `endpoint`   | `discovery`, `authorization`, `interaction`（サインイン画面）, `token`, `jwks`, `logout`, `connectivity-probe`（`HEAD .../common/oauth2/v2.0/authorize`のみ）, `other` |
+| `statusCode` | HTTP status。応答前に切断された場合は`null`（Timeout時などの確認用）                                                                                                   |
+| `durationMs` | 受付から応答完了・切断までのミリ秒                                                                                                                                     |
+| `scenario`   | 受付時のシナリオ名（`NORMAL`を含む）。対象外endpoint・Host不一致などで作用しない場合も記録                                                                             |
+| `fault`      | 実際に消費したFault。`scenario`, `endpoint`, `mode`, `parameters`, `remainingBefore`, `remainingAfter`を含む。未適用なら`null`                                         |
 
-`scenario`と`fault`の違いが「シナリオは有効だったが作用しなかった要求」の切り分けに役立ちます。
+typoや未対応の`common`・`organizations` authorityなどは`other`に分類します。`scenario`と`fault`で、有効でも作用しなかった要求を区別できます。
 
-- `TOKEN_500`を有効にした状態でJWKSを取得すると`scenario: "TOKEN_500"`かつ`fault: null`になり、Tokenへ`POST`すると`fault.scenario: "TOKEN_500"`が入ります。`LIMITED`では`remainingBefore`と`remainingAfter`で消費されたcountを追えます。
-- Authorization系のOAuth redirect errorは、最初の`GET .../authorize`の行にFaultが付き、続くサインイン画面と`.../authorize/{uid}`への再開要求は`fault: null`のまま記録されます。
-- `AUTH_STATE_*`や`AUTH_CODE_*`などのAuthorization response系は、成功応答を返した行にFaultが付きます。通常はサインイン後の`.../authorize/{uid}`、既存セッションがある場合は最初の`.../authorize`の行です。
+- `TOKEN_500`有効時、JWKS取得は`scenario: "TOKEN_500"`・`fault: null`、Tokenへの`POST`は`fault.scenario: "TOKEN_500"`です。LIMITEDの消費回数は`remainingBefore`・`remainingAfter`で追えます。
+- OAuth redirect errorは最初の`GET .../authorize`にFaultが付き、続くサインイン画面・`.../authorize/{uid}`は`fault: null`です。
+- `AUTH_STATE_*`・`AUTH_CODE_*`は成功応答の行にFaultが付きます。通常はサインイン後の`.../authorize/{uid}`、セッションがあれば最初の`.../authorize`です。
 
 ## 鍵と状態
 
-署名鍵は通常鍵、rollover鍵、異常署名鍵の3種を初回起動時に`.data/keys`へ生成し、秘密鍵ファイルは0600で保存します。鍵ディレクトリを削除すると再生成されます。JWKSには既定で通常鍵の公開部分だけを掲載し、`SIGNING_KEY_ROLLOVER`の適用後は通常鍵とrollover鍵の2つを掲載します。
+初回起動で`.data/keys`に通常鍵・rollover鍵・異常署名鍵を生成し、秘密鍵は0600で保存します。鍵ディレクトリを削除すると再生成します。JWKSは既定で通常鍵だけ、`SIGNING_KEY_ROLLOVER`適用後は通常鍵とrollover鍵の公開部分を掲載します（[公開状態のリセット](#署名鍵のシナリオ)）。
 
-| 保存先                       | 内容                                                                                                               |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `.data/`（Git対象外）        | 署名鍵（`keys`）、TLS証明書（`tls`、`tls-private`）、OIDC Client（`clients.json`）、テストユーザー（`users.json`） |
-| 単一プロセスのインメモリ実装 | OIDC artifact（認可コード、session等）、シナリオストア（シナリオ履歴）、アクセスログ。再起動で失われる             |
+| 保存先                | 内容                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `.data/`（Git対象外） | 署名鍵（`keys`）、TLS証明書・秘密鍵（`tls`・`tls-private`）、クライアント・ユーザー設定（`clients.json`・`users.json`、0600）        |
+| 単一プロセスのメモリ  | OIDC artifact（認可コード・Session・Grant・Access Token・Refresh Tokenの内部状態）、シナリオストア・履歴、アクセスログ。再起動で消失 |
 
 ## 開発コマンド
 
