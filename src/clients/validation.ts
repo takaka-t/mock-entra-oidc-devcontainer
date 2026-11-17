@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-  clientTypes,
-  tokenEndpointAuthMethods,
-  type CreateOidcClientInput,
-  type UpdateOidcClientInput,
-} from "./types.js";
+import { clientTypes, tokenEndpointAuthMethods, type OidcClientConfig, type UpdateOidcClientInput } from "./types.js";
 import { identifier, printableAscii, unique } from "../validation/common.js";
 
 const withoutFragment = (value: string): boolean => !value.includes("#");
@@ -39,6 +34,8 @@ const webUri = absoluteUri.refine((value) => {
   }
 }, "http または https を使用してください");
 
+const accessTokenVersion = z.enum(["1.0", "2.0"]);
+
 const commonShape = {
   clientType: z.enum(clientTypes),
   clientSecret: printableAscii.optional(),
@@ -47,10 +44,14 @@ const commonShape = {
   postLogoutRedirectUris: z.array(webUri).transform(unique),
   accessTokenAudience: absoluteUri,
   accessTokenScope: scopeName,
+  accessTokenVersion: accessTokenVersion.default("2.0"),
   emailOptionalClaim: z.boolean(),
 };
 
-function refineClient(value: z.infer<z.ZodObject<typeof commonShape>>, ctx: z.RefinementCtx) {
+function refineClient(
+  value: Omit<z.infer<z.ZodObject<typeof commonShape>>, "accessTokenVersion">,
+  ctx: z.RefinementCtx,
+) {
   if (value.clientType === "PUBLIC") {
     if (value.clientSecret !== undefined)
       ctx.addIssue({
@@ -84,7 +85,10 @@ export const createClientSchema = z
   .object({ clientId, ...commonShape })
   .strict()
   .superRefine(refineClient);
-export const updateClientSchema = z.object(commonShape).strict().superRefine(refineClient);
+export const updateClientSchema = z
+  .object({ ...commonShape, accessTokenVersion: accessTokenVersion.optional() })
+  .strict()
+  .superRefine(refineClient);
 
 export const persistedClientSchema = z.preprocess((input) => {
   if (typeof input !== "object" || input === null) return input;
@@ -97,7 +101,7 @@ export const persistedClientSchema = z.preprocess((input) => {
   };
 }, createClientSchema);
 
-export function parseCreateClient(input: unknown): CreateOidcClientInput {
+export function parseCreateClient(input: unknown): OidcClientConfig {
   return normalized(createClientSchema.parse(input));
 }
 
@@ -105,7 +109,13 @@ export function parseUpdateClient(input: unknown): UpdateOidcClientInput {
   return normalized(updateClientSchema.parse(input));
 }
 
-function normalized<T extends { clientSecret?: string | undefined }>(value: T): T & { clientSecret?: string } {
+function normalized<
+  T extends {
+    clientSecret?: string | undefined;
+    accessTokenVersion?: OidcClientConfig["accessTokenVersion"] | undefined;
+  },
+>(value: T): T & { clientSecret?: string; accessTokenVersion?: OidcClientConfig["accessTokenVersion"] } {
   if (value.clientSecret === undefined) delete value.clientSecret;
-  return value as T & { clientSecret?: string };
+  if (value.accessTokenVersion === undefined) delete value.accessTokenVersion;
+  return value as T & { clientSecret?: string; accessTokenVersion?: OidcClientConfig["accessTokenVersion"] };
 }

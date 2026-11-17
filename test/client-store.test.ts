@@ -163,6 +163,7 @@ describe("OIDC client store", () => {
     await store.initialize();
     const migrated = {
       ...publicClient,
+      accessTokenVersion: "2.0",
       redirectUris: ["http://localhost/callback"],
     };
     expect(store.list()).toEqual([migrated]);
@@ -178,6 +179,113 @@ describe("OIDC client store", () => {
       async () => {},
     );
     await expect(store.initialize()).rejects.toBeDefined();
+  });
+
+  it("defaults existing clients to v2 and persists version changes across reloads", async () => {
+    const file = join(directory, "clients.json");
+    await writeFile(file, JSON.stringify([publicClient]));
+    const store = new OidcClientStore(
+      file,
+      async () => {},
+      async () => {},
+    );
+    await store.initialize();
+    expect(store.list()[0]?.accessTokenVersion).toBe("2.0");
+    const { clientId, ...update } = publicClient;
+    await store.update(clientId, { ...update, accessTokenVersion: "1.0" });
+    await store.update(clientId, update);
+    const reloaded = new OidcClientStore(
+      file,
+      async () => {},
+      async () => {},
+    );
+    await reloaded.initialize();
+    expect(reloaded.list()[0]?.accessTokenVersion).toBe("1.0");
+  });
+
+  it.each(["1.0", "2.0"] as const)(
+    "preserves %s on omitted updates and persists explicit switches",
+    async (version) => {
+      const file = join(directory, "clients.json");
+      const provider = providerCallbacks();
+      const store = new OidcClientStore(file, provider.apply, provider.remove);
+      await store.initialize();
+      const { clientId, ...update } = publicClient;
+      await store.create({ ...publicClient, accessTokenVersion: version });
+      const preserved = await store.update(clientId, { ...update, accessTokenScope: "api.read" });
+      expect(preserved).toMatchObject({ accessTokenVersion: version, accessTokenScope: "api.read" });
+      expect(provider.clients.get(clientId)).toEqual(preserved);
+      expect(JSON.parse(await readFile(file, "utf8"))).toContainEqual(preserved);
+
+      const nextVersion = version === "1.0" ? "2.0" : "1.0";
+      const changed = await store.update(clientId, { ...update, accessTokenVersion: nextVersion });
+      expect(changed.accessTokenVersion).toBe(nextVersion);
+      const reloaded = new OidcClientStore(file, provider.apply, provider.remove);
+      await reloaded.initialize();
+      expect(reloaded.list().find((client) => client.clientId === clientId)).toEqual(changed);
+    },
+  );
+
+  it("preserves the latest committed version when an omitted update is queued behind a version switch", async () => {
+    const file = join(directory, "clients.json");
+    const provider = providerCallbacks();
+    const store = new OidcClientStore(file, provider.apply, provider.remove);
+    await store.initialize();
+    await store.create(publicClient);
+    const { clientId, ...update } = publicClient;
+    const [changed, preserved] = await Promise.all([
+      store.update(clientId, { ...update, accessTokenVersion: "1.0" }),
+      store.update(clientId, { ...update, accessTokenScope: "api.read" }),
+    ]);
+    expect(changed.accessTokenVersion).toBe("1.0");
+    expect(preserved).toMatchObject({ accessTokenVersion: "1.0", accessTokenScope: "api.read" });
+    expect(provider.clients.get(clientId)).toEqual(preserved);
+    expect(JSON.parse(await readFile(file, "utf8"))).toContainEqual(preserved);
+  });
+
+  it("rolls back a version switch on file commit failure and preserves that version on retry", async () => {
+    const file = join(directory, "clients.json");
+    const provider = providerCallbacks();
+    const store = new OidcClientStore(file, provider.apply, provider.remove);
+    await store.initialize();
+    const previous = await store.create({ ...publicClient, accessTokenVersion: "1.0" });
+    const before = await readFile(file, "utf8");
+    const backup = `${file}.backup`;
+    await rename(file, backup);
+    await mkdir(file);
+    const { clientId, ...update } = publicClient;
+    try {
+      await expect(store.update(clientId, { ...update, accessTokenVersion: "2.0" })).rejects.toMatchObject({
+        code: "EISDIR",
+      });
+      expect(store.list().find((client) => client.clientId === clientId)).toEqual(previous);
+      expect(provider.clients.get(clientId)).toEqual(previous);
+      expect(await readFile(backup, "utf8")).toBe(before);
+      expect(await temporaryFiles(directory)).toEqual([]);
+    } finally {
+      await rm(file, { recursive: true });
+      await rename(backup, file);
+    }
+    expect((await store.update(clientId, update)).accessTokenVersion).toBe("1.0");
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual(store.list());
+  });
+
+  it.each(["1", "v1.0", 1, 2, null, "3.0"])("rejects invalid token version %s", async (version) => {
+    const store = new OidcClientStore(
+      join(directory, "clients.json"),
+      async () => {},
+      async () => {},
+    );
+    await store.initialize();
+    const before = await readFile(store.filePath, "utf8");
+    await expect(store.create({ ...publicClient, accessTokenVersion: version } as never)).rejects.toBeInstanceOf(
+      ZodError,
+    );
+    const { clientId, ...update } = publicClient;
+    await expect(store.update(clientId, { ...update, accessTokenVersion: version } as never)).rejects.toBeInstanceOf(
+      ZodError,
+    );
+    expect(await readFile(store.filePath, "utf8")).toBe(before);
   });
 
   it.each([
@@ -370,7 +478,7 @@ describe("OIDC client store", () => {
     const provider = providerCallbacks();
     const store = new OidcClientStore(file, provider.apply, provider.remove);
     await store.initialize();
-    await store.create(publicClient);
+    await store.create({ ...publicClient, accessTokenVersion: "1.0" });
     const beforeFile = await readFile(file, "utf8");
     const beforeClients = store.list();
     const { clientId, ...update } = publicClient;
@@ -380,6 +488,7 @@ describe("OIDC client store", () => {
       store.update(clientId, {
         ...update,
         accessTokenAudience: "urn:changed",
+        accessTokenVersion: "2.0",
       }),
     ).rejects.toThrow("provider apply failed");
 
@@ -387,6 +496,7 @@ describe("OIDC client store", () => {
     expect(await readFile(file, "utf8")).toBe(beforeFile);
     expect(await temporaryFiles(directory)).toEqual([]);
     expect(provider.clients.get(clientId)).toEqual(beforeClients.at(-1));
+    expect((await store.update(clientId, update)).accessTokenVersion).toBe("1.0");
   });
 
   it("restores a provider client when removal fails", async () => {

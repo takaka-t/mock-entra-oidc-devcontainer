@@ -15,6 +15,7 @@ import {
   mockTenantId,
   mockTokenPath,
 } from "../src/config.js";
+import { v1TokenValidationPaths } from "../src/oidc/access-token-version.js";
 import { testConfig } from "./test-config.js";
 
 const host = new URL(mockOrigin).host;
@@ -65,7 +66,9 @@ describe("issuer routing and origin enforcement", () => {
     }
   });
 
-  it("completes discovery through token verification below an issuer path", async () => {
+  it.each(["2.0", "1.0"] as const)("verifies %s access tokens below a tenant issuer path", async (version) => {
+    const clientId = `routing-${version}`;
+    await context.clientStore.create({ ...context.clientStore.list()[0]!, clientId, accessTokenVersion: version });
     const discovery = await context.app.inject({
       url: `${issuerPath}/.well-known/openid-configuration`,
       headers: { host },
@@ -81,7 +84,7 @@ describe("issuer routing and origin enforcement", () => {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: clientId,
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid profile",
@@ -147,7 +150,7 @@ describe("issuer routing and origin enforcement", () => {
       },
       payload: new URLSearchParams({
         grant_type: "authorization_code",
-        client_id: "mock-public-client",
+        client_id: clientId,
         redirect_uri: "http://localhost:3000/callback",
         code: String(code),
         code_verifier: verifier,
@@ -161,12 +164,19 @@ describe("issuer routing and origin enforcement", () => {
         headers: { host },
       })
     ).json();
-    for (const [jwt, audience] of [
-      [tokens.id_token, "mock-public-client"],
-      [tokens.access_token, "urn:mock-api"],
+    const v1 = v1TokenValidationPaths(issuerPath);
+    const validation = (await context.app.inject({ url: v1.discoveryPath, headers: { host } })).json();
+    expect(validation.issuer).toBe(`http://${host}/${mockTenantId}/`);
+    expect(validation.jwks_uri).toBe(`http://${host}/${mockTenantId}/discovery/keys`);
+    const v1Keys = await context.app.inject({ url: new URL(validation.jwks_uri).pathname, headers: { host } });
+    expect(v1Keys.statusCode).toBe(200);
+    expect(v1Keys.json()).toEqual(jwks);
+    for (const [jwt, audience, tokenIssuer, tokenVersion] of [
+      [tokens.id_token, clientId, issuer, "2.0"],
+      [tokens.access_token, "urn:mock-api", version === "1.0" ? validation.issuer : issuer, version],
     ] as const) {
       const verified = await jwtVerify(jwt, createLocalJWKSet(jwks), {
-        issuer,
+        issuer: tokenIssuer,
         audience,
         requiredClaims: ["iss", "aud", "iat", "exp", "nbf"],
       });
@@ -174,10 +184,48 @@ describe("issuer routing and origin enforcement", () => {
       expect(verified.payload.nbf).toBeLessThanOrEqual(Date.now() / 1000);
       expect(verified.payload.exp).toBeGreaterThan(Date.now() / 1000);
       expect(verified.payload.mail).toBeUndefined();
-      expect(verified.payload.ver).toBe("2.0");
+      expect(verified.payload.ver).toBe(tokenVersion);
       expect(verified.payload.tid).toBe(mockTenantId);
     }
   });
+
+  it.each([
+    ["DISCOVERY_500", "discoveryPath", "discovery"],
+    ["JWKS_500", "jwksPath", "jwks"],
+  ] as const)(
+    "applies %s, origin validation, CORS and access logs to v1 metadata",
+    async (scenario, pathKey, endpoint) => {
+      const path = v1TokenValidationPaths(issuerPath)[pathKey];
+      context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
+      try {
+        const mismatch = await context.app.inject({ url: path, headers: { host: "unexpected.test:19000" } });
+        expect(mismatch.statusCode).toBe(400);
+        expect(context.store.get().remainingFailures).toBe(1);
+        const preflight = await context.app.inject({
+          method: "OPTIONS",
+          url: path,
+          headers: { host, origin: "http://localhost:3000" },
+        });
+        expect(preflight.statusCode).toBe(204);
+        expect(context.store.get().remainingFailures).toBe(1);
+        const failure = await context.app.inject({ url: path, headers: { host, origin: "http://localhost:3000" } });
+        expect(failure.statusCode).toBe(500);
+        expect(failure.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+        const success = await context.app.inject({ url: `${path}/`, headers: { host } });
+        expect(success.statusCode, success.body).toBe(200);
+        const logResponse = await context.app.inject({ url: "/__mock/api/access-log", headers: { host } });
+        expect(logResponse.statusCode).toBe(200);
+        expect(logResponse.json()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ path, endpoint, statusCode: 500 }),
+            expect.objectContaining({ path: `${path}/`, endpoint, statusCode: 200 }),
+          ]),
+        );
+      } finally {
+        context.store.reset();
+      }
+    },
+  );
 
   it("rejects a mismatched Host before a fault is consumed", async () => {
     context.store.set({

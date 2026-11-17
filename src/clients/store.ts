@@ -30,6 +30,7 @@ export const defaultClients = (): OidcClientConfig[] => [
     postLogoutRedirectUris: [],
     accessTokenAudience: "urn:mock-api",
     accessTokenScope: "access_as_user",
+    accessTokenVersion: "2.0",
     emailOptionalClaim: false,
   },
   {
@@ -41,6 +42,7 @@ export const defaultClients = (): OidcClientConfig[] => [
     postLogoutRedirectUris: [],
     accessTokenAudience: "urn:mock-api",
     accessTokenScope: "access_as_user",
+    accessTokenVersion: "2.0",
     emailOptionalClaim: false,
   },
 ];
@@ -125,7 +127,11 @@ export class OidcClientStore {
     return this.#queue.run(async () => {
       const previous = this.#clients.get(clientId);
       if (!previous) throw new ClientNotFoundError(`client not found: ${clientId}`);
-      const client = { clientId, ...update };
+      const client = {
+        clientId,
+        ...update,
+        accessTokenVersion: update.accessTokenVersion ?? previous.accessTokenVersion,
+      };
       const next = new Map(this.#clients).set(clientId, client);
       await this.commit(
         next,

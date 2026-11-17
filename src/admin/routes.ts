@@ -70,6 +70,7 @@ const clientFieldLabels: Record<string, string> = {
   postLogoutRedirectUris: "ログアウト後のリダイレクト URI（postLogoutRedirectUris）",
   accessTokenAudience: "アクセストークンの対象者（accessTokenAudience / aud）",
   accessTokenScope: "アクセストークンのスコープ（accessTokenScope / scp）",
+  accessTokenVersion: "アクセストークンのバージョン（accessTokenVersion）",
   emailOptionalClaim: "email claim（email）",
 };
 

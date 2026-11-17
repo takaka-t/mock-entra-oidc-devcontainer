@@ -15,6 +15,7 @@ import { SigningKeyRolloverState } from "./oidc/key-rollover.js";
 import { applyProviderClient, createProvider, removeProviderClient, validateProviderClient } from "./oidc/provider.js";
 import { matchesCommonProbePath, registerCommonProbeRoute } from "./oidc/common-probe.js";
 import { matchesRouteOrSubPath, oidcInternalRoutes } from "./oidc/routes.js";
+import { v1TokenValidationPaths } from "./oidc/access-token-version.js";
 import { resolveCorsPathnames, resolveHttpFaultEndpoints } from "./scenario/registry.js";
 import { InMemoryScenarioStore } from "./scenario/store.js";
 import { MockUserStore } from "./users/store.js";
@@ -74,7 +75,10 @@ interface OidcMount {
  * name has to be the last segment of its external path.
  */
 function oidcMounts(config: AppConfig): readonly OidcMount[] {
+  const v1 = v1TokenValidationPaths(config.issuerPath);
   return [
+    { external: v1.discoveryPath, internal: "/.well-known/openid-configuration" },
+    { external: v1.jwksPath, internal: oidcInternalRoutes.jwks },
     {
       external: config.authorizePath,
       internal: oidcInternalRoutes.authorization,

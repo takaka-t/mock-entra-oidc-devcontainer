@@ -22,7 +22,9 @@ function endpointFor(
   const normalizedMethod = method?.toUpperCase();
   return (
     (Object.entries(routes) as Array<[HttpFaultEndpoint, HttpFaultRouteTable[HttpFaultEndpoint]]>).find(
-      ([, route]) => matchesPath(pathname, route.pathname) && route.method === normalizedMethod,
+      ([, route]) =>
+        [route.pathname, ...(route.aliases ?? [])].some((path) => matchesPath(pathname, path)) &&
+        route.method === normalizedMethod,
     )?.[0] ?? null
   );
 }

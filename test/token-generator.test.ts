@@ -29,8 +29,8 @@ const tokenKinds = [
   {
     name: "access token",
     audience: "urn:mock-api",
-    typ: "at+jwt",
-    claims: { client_id: "mock-public-client", scope: "openid profile" },
+    typ: "JWT",
+    claims: { azp: "mock-public-client", scp: "access_as_user" },
   },
 ] as const;
 

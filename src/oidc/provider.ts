@@ -21,6 +21,7 @@ import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
 import { browserFacingRoutePath, oidcInternalRoutes } from "./routes.js";
+import { v1TokenValidationPaths } from "./access-token-version.js";
 
 type UserClaims = Omit<MockUser, "groups" | "mail"> & {
   tid: string;
@@ -201,7 +202,12 @@ export function createProvider(
     responseTypes: ["code"],
     pkce: { required: () => true },
     extraClientMetadata: {
-      properties: ["mock_access_token_audience", "mock_access_token_scope", "mock_email_optional_claim"],
+      properties: [
+        "mock_access_token_audience",
+        "mock_access_token_scope",
+        "mock_access_token_version",
+        "mock_email_optional_claim",
+      ],
       validator: (_ctx, key, value) => {
         if (key === "mock_access_token_audience") {
           if (typeof value !== "string")
@@ -219,11 +225,17 @@ export function createProvider(
           throw new errors.InvalidClientMetadata("mock_access_token_scope must be a string");
         if (key === "mock_email_optional_claim" && typeof value !== "boolean")
           throw new errors.InvalidClientMetadata("mock_email_optional_claim must be a boolean");
+        if (key === "mock_access_token_version" && value !== "1.0" && value !== "2.0")
+          throw new errors.InvalidClientMetadata("mock_access_token_version must be 1.0 or 2.0");
       },
     },
     formats: {
       customizers: {
         jwt: (ctx, token, jwt) => {
+          jwt.header = { ...jwt.header, typ: "JWT" };
+          // Entra uses scp for API permissions. Leaving oidc-provider's
+          // OIDC scope claim would hide scp in consumers that prefer scope.
+          delete jwt.payload.scope;
           const accountId = "accountId" in token && typeof token.accountId === "string" ? token.accountId : undefined;
           const user = accountId ? userStore.find(accountId) : undefined;
           const tokenScope = "scope" in token ? token.scope : undefined;
@@ -238,10 +250,16 @@ export function createProvider(
                 includesScope(tokenScope, "email") || emailOptionalClaimFor(client),
               ),
             );
-          jwt.payload.ver = "2.0";
+          const v1 = client?.metadata().mock_access_token_version === "1.0";
+          jwt.payload.ver = v1 ? "1.0" : "2.0";
+          if (v1) {
+            jwt.payload.iss = `${config.issuerOrigin}${v1TokenValidationPaths(config.issuerPath).issuerPath}`;
+            if (user) jwt.payload.unique_name = user.preferred_username;
+            delete jwt.payload.preferred_username;
+          }
           if (client) {
-            jwt.payload.azp = client.clientId;
-            jwt.payload.azpacr = client.tokenEndpointAuthMethod === "none" ? "0" : "1";
+            jwt.payload[v1 ? "appid" : "azp"] = client.clientId;
+            jwt.payload[v1 ? "appidacr" : "azpacr"] = client.tokenEndpointAuthMethod === "none" ? "0" : "1";
             const scope = client.metadata().mock_access_token_scope;
             if (typeof scope === "string" && scope) jwt.payload.scp = scope;
           }
@@ -351,13 +369,25 @@ export function createProvider(
       typeof ctx.body === "object" &&
       ctx.body !== null
     ) {
-      ctx.body = {
-        ...(ctx.body as Record<string, unknown>),
-        authorization_endpoint: `${config.issuerOrigin}${config.authorizePath}`,
-        token_endpoint: `${config.issuerOrigin}${config.tokenPath}`,
-        jwks_uri: `${config.issuerOrigin}${config.jwksPath}`,
-        end_session_endpoint: `${config.issuerOrigin}${config.logoutPath}`,
-      };
+      const originalUrl = (ctx.req as typeof ctx.req & { originalUrl?: string }).originalUrl;
+      const v1 = v1TokenValidationPaths(config.issuerPath);
+      const pathname = originalUrl?.split("?")[0]?.replace(/\/$/, "");
+      // This document is for API access-token validation, not SPA sign-in:
+      // authorization and ID Tokens remain on the v2 endpoint and issuer.
+      ctx.body =
+        pathname === v1.discoveryPath
+          ? {
+              issuer: `${config.issuerOrigin}${v1.issuerPath}`,
+              jwks_uri: `${config.issuerOrigin}${v1.jwksPath}`,
+              id_token_signing_alg_values_supported: ["RS256"],
+            }
+          : {
+              ...(ctx.body as Record<string, unknown>),
+              authorization_endpoint: `${config.issuerOrigin}${config.authorizePath}`,
+              token_endpoint: `${config.issuerOrigin}${config.tokenPath}`,
+              jwks_uri: `${config.issuerOrigin}${config.jwksPath}`,
+              end_session_endpoint: `${config.issuerOrigin}${config.logoutPath}`,
+            };
     }
     if (ctx.path === "/jwks" && ctx.status === 200 && rolloverState.published) {
       ctx.body = {
@@ -425,6 +455,7 @@ function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
     token_endpoint_auth_method: client.tokenEndpointAuthMethod,
     mock_access_token_audience: client.accessTokenAudience,
     mock_access_token_scope: client.accessTokenScope,
+    mock_access_token_version: client.accessTokenVersion,
     mock_email_optional_claim: client.emailOptionalClaim,
   };
 }

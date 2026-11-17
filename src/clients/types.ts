@@ -13,8 +13,11 @@ export interface OidcClientConfig {
   postLogoutRedirectUris: string[];
   accessTokenAudience: string;
   accessTokenScope: string;
+  accessTokenVersion: "1.0" | "2.0";
   emailOptionalClaim: boolean;
 }
 
-export type CreateOidcClientInput = OidcClientConfig;
-export type UpdateOidcClientInput = Omit<OidcClientConfig, "clientId">;
+export type CreateOidcClientInput = Omit<OidcClientConfig, "accessTokenVersion"> & {
+  accessTokenVersion?: OidcClientConfig["accessTokenVersion"];
+};
+export type UpdateOidcClientInput = Omit<CreateOidcClientInput, "clientId">;

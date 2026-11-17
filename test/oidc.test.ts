@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { mockTenantId } from "../src/config.js";
 import { wrongTenantId } from "../src/faults/token-generator.js";
+import { v1TokenValidationPaths } from "../src/oidc/access-token-version.js";
 import { testConfig } from "./test-config.js";
 
 const host = "mock-idp.test:9000";
@@ -214,7 +215,7 @@ describe("OIDC provider", () => {
     expect(response.statusCode, response.body).toBe(200);
     const tokens = response.json<{ id_token: string; access_token: string }>();
     expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
-    expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
+    expect(decodeProtectedHeader(tokens.access_token).typ).toBe("JWT");
     const jwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json();
     const id = await jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
       issuer: `http://${host}`,
@@ -234,6 +235,7 @@ describe("OIDC provider", () => {
     const access = await jwtVerify(tokens.access_token, createLocalJWKSet(jwks), {
       issuer: `http://${host}`,
       audience: "urn:mock-api",
+      typ: "JWT",
     });
     expect(access.payload).toMatchObject({
       iss: `http://${host}`,
@@ -245,6 +247,7 @@ describe("OIDC provider", () => {
     });
     expect(access.payload.mail).toBeUndefined();
     expect(access.payload.email).toBeUndefined();
+    expect(access.payload.scope).toBeUndefined();
     expect(access.payload.sid).toBe(id.payload.sid);
     expect(access.payload.nbf).toBe(access.payload.iat);
   });
@@ -436,6 +439,127 @@ describe("OIDC provider", () => {
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
     expect(response.json<{ refresh_token: string }>().refresh_token).toBeTypeOf("string");
+  });
+
+  it.each([
+    { version: "1.0", clientType: "PUBLIC" },
+    { version: "1.0", clientType: "CONFIDENTIAL" },
+    { version: "2.0", clientType: "PUBLIC" },
+    { version: "2.0", clientType: "CONFIDENTIAL" },
+  ] as const)(
+    "issues and refreshes $version access tokens with v2 ID tokens for $clientType clients",
+    async ({ version, clientType }) => {
+      const clientId = `version-${version}-${clientType.toLowerCase()}`;
+      await context.clientStore.create({
+        clientId,
+        clientType,
+        ...(clientType === "CONFIDENTIAL" ? { clientSecret: "version-secret" } : {}),
+        tokenEndpointAuthMethod: clientType === "PUBLIC" ? "none" : "client_secret_basic",
+        redirectUris: ["http://localhost:3000/callback"],
+        postLogoutRedirectUris: [],
+        accessTokenAudience: "urn:version-api",
+        accessTokenScope: "api.read",
+        accessTokenVersion: version,
+        emailOptionalClaim: true,
+      });
+      const v1 = v1TokenValidationPaths("");
+      const discovery = await context.app.inject({
+        url: version === "1.0" ? v1.discoveryPath : "/.well-known/openid-configuration",
+        headers: { host },
+      });
+      expect(discovery.statusCode, discovery.body).toBe(200);
+      const metadata = discovery.json();
+      expect(metadata).toMatchObject({
+        issuer: version === "1.0" ? `http://${host}${v1.issuerPath}` : `http://${host}`,
+        jwks_uri: `http://${host}${version === "1.0" ? v1.jwksPath : jwksPath}`,
+      });
+      const jwksResponse = await context.app.inject({ url: new URL(metadata.jwks_uri).pathname, headers: { host } });
+      expect(jwksResponse.statusCode).toBe(200);
+      const jwks = createLocalJWKSet(jwksResponse.json());
+      const flow = await authorize(undefined, "", clientId, "openid profile offline_access");
+      const response = await exchange(flow.code, flow.verifier, {
+        clientId,
+        ...(clientType === "CONFIDENTIAL" ? { clientSecret: "version-secret" } : {}),
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const tokens = response.json<{ id_token: string; access_token: string; refresh_token: string; scope: string }>();
+      const verifyTokens = async (body: typeof tokens) => {
+        const id = await jwtVerify(body.id_token, jwks, { issuer: `http://${host}`, audience: clientId });
+        expect(id.payload).toMatchObject({ ver: "2.0", preferred_username: "admin@example.com" });
+        const access = await jwtVerify(body.access_token, jwks, {
+          issuer: metadata.issuer,
+          audience: "urn:version-api",
+          typ: "JWT",
+        });
+        expect(access.payload).toMatchObject({
+          ver: version,
+          [version === "1.0" ? "appid" : "azp"]: clientId,
+          [version === "1.0" ? "appidacr" : "azpacr"]: clientType === "PUBLIC" ? "0" : "1",
+          [version === "1.0" ? "unique_name" : "preferred_username"]: "admin@example.com",
+          email: "admin@example.com",
+          scp: "api.read",
+          tid: mockTenantId,
+          sid: id.payload.sid,
+        });
+        const absentClaims =
+          version === "1.0" ? ["azp", "azpacr", "preferred_username"] : ["appid", "appidacr", "unique_name"];
+        for (const claim of [...absentClaims, "scope"]) expect(access.payload[claim]).toBeUndefined();
+        expect(new Set(body.scope.split(" "))).toEqual(new Set(["openid", "profile", "offline_access"]));
+        const wrongIssuer = version === "1.0" ? `http://${host}` : `http://${host}${v1.issuerPath}`;
+        await expect(
+          jwtVerify(body.access_token, jwks, { issuer: wrongIssuer, audience: "urn:version-api", typ: "JWT" }),
+        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "iss" });
+        await expect(
+          jwtVerify(body.access_token, jwks, { issuer: metadata.issuer, audience: "urn:another-api", typ: "JWT" }),
+        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "aud" });
+        await expect(
+          jwtVerify(body.access_token, jwks, { issuer: metadata.issuer, audience: "urn:version-api", typ: "at+jwt" }),
+        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "typ" });
+      };
+      await verifyTokens(tokens);
+      const refresh = await context.app.inject({
+        method: "POST",
+        url: tokenPath,
+        headers: {
+          host,
+          "content-type": "application/x-www-form-urlencoded",
+          ...(clientType === "CONFIDENTIAL"
+            ? { authorization: `Basic ${Buffer.from(`${clientId}:version-secret`).toString("base64")}` }
+            : {}),
+        },
+        payload: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: tokens.refresh_token,
+          client_id: clientId,
+        }).toString(),
+      });
+      expect(refresh.statusCode, refresh.body).toBe(200);
+      await verifyTokens(refresh.json());
+    },
+  );
+
+  it("publishes rollover keys on the v1 JWKS route and validates a v1 token signed with the new key", async () => {
+    const clientId = "v1-rollover";
+    await context.clientStore.create({ ...context.clientStore.list()[0]!, clientId, accessTokenVersion: "1.0" });
+    context.store.set({ scenario: "SIGNING_KEY_ROLLOVER", mode: "LIMITED", failureCount: 1 });
+    try {
+      const flow = await authorize(undefined, "", clientId);
+      const response = await exchange(flow.code, flow.verifier, { clientId });
+      expect(response.statusCode, response.body).toBe(200);
+      const v1 = v1TokenValidationPaths("");
+      const keys = await context.app.inject({ url: v1.jwksPath, headers: { host } });
+      expect(keys.json().keys).toHaveLength(2);
+      const token = response.json().access_token;
+      expect(decodeProtectedHeader(token).kid).toBe("mock-rollover-key");
+      const verified = await jwtVerify(token, createLocalJWKSet(keys.json()), {
+        issuer: `http://${host}${v1.issuerPath}`,
+        audience: "urn:mock-api",
+        typ: "JWT",
+      });
+      expect(verified.payload).toMatchObject({ ver: "1.0", appid: clientId });
+    } finally {
+      context.store.reset();
+    }
   });
 
   it("uses a dynamic client's auth method and audience and scopes email claims", async () => {
@@ -645,6 +769,7 @@ describe("OIDC provider", () => {
   }
 
   it("consumes Authorization response faults only on the successful response", async () => {
+    context.accessLog.clear();
     context.store.set({ scenario: "AUTH_STATE_MISMATCH", mode: "LIMITED", failureCount: 2 });
     const before = context.accessLog.list().length;
     await authorizationResponseParams("query");
@@ -807,7 +932,8 @@ describe("OIDC provider", () => {
       const payload = decodeJwt(tokens.id_token);
       const accessPayload = decodeJwt(tokens.access_token);
       expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
-      expect(decodeProtectedHeader(tokens.access_token).typ).toBe("at+jwt");
+      expect(decodeProtectedHeader(tokens.access_token).typ).toBe("JWT");
+      expect(accessPayload.scope).toBeUndefined();
       expect(payload.sid).toBeTypeOf("string");
       expect(accessPayload.sid).toBe(payload.sid);
       const jwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json();

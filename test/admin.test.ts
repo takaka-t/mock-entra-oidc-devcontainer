@@ -833,6 +833,7 @@ describe("admin API and UI", () => {
     expect(created.json()).toMatchObject({
       clientId: payload.clientId,
       clientSecret: "visible-secret",
+      accessTokenVersion: "2.0",
     });
     expect(created.json()).not.toHaveProperty("scopes");
     expect(
@@ -852,13 +853,23 @@ describe("admin API and UI", () => {
       payload: {
         ...updatePayload,
         clientSecret: "changed",
+        accessTokenVersion: "1.0",
       },
     });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({
       clientId: payload.clientId,
       clientSecret: "changed",
+      accessTokenVersion: "1.0",
     });
+
+    const preserved = await context.app.inject({
+      method: "PUT",
+      url: `/__mock/api/clients/${clientId}`,
+      payload: { ...updatePayload, clientSecret: "preserved-version" },
+    });
+    expect(preserved.statusCode).toBe(200);
+    expect(preserved.json()).toMatchObject({ clientSecret: "preserved-version", accessTokenVersion: "1.0" });
 
     await context.app.inject({
       method: "PUT",

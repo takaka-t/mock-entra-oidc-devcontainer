@@ -5,6 +5,7 @@ import { matchesCommonProbePath } from "../oidc/common-probe.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { InMemoryAccessLog } from "./store.js";
 import type { AccessLogEndpoint } from "./types.js";
+import { v1TokenValidationPaths } from "../oidc/access-token-version.js";
 
 export interface AccessLogEndpointTable {
   discovery: string;
@@ -14,6 +15,8 @@ export interface AccessLogEndpointTable {
   jwks: string;
   logout: string;
   "connectivity-probe": string;
+  v1Discovery?: string;
+  v1Jwks?: string;
 }
 
 /**
@@ -28,6 +31,8 @@ export function resolveAccessLogEndpoints(
   >,
 ): AccessLogEndpointTable {
   return {
+    v1Discovery: v1TokenValidationPaths(config.issuerPath).discoveryPath,
+    v1Jwks: v1TokenValidationPaths(config.issuerPath).jwksPath,
     discovery: `${config.issuerPath}/.well-known/openid-configuration`,
     authorization: config.authorizePath,
     interaction: `${config.issuerPath}/interaction`,
@@ -74,8 +79,10 @@ export function classifyAccessLogEndpoint(
 ): AccessLogEndpoint {
   if (method === "HEAD" && matchesCommonProbePath(pathname, table["connectivity-probe"])) return "connectivity-probe";
   if (matchesExact(pathname, table.discovery)) return "discovery";
+  if (table.v1Discovery && matchesExact(pathname, table.v1Discovery)) return "discovery";
   if (matchesExact(pathname, table.token)) return "token";
   if (matchesExact(pathname, table.jwks)) return "jwks";
+  if (table.v1Jwks && matchesExact(pathname, table.v1Jwks)) return "jwks";
   if (matchesPrefix(pathname, table.authorization)) return "authorization";
   if (matchesPrefix(pathname, table.logout)) return "logout";
   if (matchesPrefix(pathname, table.interaction)) return "interaction";

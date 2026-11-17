@@ -1,4 +1,5 @@
 import { mockTokenTtlSeconds, type AppConfig } from "../config.js";
+import { v1TokenValidationPaths } from "../oidc/access-token-version.js";
 import { missingClaimNames, type FaultEndpoint, type ScenarioName } from "./types.js";
 
 export type ScenarioParameterKind =
@@ -268,6 +269,7 @@ export type HttpFaultEndpoint = Extract<FaultEndpoint, "authorization-http" | "t
 export interface HttpFaultRoute {
   method: "GET" | "POST" | "HEAD";
   pathname: string;
+  aliases?: readonly string[];
 }
 
 export type HttpFaultRouteTable = Record<HttpFaultEndpoint, HttpFaultRoute>;
@@ -288,10 +290,11 @@ export function resolveHttpFaultEndpoints(
       pathname: config.commonAuthorizePath,
     },
     token: { method: "POST", pathname: config.tokenPath },
-    jwks: { method: "GET", pathname: config.jwksPath },
+    jwks: { method: "GET", pathname: config.jwksPath, aliases: [v1TokenValidationPaths(config.issuerPath).jwksPath] },
     discovery: {
       method: "GET",
       pathname: `${config.issuerPath}/.well-known/openid-configuration`,
+      aliases: [v1TokenValidationPaths(config.issuerPath).discoveryPath],
     },
   };
 }
@@ -311,5 +314,7 @@ export function resolveCorsPathnames(
     config.jwksPath,
     `${config.issuerPath}/.well-known/openid-configuration`,
     config.commonAuthorizePath,
+    v1TokenValidationPaths(config.issuerPath).discoveryPath,
+    v1TokenValidationPaths(config.issuerPath).jwksPath,
   ];
 }

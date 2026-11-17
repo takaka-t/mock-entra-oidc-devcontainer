@@ -54,7 +54,7 @@ Mock IdPは生成済みサーバー証明書を読み込み、直接HTTPSで待�
 | Health                           | `https://mock-idp.test:9000/health`                                                                     |
 
 - tenant直下からの相対pathで見ると、Discoveryはissuerと同じ`/v2.0`配下（`/v2.0/.well-known/openid-configuration`）ですが、authorize/token/logout（`/oauth2/v2.0/authorize`、`/oauth2/v2.0/token`、`/oauth2/v2.0/logout`）とJWKS（`/discovery/v2.0/keys`）はissuerの`/v2.0`とは別の、tenant直下の兄弟pathです。Admin UI、Admin API、Healthはissuer pathにかかわらずorigin直下です。
-- Discoveryが返す各endpointとJWTの正常系`iss`はissuerを基準に生成されます。OIDCクライアントのauthority/issuerにもissuerを設定してください。JWTの`tid`には固定Tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
+- Discoveryが返す各endpointとID Tokenの正常系`iss`はissuerを基準に生成されます。SPAなどのOIDCクライアントのauthority/issuerにも上記のv2.0 issuerを設定してください。Access Tokenのissuerは[アクセストークンのバージョン](#アクセストークンのバージョン)を参照してください。JWTの`tid`には固定Tenant IDが入ります。OIDC endpointへのrequestのschemeとHostがissuerのoriginに一致しない場合は`400 invalid_request_origin`になります。
 - LogoutはRP-Initiated Logoutの確認ページを経由します。確認ページの送信先とサインアウト完了ページはLogout pathのsub pathの`/oauth2/v2.0/logout/confirm`、`/oauth2/v2.0/logout/success`です（クライアントが直接呼ぶpathではありません）。`post_logout_redirect_uri`は、そのクライアントのPost Logout Redirect URIに登録済みの場合だけ受け付けます。
 - `common`はEntraのmulti-tenant aliasです。クライアントライブラリはsign-inを始める前に`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`で到達性を確認するため、このMockはこの接続性プローブだけをtenant直下ではなくorigin直下で提供します。受け付けるのは`HEAD`だけです（CORS preflightの`OPTIONS`は204、他のmethodは404）。tenant aliasとしての`common`は実装していないため、このpathで認証フローは開始できません。
 - Microsoft Entra IDのDiscoveryドキュメントには`pushed_authorization_request_endpoint`（PAR）が含まれないため、PAR機能は無効化しています。
@@ -182,7 +182,7 @@ networks:
 
 全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
-- **設定項目**: Client ID、Public/Confidential種別、secret、Token Endpoint認証方式（Publicは`none`、Confidentialは`client_secret_basic`または`client_secret_post`）、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、emailのoptional claim化。
+- **設定項目**: Client ID、Public/Confidential種別、secret、Token Endpoint認証方式（Publicは`none`、Confidentialは`client_secret_basic`または`client_secret_post`）、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、Access Tokenのバージョン、emailのoptional claim化。
 - `accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
 - **標準OIDC scope**: `openid`, `profile`, `email`, `offline_access`は全クライアントで利用できます。これらはEntra IDのアプリ登録項目ではなく、アプリケーションが認可リクエストの`scope`パラメーターで要求します。`offline_access`を要求するとRefresh Tokenが発行されます。`email`の扱いは[トークンのclaim](#トークンのclaim)を参照してください。
 - **対象外**: Access Tokenの`scp` claimはクライアントごとに設定した単一の委任scope名をそのまま返すだけの簡易モデルです。Microsoft Graphや独自Web APIの複数permissionの管理、admin consent、Expose an APIの管理UIは対象外です。
@@ -202,6 +202,7 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients \
     "postLogoutRedirectUris":[],
     "accessTokenAudience":"urn:my-api",
     "accessTokenScope":"access_as_user",
+    "accessTokenVersion":"2.0",
     "emailOptionalClaim":false
   }'
 
@@ -209,6 +210,24 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/r
   -H 'content-type: application/json' \
   -d '{}'
 ```
+
+### アクセストークンのバージョン
+
+Admin UIのクライアント編集で「アクセストークンのバージョン」を選ぶか、Admin APIの作成・更新リクエストに`"accessTokenVersion":"1.0"`または`"accessTokenVersion":"2.0"`を指定します。作成時の省略は`"2.0"`、更新時の省略は現在の設定を維持します。既存の`clients.json`に項目がなくてもv2.0として読み込めます。変更後に取得・更新したAccess Tokenから反映され、発行済みトークンは変わりません。
+
+SPAのauthority、Authorization/Token endpoint、ID Tokenは引き続きv2.0です。Authorization CodeとRefresh Tokenのどちらからでも、選んだバージョンのAccess Tokenが発行されます。Entra IDでも[アクセストークンのバージョンは認証エンドポイントのバージョンと独立](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-ownership)しています。
+
+バックエンドAPIには、使用するAccess Tokenに応じて次を設定してください。`aud`は両バージョンともクライアント設定の`accessTokenAudience`です。
+
+| バックエンドの検証設定 | v1.0                                                                                               | v2.0                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| issuer（`iss`）        | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/`（末尾`/`あり）                  | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`                                  |
+| メタデータURL          | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/.well-known/openid-configuration` | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration` |
+| JWKS URL               | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/keys`                   | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`                   |
+
+v1.0のメタデータはAPIのアクセストークン検証専用で、`issuer`、`jwks_uri`、`id_token_signing_alg_values_supported`を返します。SPAのサインイン用Discoveryにはv2.0を使ってください。v1.0のAuthorization/Token endpointや`resource`パラメーターによる認証要求は実装していません。v1.0のメタデータとJWKSにも、既存のorigin検証、CORS、Discovery/JWKS障害シナリオ、署名鍵ローテーション、アクセスログが適用されます。
+
+実際のEntra IDではバージョンをAPI側の`requestedAccessTokenVersion`で指定します。このMockはAPI登録を独立して持たない簡易モデルのため、Audienceやscopeと同じくクライアント設定に保持します。同じAPIを利用する複数クライアントには同じバージョンを設定してください。また、実環境のv1.0 issuerの`sts.windows.net`は使用せず、Mockのoriginに置き換えています。
 
 ### テストユーザー
 
@@ -270,11 +289,14 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users/res
 
 ### トークンのclaim
 
-- **ID token・Access Token共通**: `sub`, `oid`, `tid`, `name`, `preferred_username`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`
-- **Access Tokenのみ**: `azp`（client_id）、`azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）、`scp`（クライアント設定の委任scope名）
+- **ID Token・Access Token共通**: `sub`, `oid`, `tid`, `name`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`
+- **ID Token・v2.0 Access Token**: `preferred_username`。ID Tokenの`ver`は常に`"2.0"`です。
+- **v2.0 Access Tokenのみ**: `azp`（client_id）、`azpacr`（クライアント認証方式。publicクライアントは`0`、client secretで認証するconfidentialクライアントは`1`）。`ver`は`"2.0"`です。
+- **v1.0 Access Tokenのみ**: `appid`（client_id）、`appidacr`（上記`azpacr`と同じ値）、`unique_name`（ユーザーの`preferred_username`の値）。`ver`は`"1.0"`です。`azp`、`azpacr`、`preferred_username`は含みません。[Entra IDのclaimのバージョン差](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)に対応しています。
+- **Access Token共通**: `scp`（クライアント設定の委任scope名）。JWTペイロードには`scope` claimを含めません。トークン応答の`scope`とOIDCのスコープ処理は従来どおりです。
 - **`email`**: ユーザーの`mail`の値です。`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）だけ含まれます。表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
 - `mail` claimは含みません。Microsoft Graphのユーザープロパティ名であり、Entra IDのトークンclaimには存在しないためです。
-- Access TokenのJWTヘッダーは`typ:"at+jwt"`です。**既知の制限**として、ID Tokenには実際のEntra IDが付与する`typ:"JWT"`を設定していません（`oidc-provider`にID Token用のヘッダーカスタマイズ機構がなく、OIDC/JWT仕様上も`typ`はOPTIONALでMSAL等の検証対象にもならないため見送っています）。
+- Access TokenのJWTヘッダーは、v1.0／v2.0ともEntra IDと同じ`typ:"JWT"`です。従来の`typ:"at+jwt"`またはJWTの`scope` claimに依存している検証・権限取得処理は、`typ:"JWT"`と`scp`に合わせてください。**既知の制限**として、ID Tokenには実際のEntra IDが付与する`typ:"JWT"`を設定していません。
 
 ## シナリオ API
 
