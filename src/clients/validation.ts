@@ -1,121 +1,75 @@
 import { z } from "zod";
 import { clientTypes, tokenEndpointAuthMethods, type OidcClientConfig, type UpdateOidcClientInput } from "./types.js";
-import { identifier, printableAscii, unique } from "../validation/common.js";
-
-const withoutFragment = (value: string): boolean => !value.includes("#");
-
-const clientId = identifier;
-
-const scopeName = printableAscii
-  .refine((value) => value.trim().length > 0, "空白だけにはできません")
-  .transform((value) => value.trim())
-  .refine((value) => !/\s/.test(value), "空白文字は使用できません");
-
-const absoluteUri = z
-  .string()
-  .trim()
-  .min(1)
-  .refine((value) => {
-    try {
-      const url = new URL(value);
-      return Boolean(url.protocol && !url.username && !url.password);
-    } catch {
-      return false;
-    }
-  }, "認証情報を含まない絶対 URI を指定してください")
-  .refine(withoutFragment, "フラグメントは指定できません");
-
-const webUri = absoluteUri.refine((value) => {
-  try {
-    const protocol = new URL(value).protocol;
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
-}, "http または https を使用してください");
-
-const accessTokenVersion = z.enum(["1.0", "2.0"]);
-
+import { printableAscii, unique } from "../validation/common.js";
+import { guid, scopeName, groupMembershipClaims } from "../resources/validation.js";
+import { validRedirect, redirectMatches } from "./redirect-uri.js";
+const redirect = z
+  .object({ uri: z.string(), type: z.enum(["spa", "web", "native"]) })
+  .strict()
+  .refine((item) => validRedirect(item.uri, item.type), "リダイレクト URI の形式または scheme が正しくありません");
 const commonShape = {
   clientType: z.enum(clientTypes),
   clientSecret: printableAscii.optional(),
   tokenEndpointAuthMethod: z.enum(tokenEndpointAuthMethods),
-  redirectUris: z.array(webUri).min(1).transform(unique),
-  postLogoutRedirectUris: z.array(webUri).transform(unique),
-  accessTokenAudience: absoluteUri,
-  accessTokenScope: scopeName,
-  accessTokenVersion: accessTokenVersion.default("2.0"),
+  redirectUris: z.array(redirect).min(1).max(256),
+  requiredResourceAccess: z.array(
+    z.object({ resourceAppId: guid, scopes: z.array(scopeName).min(1).transform(unique) }).strict(),
+  ),
   emailOptionalClaim: z.boolean(),
+  groupMembershipClaims,
 };
-
-function refineClient(
-  value: Omit<z.infer<z.ZodObject<typeof commonShape>>, "accessTokenVersion">,
-  ctx: z.RefinementCtx,
-) {
-  if (value.clientType === "PUBLIC") {
-    if (value.clientSecret !== undefined)
+function refineClient(value: Omit<OidcClientConfig, "clientId">, ctx: z.RefinementCtx) {
+  if (value.clientType === "PUBLIC" && value.clientSecret !== undefined)
+    ctx.addIssue({
+      code: "custom",
+      path: ["clientSecret"],
+      message: "PUBLIC クライアントにはクライアントシークレットを指定できません",
+    });
+  if (value.clientType === "PUBLIC" && value.tokenEndpointAuthMethod !== "none")
+    ctx.addIssue({
+      code: "custom",
+      path: ["tokenEndpointAuthMethod"],
+      message: "PUBLIC クライアントの認証方式は none にしてください",
+    });
+  if (value.clientType === "CONFIDENTIAL" && (!value.clientSecret || value.tokenEndpointAuthMethod === "none"))
+    ctx.addIssue({
+      code: "custom",
+      path: ["clientSecret"],
+      message: "CONFIDENTIAL クライアントには secret と認証方式が必要です",
+    });
+  if (value.clientType === "PUBLIC" && value.redirectUris.some((item) => item.type === "web"))
+    ctx.addIssue({
+      code: "custom",
+      path: ["redirectUris"],
+      message: "Web リダイレクトには CONFIDENTIAL クライアントを使用してください",
+    });
+  if (value.clientType === "CONFIDENTIAL" && value.redirectUris.some((item) => item.type === "spa"))
+    ctx.addIssue({
+      code: "custom",
+      path: ["redirectUris"],
+      message: "SPA リダイレクトには PUBLIC クライアントを使用してください",
+    });
+  for (let index = 0; index < value.redirectUris.length; index++)
+    if (value.redirectUris.slice(0, index).some((item) => redirectMatches(item.uri, value.redirectUris[index]!.uri)))
       ctx.addIssue({
         code: "custom",
-        path: ["clientSecret"],
-        message: "PUBLIC クライアントにはクライアントシークレットを指定できません",
+        path: ["redirectUris"],
+        message: "localhost のポートだけが異なる URI を含め、同じ URI は重複登録できません",
       });
-    if (value.tokenEndpointAuthMethod !== "none")
-      ctx.addIssue({
-        code: "custom",
-        path: ["tokenEndpointAuthMethod"],
-        message: "PUBLIC クライアントの認証方式は none にしてください",
-      });
-  } else {
-    if (!value.clientSecret)
-      ctx.addIssue({
-        code: "custom",
-        path: ["clientSecret"],
-        message: "CONFIDENTIAL クライアントにはクライアントシークレットが必要です",
-      });
-    if (value.tokenEndpointAuthMethod === "none")
-      ctx.addIssue({
-        code: "custom",
-        path: ["tokenEndpointAuthMethod"],
-        message: "CONFIDENTIAL クライアントにはトークンエンドポイント認証が必要です",
-      });
-  }
+  if (
+    new Set(value.requiredResourceAccess.map((item) => item.resourceAppId)).size !== value.requiredResourceAccess.length
+  )
+    ctx.addIssue({ code: "custom", path: ["requiredResourceAccess"], message: "API 権限の登録が重複しています" });
 }
-
 export const createClientSchema = z
-  .object({ clientId, ...commonShape })
+  .object({ clientId: guid, ...commonShape })
   .strict()
   .superRefine(refineClient);
-export const updateClientSchema = z
-  .object({ ...commonShape, accessTokenVersion: accessTokenVersion.optional() })
-  .strict()
-  .superRefine(refineClient);
-
-export const persistedClientSchema = z.preprocess((input) => {
-  if (typeof input !== "object" || input === null) return input;
-  const { scopes: _legacyScopes, ...client } = input as Record<string, unknown>;
-  void _legacyScopes;
-  return {
-    accessTokenScope: "access_as_user",
-    emailOptionalClaim: false,
-    ...client,
-  };
-}, createClientSchema);
-
+export const updateClientSchema = z.object(commonShape).strict().superRefine(refineClient);
+export const persistedClientSchema = createClientSchema;
 export function parseCreateClient(input: unknown): OidcClientConfig {
-  return normalized(createClientSchema.parse(input));
+  return createClientSchema.parse(input);
 }
-
 export function parseUpdateClient(input: unknown): UpdateOidcClientInput {
-  return normalized(updateClientSchema.parse(input));
-}
-
-function normalized<
-  T extends {
-    clientSecret?: string | undefined;
-    accessTokenVersion?: OidcClientConfig["accessTokenVersion"] | undefined;
-  },
->(value: T): T & { clientSecret?: string; accessTokenVersion?: OidcClientConfig["accessTokenVersion"] } {
-  if (value.clientSecret === undefined) delete value.clientSecret;
-  if (value.accessTokenVersion === undefined) delete value.accessTokenVersion;
-  return value as T & { clientSecret?: string; accessTokenVersion?: OidcClientConfig["accessTokenVersion"] };
+  return updateClientSchema.parse(input);
 }

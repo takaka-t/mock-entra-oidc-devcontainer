@@ -20,7 +20,7 @@ export const defaultUsers = (): MockUser[] => [
     name: "Admin User",
     preferred_username: "admin@example.com",
     mail: "admin@example.com",
-    groups: ["app-admin-group-id", "app-user-group-id"],
+    groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
   },
   {
     sub: "user-normal",
@@ -28,7 +28,7 @@ export const defaultUsers = (): MockUser[] => [
     name: "Normal User",
     preferred_username: "user@example.com",
     mail: "user@example.com",
-    groups: ["app-user-group-id"],
+    groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
   },
   {
     sub: "user-unauthorized",
@@ -90,12 +90,16 @@ export class MockUserStore {
     const user = this.#users.get(sub);
     return user && structuredClone(user);
   }
+  findByOid(oid: string): MockUser | undefined {
+    const user = [...this.#users.values()].find((entry) => entry.oid === oid);
+    return user && structuredClone(user);
+  }
 
   async create(input: CreateMockUserInput): Promise<MockUser> {
     const parsed = parseCreateUser(input);
     return this.#queue.run(async () => {
-      // Keep an explicitly supplied value for reproducible tests, otherwise
-      // generate the pairwise-style subject once and persist it with the user.
+      // Keep an explicit internal key for reproducible tests, otherwise
+      // generate and persist a UUID independently of JWT subjects.
       let sub = parsed.sub;
       if (sub === undefined) {
         do sub = randomUUID();

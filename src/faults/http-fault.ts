@@ -38,22 +38,6 @@ function isCorsPath(pathname: string, corsPathnames: readonly string[]): boolean
   return corsPathnames.some((corsPathname) => matchesPath(pathname, corsPathname));
 }
 
-function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
-  const origin = req.headers.origin;
-  res.setHeader("access-control-allow-origin", origin ?? "*");
-  if (origin) {
-    const current = res.getHeader("vary");
-    const values = String(current ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (!values.some((value) => value.toLowerCase() === "origin")) values.push("Origin");
-    res.setHeader("vary", values.join(", "));
-  }
-  res.setHeader("access-control-allow-methods", "GET, HEAD, POST, OPTIONS");
-  res.setHeader("access-control-allow-headers", "authorization, content-type");
-}
-
 function setNoStoreHeaders(res: ServerResponse): void {
   res.setHeader("cache-control", "no-store");
   res.setHeader("pragma", "no-cache");
@@ -142,7 +126,6 @@ export function createHttpFaultMiddleware(
         return;
       }
 
-      setCorsHeaders(req, res);
       if (req.method?.toUpperCase() === "OPTIONS") {
         setNoStoreHeaders(res);
         res.statusCode = 204;

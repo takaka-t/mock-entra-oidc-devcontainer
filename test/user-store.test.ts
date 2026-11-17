@@ -4,39 +4,36 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 import { defaultUsers, MockUserStore, UserConflictError, UserNotFoundError } from "../src/users/store.js";
-
 const newUser = {
   sub: "user-new",
   oid: "ABCDEF01-2345-6789-ABCD-EF0123456789",
   name: "New User",
   preferred_username: "new@example.com",
   mail: "new@example.com",
-  groups: ["group-a", "group-a", "group-b"],
+  groups: [
+    "a0000000-0000-4000-8000-000000000001",
+    "a0000000-0000-4000-8000-000000000001",
+    "a0000000-0000-4000-8000-000000000002",
+  ],
 };
-
 async function temporaryFiles(directory: string): Promise<string[]> {
   return (await readdir(directory)).filter((entry) => entry.endsWith(".tmp"));
 }
-
 describe("mock user store", () => {
   let directory: string;
   let file: string;
-
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), "mock-users-"));
     file = join(directory, "users.json");
   });
-
   afterEach(async () => {
     await rm(directory, { recursive: true, force: true });
   });
-
   async function initialized(): Promise<MockUserStore> {
     const store = new MockUserStore(file);
     await store.initialize();
     return store;
   }
-
   it("seeds defaults with 0600 and without tid, reloads, and resets", async () => {
     const store = await initialized();
     expect(store.list()).toEqual(defaultUsers());
@@ -44,21 +41,18 @@ describe("mock user store", () => {
     const persisted = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>[];
     expect(persisted).toHaveLength(3);
     expect(persisted.every((user) => !("tid" in user))).toBe(true);
-
     await store.create(newUser);
     expect(await temporaryFiles(directory)).toEqual([]);
-
     const reloaded = await initialized();
     expect(reloaded.find("user-new")).toEqual({
       ...newUser,
       oid: newUser.oid.toLowerCase(),
-      groups: ["group-a", "group-b"],
+      groups: ["a0000000-0000-4000-8000-000000000001", "a0000000-0000-4000-8000-000000000002"],
     });
     expect(await reloaded.reset()).toEqual(defaultUsers());
     expect(reloaded.find("user-new")).toBeUndefined();
     expect((await initialized()).list()).toEqual(defaultUsers());
   });
-
   it("normalizes input and returns copies", async () => {
     const store = await initialized();
     const created = await store.create({
@@ -72,25 +66,25 @@ describe("mock user store", () => {
       name: "Spaced Name",
       preferred_username: newUser.preferred_username,
       mail: newUser.mail,
-      groups: ["group-a", "group-b"],
+      groups: ["a0000000-0000-4000-8000-000000000001", "a0000000-0000-4000-8000-000000000002"],
     });
     created.groups.push("mutated");
-    expect(store.find("spaced")?.groups).toEqual(["group-a", "group-b"]);
+    expect(store.find("spaced")?.groups).toEqual([
+      "a0000000-0000-4000-8000-000000000001",
+      "a0000000-0000-4000-8000-000000000002",
+    ]);
     const listed = store.list();
     listed[0]!.groups.push("mutated");
     expect(store.find(listed[0]!.sub)?.groups).not.toContain("mutated");
   });
-
   it("generates and persists a sub when one is omitted", async () => {
     const store = await initialized();
     const { sub: _sub, ...input } = newUser;
     void _sub;
     const created = await store.create(input);
-
     expect(created.sub).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect((await initialized()).find(created.sub)).toEqual(created);
   });
-
   it("updates every field except sub", async () => {
     const store = await initialized();
     const updated = await store.update("user-normal", {
@@ -98,7 +92,7 @@ describe("mock user store", () => {
       name: "Renamed",
       preferred_username: "renamed@example.com",
       mail: "renamed@example.com",
-      groups: ["x"],
+      groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3"],
     });
     expect(updated.sub).toBe("user-normal");
     expect(updated.name).toBe("Renamed");
@@ -107,7 +101,6 @@ describe("mock user store", () => {
     expect(store.find("user-normal")).toBeUndefined();
     expect((await initialized()).list().map((user) => user.sub)).toEqual(["user-admin", "user-unauthorized"]);
   });
-
   it("rejects duplicate sub, oid, and preferred_username", async () => {
     const store = await initialized();
     await store.create(newUser);
@@ -141,7 +134,6 @@ describe("mock user store", () => {
     });
     expect(store.list()).toHaveLength(4);
   });
-
   it("reports missing users", async () => {
     const store = await initialized();
     const { sub: _sub, ...update } = newUser;
@@ -149,7 +141,6 @@ describe("mock user store", () => {
     await expect(store.update("missing", update)).rejects.toBeInstanceOf(UserNotFoundError);
     await expect(store.delete("missing")).rejects.toBeInstanceOf(UserNotFoundError);
   });
-
   it.each([
     { name: "malformed oid", input: { ...newUser, oid: "not-a-guid" } },
     { name: "malformed mail", input: { ...newUser, mail: "nope" } },
@@ -168,26 +159,22 @@ describe("mock user store", () => {
     expect(await readFile(file, "utf8")).toBe(before);
     expect(await temporaryFiles(directory)).toEqual([]);
   });
-
   it("accepts GUIDs that are not RFC 9562 UUIDs", async () => {
     const store = await initialized();
     await expect(store.create({ ...newUser, oid: "12345678-1234-1234-1234-123456789abc" })).resolves.toMatchObject({
       oid: "12345678-1234-1234-1234-123456789abc",
     });
   });
-
   it("fails startup for malformed or duplicated persisted data", async () => {
     await writeFile(file, "not-json");
     await expect(new MockUserStore(file).initialize()).rejects.toBeInstanceOf(SyntaxError);
     expect(await readFile(file, "utf8")).toBe("not-json");
-
     const [admin, normal] = defaultUsers();
     await writeFile(file, JSON.stringify([admin, { ...normal, oid: admin!.oid }]));
     await expect(new MockUserStore(file).initialize()).rejects.toThrow("duplicate oid");
     await writeFile(file, JSON.stringify([{ ...admin, tid: "tenant" }]));
     await expect(new MockUserStore(file).initialize()).rejects.toBeInstanceOf(ZodError);
   });
-
   it.each([
     { sub: "." },
     { sub: ".." },
@@ -201,23 +188,25 @@ describe("mock user store", () => {
     await expect(new MockUserStore(file).initialize()).rejects.toBeInstanceOf(ZodError);
     expect(await readFile(file, "utf8")).toBe(original);
   });
-
-  it("preserves Unicode and trims field boundaries without splitting groups", async () => {
+  it("preserves Unicode profile fields and normalizes group object IDs", async () => {
     const store = await initialized();
     const user = await store.create({
       ...newUser,
       name: "  山田 太郎\n",
       preferred_username: " 利用者@example.com ",
-      groups: ["\n管理者 グループ\r\n", "管理者 グループ", "一般利用者"],
+      groups: [
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      ],
     });
     expect(user).toMatchObject({
       name: "山田 太郎",
       preferred_username: "利用者@example.com",
-      groups: ["管理者 グループ", "一般利用者"],
+      groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
     });
     expect((await initialized()).find(newUser.sub)).toEqual(user);
   });
-
   it("preserves memory and the previous file after a failed commit and allows retry", async () => {
     const store = await initialized();
     const before = await readFile(file, "utf8");
@@ -235,7 +224,6 @@ describe("mock user store", () => {
     await store.create(newUser);
     expect((await initialized()).find(newUser.sub)).toEqual(store.find(newUser.sub));
   });
-
   it("serializes concurrent mutations", async () => {
     const store = await initialized();
     await Promise.all([

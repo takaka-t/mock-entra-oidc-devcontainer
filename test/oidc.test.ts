@@ -8,9 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { mockTenantId } from "../src/config.js";
 import { wrongTenantId } from "../src/faults/token-generator.js";
-import { v1TokenValidationPaths } from "../src/oidc/access-token-version.js";
 import { testConfig } from "./test-config.js";
-
 const host = "mock-idp.test:9000";
 const authorizePath = "/oauth2/v2.0/authorize";
 const tokenPath = "/oauth2/v2.0/token";
@@ -30,7 +28,6 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
   }
   return [...jar.values()].join("; ");
 }
-
 describe("OIDC provider", () => {
   let context: AppContext;
   let stateDirectory: string;
@@ -53,20 +50,21 @@ describe("OIDC provider", () => {
       await rm(stateDirectory, { recursive: true, force: true });
     }
   });
-
   async function authorize(
     verifier = randomBytes(32).toString("base64url"),
     challenge = "",
-    clientId = "mock-public-client",
-    scope = "openid profile",
+    clientId = "00000000-0000-4000-8000-000000000001",
+    scope = "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
     accountId = "user-admin",
-  ): Promise<{ code: string; verifier: string }> {
+  ): Promise<{
+    code: string;
+    verifier: string;
+  }> {
     const { response } = await signIn({ verifier, challenge, clientId, scope, accountId });
     const callback = new URL(String(response.headers.location));
     expect(callback.searchParams.get("state")).toBe("test-state");
     return { code: String(callback.searchParams.get("code")), verifier };
   }
-
   /**
    * Drives the Authorization request through account selection and returns
    * the final response that carries the Authorization response to the client
@@ -75,8 +73,8 @@ describe("OIDC provider", () => {
   async function signIn({
     verifier = randomBytes(32).toString("base64url"),
     challenge = "",
-    clientId = "mock-public-client",
-    scope = "openid profile",
+    clientId = "00000000-0000-4000-8000-000000000001",
+    scope = "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
     accountId = "user-admin",
     responseMode,
     nonce = "test-nonce",
@@ -143,7 +141,6 @@ describe("OIDC provider", () => {
     }
     return { response, verifier };
   }
-
   async function authorizationResponseParams(responseMode: "query" | "form_post") {
     const { response, verifier } = await signIn({ responseMode });
     if (responseMode === "query") {
@@ -161,7 +158,6 @@ describe("OIDC provider", () => {
     );
     return { params, verifier, statusCode: response.statusCode };
   }
-
   async function exchange(
     code: string,
     verifier?: string,
@@ -172,7 +168,7 @@ describe("OIDC provider", () => {
       accept?: string;
     } = {},
   ) {
-    const clientId = options.clientId ?? "mock-public-client";
+    const clientId = options.clientId ?? "00000000-0000-4000-8000-000000000001";
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: clientId,
@@ -196,7 +192,6 @@ describe("OIDC provider", () => {
       payload: body.toString(),
     });
   }
-
   it("completes S256 flow with verifiable ID and access JWTs", async () => {
     const discovery = await context.app.inject({
       url: "/.well-known/openid-configuration",
@@ -208,23 +203,26 @@ describe("OIDC provider", () => {
       token_endpoint: `http://${host}${tokenPath}`,
       jwks_uri: `http://${host}${jwksPath}`,
       end_session_endpoint: `http://${host}${logoutPath}`,
-      code_challenge_methods_supported: ["S256"],
+      code_challenge_methods_supported: ["S256", "plain"],
     });
     const flow = await authorize();
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
-    const tokens = response.json<{ id_token: string; access_token: string }>();
-    expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
+    const tokens = response.json<{
+      id_token: string;
+      access_token: string;
+    }>();
+    expect(decodeProtectedHeader(tokens.id_token).typ).toBe("JWT");
     expect(decodeProtectedHeader(tokens.access_token).typ).toBe("JWT");
     const jwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json();
     const id = await jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
       issuer: `http://${host}`,
-      audience: "mock-public-client",
+      audience: "00000000-0000-4000-8000-000000000001",
     });
     expect(id.payload).toMatchObject({
       iss: `http://${host}`,
-      sub: "user-admin",
-      groups: ["app-admin-group-id", "app-user-group-id"],
+      sub: expect.any(String),
+      groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
       nonce: "test-nonce",
       ver: "2.0",
     });
@@ -234,14 +232,14 @@ describe("OIDC provider", () => {
     expect(id.payload.nbf).toBe(id.payload.iat);
     const access = await jwtVerify(tokens.access_token, createLocalJWKSet(jwks), {
       issuer: `http://${host}`,
-      audience: "urn:mock-api",
+      audience: "55555555-5555-4555-8555-555555555555",
       typ: "JWT",
     });
     expect(access.payload).toMatchObject({
       iss: `http://${host}`,
-      sub: "user-admin",
+      sub: expect.any(String),
       ver: "2.0",
-      azp: "mock-public-client",
+      azp: "00000000-0000-4000-8000-000000000001",
       azpacr: "0",
       scp: "access_as_user",
     });
@@ -251,7 +249,6 @@ describe("OIDC provider", () => {
     expect(access.payload.sid).toBe(id.payload.sid);
     expect(access.payload.nbf).toBe(access.payload.iat);
   });
-
   it.each(["delete", "reset"] as const)(
     "issues managed user claims and rejects code/refresh exchange after %s",
     async (operation) => {
@@ -261,7 +258,7 @@ describe("OIDC provider", () => {
         name: "API Created",
         preferred_username: "api.created@example.com",
         mail: "api-created@example.com",
-        groups: ["dynamic-group"],
+        groups: ["a0000000-0000-4000-8000-000000000005"],
       };
       const created = await context.app.inject({
         method: "POST",
@@ -273,8 +270,8 @@ describe("OIDC provider", () => {
       const flow = await authorize(
         undefined,
         "",
-        "mock-public-client",
-        "openid profile email offline_access",
+        "00000000-0000-4000-8000-000000000001",
+        "openid profile email offline_access api://55555555-5555-4555-8555-555555555555/access_as_user",
         user.sub,
       );
       const response = await exchange(flow.code, flow.verifier);
@@ -288,18 +285,23 @@ describe("OIDC provider", () => {
       for (const token of [tokens.id_token, tokens.access_token]) {
         const payload = decodeJwt(token);
         expect(payload).toMatchObject({
-          sub: user.sub,
+          sub: expect.any(String),
           oid: user.oid.toLowerCase(),
           tid: mockTenantId,
           name: user.name,
           preferred_username: user.preferred_username,
-          email: user.mail,
-          groups: ["dynamic-group"],
+          ...(token === tokens.id_token ? { email: user.mail } : {}),
+          groups: ["a0000000-0000-4000-8000-000000000005"],
         });
         expect(payload.mail).toBeUndefined();
       }
-
-      const pending = await authorize(undefined, "", "mock-public-client", "openid profile", user.sub);
+      const pending = await authorize(
+        undefined,
+        "",
+        "00000000-0000-4000-8000-000000000001",
+        "openid profile",
+        user.sub,
+      );
       const deleted = await context.app.inject({
         method: operation === "delete" ? "DELETE" : "POST",
         url: operation === "delete" ? `/__mock/api/users/${user.sub}` : "/__mock/api/users/reset",
@@ -316,7 +318,7 @@ describe("OIDC provider", () => {
         headers: { host, "content-type": "application/x-www-form-urlencoded" },
         payload: new URLSearchParams({
           grant_type: "refresh_token",
-          client_id: "mock-public-client",
+          client_id: "00000000-0000-4000-8000-000000000001",
           refresh_token: tokens.refresh_token,
         }).toString(),
       });
@@ -324,59 +326,49 @@ describe("OIDC provider", () => {
       expect(refresh.json()).toMatchObject({ error: "invalid_grant" });
     },
   );
-
   it("supports the confidential client with client_secret_basic and PKCE", async () => {
-    const flow = await authorize(undefined, "", "mock-confidential-client");
+    const flow = await authorize(undefined, "", "00000000-0000-4000-8000-000000000002");
     expect(
       (
         await exchange(flow.code, flow.verifier, {
-          clientId: "mock-confidential-client",
+          clientId: "00000000-0000-4000-8000-000000000002",
           clientSecret: "mock-client-secret-change-me",
         })
       ).statusCode,
     ).toBe(200);
   });
-
   it("rejects an unknown authorization code with invalid_grant", async () => {
     const response = await exchange("unknown-authorization-code", randomBytes(32).toString("base64url"));
-
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_grant" });
   });
-
   it("rejects an expired authorization code with invalid_grant", async () => {
     const flow = await authorize();
-    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 601_000 });
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 601000 });
     try {
       const response = await exchange(flow.code, flow.verifier);
-
       expect(response.statusCode).toBe(400);
       expect(response.json()).toMatchObject({ error: "invalid_grant" });
     } finally {
       vi.useRealTimers();
     }
   });
-
   it("rejects reuse of a consumed authorization code with invalid_grant", async () => {
     const flow = await authorize();
     const first = await exchange(flow.code, flow.verifier);
     expect(first.statusCode, first.body).toBe(200);
-
     const reused = await exchange(flow.code, flow.verifier);
     expect(reused.statusCode).toBe(400);
     expect(reused.json()).toMatchObject({ error: "invalid_grant" });
   });
-
   it("rejects a token redirect_uri mismatch with invalid_grant", async () => {
     const flow = await authorize();
     const response = await exchange(flow.code, flow.verifier, {
       redirectUri: "http://localhost:3000/other-callback",
     });
-
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "invalid_grant" });
   });
-
   /**
    * oidc-provider error handler content-negotiates on Accept and renders an
    * HTML page for anything that prefers text/html. msal4j sets no Accept of
@@ -385,22 +377,19 @@ describe("OIDC provider", () => {
    * src/oidc/provider.ts.
    */
   const jdkDefaultAccept = "text/html, image/gif, image/jpeg, *; q=.2, */*; q=.2";
-
   it.each([
     ["the JDK HttpURLConnection default Accept", jdkDefaultAccept],
     ["an explicit text/html Accept", "text/html"],
   ])("answers a token error with JSON for %s", async (_label, accept) => {
     const response = await exchange("unknown-authorization-code", randomBytes(32).toString("base64url"), { accept });
-
     expect(response.statusCode).toBe(400);
     expect(response.headers["content-type"]).toMatch(/^application\/json/);
     expect(response.json()).toMatchObject({ error: "invalid_grant" });
     expect(response.body).not.toContain("<html");
   });
-
   it("still renders an HTML page for an authorization error a browser would see", async () => {
     const query = new URLSearchParams({
-      client_id: "unknown-client",
+      client_id: "e475202d-fedb-46a1-8bf4-962bfbc93774",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid",
@@ -409,237 +398,59 @@ describe("OIDC provider", () => {
       url: `${authorizePath}?${query}`,
       headers: { host, accept: jdkDefaultAccept },
     });
-
     expect(response.statusCode).toBe(400);
     expect(response.headers["content-type"]).toMatch(/^text\/html/);
     expect(response.body).toContain("invalid_client");
   });
-
   it("rejects a wrong confidential client secret without consuming the code", async () => {
-    const flow = await authorize(undefined, "", "mock-confidential-client");
+    const flow = await authorize(undefined, "", "00000000-0000-4000-8000-000000000002");
     const rejected = await exchange(flow.code, flow.verifier, {
-      clientId: "mock-confidential-client",
+      clientId: "00000000-0000-4000-8000-000000000002",
       clientSecret: "wrong-client-secret",
     });
-
     expect(rejected.statusCode).toBe(401);
     expect(rejected.json()).toMatchObject({ error: "invalid_client" });
     expect(rejected.headers["www-authenticate"]).toMatch(/^Basic /);
     expect(rejected.headers["www-authenticate"]).toContain('error="invalid_client"');
-
     const accepted = await exchange(flow.code, flow.verifier, {
-      clientId: "mock-confidential-client",
+      clientId: "00000000-0000-4000-8000-000000000002",
       clientSecret: "mock-client-secret-change-me",
     });
     expect(accepted.statusCode, accepted.body).toBe(200);
   });
-
   it("issues a refresh token to a public client requesting offline_access", async () => {
-    const flow = await authorize(undefined, "", "mock-public-client", "openid offline_access");
+    const flow = await authorize(undefined, "", "00000000-0000-4000-8000-000000000001", "openid offline_access");
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
-    expect(response.json<{ refresh_token: string }>().refresh_token).toBeTypeOf("string");
+    expect(
+      response.json<{
+        refresh_token: string;
+      }>().refresh_token,
+    ).toBeTypeOf("string");
   });
-
-  it.each([
-    { version: "1.0", clientType: "PUBLIC" },
-    { version: "1.0", clientType: "CONFIDENTIAL" },
-    { version: "2.0", clientType: "PUBLIC" },
-    { version: "2.0", clientType: "CONFIDENTIAL" },
-  ] as const)(
-    "issues and refreshes $version access tokens with v2 ID tokens for $clientType clients",
-    async ({ version, clientType }) => {
-      const clientId = `version-${version}-${clientType.toLowerCase()}`;
-      await context.clientStore.create({
-        clientId,
-        clientType,
-        ...(clientType === "CONFIDENTIAL" ? { clientSecret: "version-secret" } : {}),
-        tokenEndpointAuthMethod: clientType === "PUBLIC" ? "none" : "client_secret_basic",
-        redirectUris: ["http://localhost:3000/callback"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:version-api",
-        accessTokenScope: "api.read",
-        accessTokenVersion: version,
-        emailOptionalClaim: true,
-      });
-      const v1 = v1TokenValidationPaths("");
-      const discovery = await context.app.inject({
-        url: version === "1.0" ? v1.discoveryPath : "/.well-known/openid-configuration",
-        headers: { host },
-      });
-      expect(discovery.statusCode, discovery.body).toBe(200);
-      const metadata = discovery.json();
-      expect(metadata).toMatchObject({
-        issuer: version === "1.0" ? `http://${host}${v1.issuerPath}` : `http://${host}`,
-        jwks_uri: `http://${host}${version === "1.0" ? v1.jwksPath : jwksPath}`,
-      });
-      const jwksResponse = await context.app.inject({ url: new URL(metadata.jwks_uri).pathname, headers: { host } });
-      expect(jwksResponse.statusCode).toBe(200);
-      const jwks = createLocalJWKSet(jwksResponse.json());
-      const flow = await authorize(undefined, "", clientId, "openid profile offline_access");
-      const response = await exchange(flow.code, flow.verifier, {
-        clientId,
-        ...(clientType === "CONFIDENTIAL" ? { clientSecret: "version-secret" } : {}),
-      });
-      expect(response.statusCode, response.body).toBe(200);
-      const tokens = response.json<{ id_token: string; access_token: string; refresh_token: string; scope: string }>();
-      const verifyTokens = async (body: typeof tokens) => {
-        const id = await jwtVerify(body.id_token, jwks, { issuer: `http://${host}`, audience: clientId });
-        expect(id.payload).toMatchObject({ ver: "2.0", preferred_username: "admin@example.com" });
-        const access = await jwtVerify(body.access_token, jwks, {
-          issuer: metadata.issuer,
-          audience: "urn:version-api",
-          typ: "JWT",
-        });
-        expect(access.payload).toMatchObject({
-          ver: version,
-          [version === "1.0" ? "appid" : "azp"]: clientId,
-          [version === "1.0" ? "appidacr" : "azpacr"]: clientType === "PUBLIC" ? "0" : "1",
-          [version === "1.0" ? "unique_name" : "preferred_username"]: "admin@example.com",
-          email: "admin@example.com",
-          scp: "api.read",
-          tid: mockTenantId,
-          sid: id.payload.sid,
-        });
-        const absentClaims =
-          version === "1.0" ? ["azp", "azpacr", "preferred_username"] : ["appid", "appidacr", "unique_name"];
-        for (const claim of [...absentClaims, "scope"]) expect(access.payload[claim]).toBeUndefined();
-        expect(new Set(body.scope.split(" "))).toEqual(new Set(["openid", "profile", "offline_access"]));
-        const wrongIssuer = version === "1.0" ? `http://${host}` : `http://${host}${v1.issuerPath}`;
-        await expect(
-          jwtVerify(body.access_token, jwks, { issuer: wrongIssuer, audience: "urn:version-api", typ: "JWT" }),
-        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "iss" });
-        await expect(
-          jwtVerify(body.access_token, jwks, { issuer: metadata.issuer, audience: "urn:another-api", typ: "JWT" }),
-        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "aud" });
-        await expect(
-          jwtVerify(body.access_token, jwks, { issuer: metadata.issuer, audience: "urn:version-api", typ: "at+jwt" }),
-        ).rejects.toMatchObject({ code: "ERR_JWT_CLAIM_VALIDATION_FAILED", claim: "typ" });
-      };
-      await verifyTokens(tokens);
-      const refresh = await context.app.inject({
-        method: "POST",
-        url: tokenPath,
-        headers: {
-          host,
-          "content-type": "application/x-www-form-urlencoded",
-          ...(clientType === "CONFIDENTIAL"
-            ? { authorization: `Basic ${Buffer.from(`${clientId}:version-secret`).toString("base64")}` }
-            : {}),
-        },
-        payload: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: tokens.refresh_token,
-          client_id: clientId,
-        }).toString(),
-      });
-      expect(refresh.statusCode, refresh.body).toBe(200);
-      await verifyTokens(refresh.json());
-    },
-  );
-
-  it("publishes rollover keys on the v1 JWKS route and validates a v1 token signed with the new key", async () => {
-    const clientId = "v1-rollover";
-    await context.clientStore.create({ ...context.clientStore.list()[0]!, clientId, accessTokenVersion: "1.0" });
-    context.store.set({ scenario: "SIGNING_KEY_ROLLOVER", mode: "LIMITED", failureCount: 1 });
-    try {
-      const flow = await authorize(undefined, "", clientId);
-      const response = await exchange(flow.code, flow.verifier, { clientId });
-      expect(response.statusCode, response.body).toBe(200);
-      const v1 = v1TokenValidationPaths("");
-      const keys = await context.app.inject({ url: v1.jwksPath, headers: { host } });
-      expect(keys.json().keys).toHaveLength(2);
-      const token = response.json().access_token;
-      expect(decodeProtectedHeader(token).kid).toBe("mock-rollover-key");
-      const verified = await jwtVerify(token, createLocalJWKSet(keys.json()), {
-        issuer: `http://${host}${v1.issuerPath}`,
-        audience: "urn:mock-api",
-        typ: "JWT",
-      });
-      expect(verified.payload).toMatchObject({ ver: "1.0", appid: clientId });
-    } finally {
-      context.store.reset();
-    }
-  });
-
-  it("uses a dynamic client's auth method and audience and scopes email claims", async () => {
+  it("includes email without the email scope when emailOptionalClaim is enabled", async () => {
     await context.clientStore.create({
-      clientId: "dynamic-post-client",
-      clientType: "CONFIDENTIAL",
-      clientSecret: "post-secret",
-      tokenEndpointAuthMethod: "client_secret_post",
-      redirectUris: ["http://localhost:3000/callback"],
-      postLogoutRedirectUris: ["http://localhost:3000/signed-out"],
-      accessTokenAudience: "urn:dynamic-api",
-      accessTokenScope: "access_as_user",
-      emailOptionalClaim: false,
+      clientId: "e90874e0-f774-42b9-80e7-bdf099536bbc",
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: [{ uri: "http://localhost:3000/callback", type: "native" as const }],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup" as const,
     });
-    const flow = await authorize(undefined, "", "dynamic-post-client", "openid profile email offline_access");
-    const response = await context.app.inject({
-      method: "POST",
-      url: tokenPath,
-      headers: { host, "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({
-        grant_type: "authorization_code",
-        client_id: "dynamic-post-client",
-        client_secret: "post-secret",
-        redirect_uri: "http://localhost:3000/callback",
-        code: flow.code,
-        code_verifier: flow.verifier,
-      }).toString(),
+    const flow = await authorize(undefined, "", "e90874e0-f774-42b9-80e7-bdf099536bbc", "openid profile");
+    const response = await exchange(flow.code, flow.verifier, {
+      clientId: "e90874e0-f774-42b9-80e7-bdf099536bbc",
     });
     expect(response.statusCode, response.body).toBe(200);
     const tokens = response.json<{
       id_token: string;
       access_token: string;
-      refresh_token: string;
     }>();
     expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
-    expect(decodeJwt(tokens.access_token).email).toBe("admin@example.com");
-    expect(decodeJwt(tokens.access_token).aud).toBe("urn:dynamic-api");
-    expect(decodeJwt(tokens.access_token).azp).toBe("dynamic-post-client");
-    expect(decodeJwt(tokens.access_token).azpacr).toBe("1");
-    expect(decodeJwt(tokens.access_token).scp).toBe("access_as_user");
-    expect(tokens.refresh_token).toBeTypeOf("string");
-    await context.clientStore.delete("dynamic-post-client");
-    const rejected = await context.app.inject({
-      url:
-        `${authorizePath}?` +
-        new URLSearchParams({
-          client_id: "dynamic-post-client",
-          redirect_uri: "http://localhost:3000/callback",
-          response_type: "code",
-          scope: "openid",
-          code_challenge: "a".repeat(43),
-          code_challenge_method: "S256",
-        }).toString(),
-      headers: { host },
-    });
-    expect(rejected.statusCode).toBe(400);
+    expect(tokens.access_token.split(".")).toHaveLength(1);
+    await context.clientStore.delete("e90874e0-f774-42b9-80e7-bdf099536bbc");
   });
-
-  it("includes email without the email scope when emailOptionalClaim is enabled", async () => {
-    await context.clientStore.create({
-      clientId: "email-optional-claim-client",
-      clientType: "PUBLIC",
-      tokenEndpointAuthMethod: "none",
-      redirectUris: ["http://localhost:3000/callback"],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "urn:mock-api",
-      accessTokenScope: "access_as_user",
-      emailOptionalClaim: true,
-    });
-    const flow = await authorize(undefined, "", "email-optional-claim-client", "openid profile");
-    const response = await exchange(flow.code, flow.verifier, {
-      clientId: "email-optional-claim-client",
-    });
-    expect(response.statusCode, response.body).toBe(200);
-    const tokens = response.json<{ id_token: string; access_token: string }>();
-    expect(decodeJwt(tokens.id_token).email).toBe("admin@example.com");
-    expect(decodeJwt(tokens.access_token).email).toBe("admin@example.com");
-    await context.clientStore.delete("email-optional-claim-client");
-  });
-
   it("returns ACCESS_DENIED through the OIDC redirect flow", async () => {
     context.store.set({
       scenario: "ACCESS_DENIED",
@@ -650,7 +461,7 @@ describe("OIDC provider", () => {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid",
@@ -679,7 +490,6 @@ describe("OIDC provider", () => {
     expect(callback.searchParams.get("error")).toBe("access_denied");
     expect(callback.searchParams.get("state")).toBe("denied-state");
     expect(context.store.get().scenario).toBe("NORMAL");
-
     // The redirect flow is three requests; only the first one consumed the
     // fault, and none of them recorded the query string.
     const entries = context.accessLog.list().slice(0, 3).reverse();
@@ -717,14 +527,12 @@ describe("OIDC provider", () => {
     ]);
     expect(entries.every((entry) => !entry.path.includes("?"))).toBe(true);
   });
-
   for (const responseMode of ["query", "form_post"] as const) {
     it(`mutates each Authorization response scenario with response_mode=${responseMode}`, async () => {
       const normal = await authorizationResponseParams(responseMode);
       expect(normal.params).toMatchObject({ state: "test-state" });
       expect(normal.params.code).toBeTypeOf("string");
       expect(normal.params).not.toHaveProperty("error");
-
       for (const scenario of [
         "AUTH_STATE_MISMATCH",
         "AUTH_STATE_MISSING",
@@ -767,7 +575,6 @@ describe("OIDC provider", () => {
       }
     });
   }
-
   it("consumes Authorization response faults only on the successful response", async () => {
     context.accessLog.clear();
     context.store.set({ scenario: "AUTH_STATE_MISMATCH", mode: "LIMITED", failureCount: 2 });
@@ -788,14 +595,13 @@ describe("OIDC provider", () => {
     expect(faulted[0]!.path).not.toBe(authorizePath);
     context.store.clear();
   });
-
   it("does not consume Authorization response faults on an OAuth error response", async () => {
     context.store.set({ scenario: "AUTH_STATE_MISMATCH", mode: "LIMITED", failureCount: 1 });
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
-      scope: "openid profile",
+      scope: "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
       state: "test-state",
       nonce: "test-nonce",
       code_challenge: createHash("sha256").update(randomBytes(32).toString("base64url")).digest("base64url"),
@@ -811,20 +617,17 @@ describe("OIDC provider", () => {
     expect(context.store.get()).toMatchObject({ scenario: "AUTH_STATE_MISMATCH", remainingFailures: 1 });
     context.store.clear();
   });
-
   it("rejects missing, mismatched, and malformed PKCE data", async () => {
     let flow = await authorize();
     const missing = await exchange(flow.code);
     expect(missing.statusCode).toBe(400);
     expect(missing.json()).toMatchObject({ error: "invalid_grant" });
-
     flow = await authorize();
     const mismatched = await exchange(flow.code, "different-verifier-that-is-long-enough-123456789");
     expect(mismatched.statusCode).toBe(400);
     expect(mismatched.json()).toMatchObject({ error: "invalid_grant" });
-
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid",
@@ -838,7 +641,6 @@ describe("OIDC provider", () => {
     expect(malformed.statusCode).toBe(303);
     expect(String(malformed.headers.location)).toContain("error=invalid_request");
   });
-
   it("limits HTTP faults to their endpoint and count", async () => {
     context.store.set({
       scenario: "TOKEN_500",
@@ -852,7 +654,6 @@ describe("OIDC provider", () => {
     expect((await exchange("bad", "bad")).statusCode).toBe(400);
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it("returns configurable TOKEN_400 OAuth errors", async () => {
     context.store.set({
       scenario: "TOKEN_400",
@@ -871,7 +672,6 @@ describe("OIDC provider", () => {
     });
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it.each([
     ["JWKS_500", jwksPath],
     ["DISCOVERY_500", "/.well-known/openid-configuration"],
@@ -885,7 +685,6 @@ describe("OIDC provider", () => {
     expect((await context.app.inject({ url, headers: { host } })).statusCode).toBe(500);
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it("delays timeout targets and consumes on acceptance", async () => {
     context.store.set({
       scenario: "DISCOVERY_TIMEOUT",
@@ -905,7 +704,6 @@ describe("OIDC provider", () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(40);
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it("mutates each claim/JWT scenario", async () => {
     for (const scenario of [
       "NO_GROUPS",
@@ -931,7 +729,7 @@ describe("OIDC provider", () => {
       }>();
       const payload = decodeJwt(tokens.id_token);
       const accessPayload = decodeJwt(tokens.access_token);
-      expect(decodeProtectedHeader(tokens.id_token)).not.toHaveProperty("typ");
+      expect(decodeProtectedHeader(tokens.id_token).typ).toBe("JWT");
       expect(decodeProtectedHeader(tokens.access_token).typ).toBe("JWT");
       expect(accessPayload.scope).toBeUndefined();
       expect(payload.sid).toBeTypeOf("string");
@@ -941,12 +739,12 @@ describe("OIDC provider", () => {
         {
           token: tokens.id_token,
           claims: payload,
-          audience: "mock-public-client",
+          audience: "00000000-0000-4000-8000-000000000001",
         },
         {
           token: tokens.access_token,
           claims: accessPayload,
-          audience: "urn:mock-api",
+          audience: "55555555-5555-4555-8555-555555555555",
         },
       ] as const;
       if (scenario === "NO_GROUPS") {
@@ -1063,7 +861,6 @@ describe("OIDC provider", () => {
       }
     }
   });
-
   it("mutates each ID Token / token response scenario through the token endpoint", async () => {
     const cases = [
       { scenario: "NONCE_MISMATCH" },
@@ -1079,7 +876,10 @@ describe("OIDC provider", () => {
       const response = await exchange(flow.code, flow.verifier);
       expect(response.statusCode, response.body).toBe(200);
       expect(context.store.get().scenario).toBe("NORMAL");
-      const tokens = response.json<{ id_token?: string; access_token: string }>();
+      const tokens = response.json<{
+        id_token?: string;
+        access_token: string;
+      }>();
       const accessPayload = decodeJwt(tokens.access_token);
       if (testCase.scenario === "TOKEN_NO_ID_TOKEN") {
         expect(tokens).not.toHaveProperty("id_token");
@@ -1108,7 +908,6 @@ describe("OIDC provider", () => {
       }
     }
   });
-
   it.each(["NONCE_MISMATCH", "NONCE_MISSING"] as const)(
     "keeps %s armed for a Token response whose ID Token has no nonce",
     async (scenario) => {
@@ -1117,31 +916,34 @@ describe("OIDC provider", () => {
       const code = String(new URL(String(authorization.headers.location)).searchParams.get("code"));
       const unchanged = await exchange(code, verifier);
       expect(unchanged.statusCode, unchanged.body).toBe(200);
-      const idToken = unchanged.json<{ id_token: string }>().id_token;
+      const idToken = unchanged.json<{
+        id_token: string;
+      }>().id_token;
       expect(decodeJwt(idToken)).not.toHaveProperty("nonce");
       expect(context.store.get()).toMatchObject({ scenario, remainingFailures: 1, triggeredCount: 0 });
-
       const flow = await authorize();
       const faulted = await exchange(flow.code, flow.verifier);
       expect(faulted.statusCode, faulted.body).toBe(200);
       expect(context.store.get().scenario).toBe("NORMAL");
-      const nonce = decodeJwt(faulted.json<{ id_token: string }>().id_token).nonce;
+      const nonce = decodeJwt(
+        faulted.json<{
+          id_token: string;
+        }>().id_token,
+      ).nonce;
       expect(nonce).toBe(scenario === "NONCE_MISMATCH" ? "mock-mismatched-nonce" : undefined);
     },
   );
-
   it("preserves sid and the optional email claim through SIGNING_KEY_ROLLOVER", async () => {
     await context.clientStore.create({
-      clientId: "rollover-email-optional-claim-client",
+      clientId: "ede08b68-3817-4a60-8c41-771043c69f35",
       clientType: "PUBLIC",
       tokenEndpointAuthMethod: "none",
-      redirectUris: ["http://localhost:3000/callback"],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "urn:mock-api",
-      accessTokenScope: "access_as_user",
+      redirectUris: [{ uri: "http://localhost:3000/callback", type: "native" as const }],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup" as const,
     });
-    const flow = await authorize(undefined, "", "rollover-email-optional-claim-client", "openid profile");
+    const flow = await authorize(undefined, "", "ede08b68-3817-4a60-8c41-771043c69f35", "openid profile");
     context.store.set({
       scenario: "SIGNING_KEY_ROLLOVER",
       mode: "LIMITED",
@@ -1149,10 +951,13 @@ describe("OIDC provider", () => {
       parameters: {},
     });
     const response = await exchange(flow.code, flow.verifier, {
-      clientId: "rollover-email-optional-claim-client",
+      clientId: "ede08b68-3817-4a60-8c41-771043c69f35",
     });
     expect(response.statusCode, response.body).toBe(200);
-    const tokens = response.json<{ id_token: string; access_token: string }>();
+    const tokens = response.json<{
+      id_token: string;
+      access_token: string;
+    }>();
     expect(decodeProtectedHeader(tokens.id_token).kid).toBe("mock-rollover-key");
     const payload = decodeJwt(tokens.id_token);
     expect(payload.sid).toBeTypeOf("string");
@@ -1161,12 +966,11 @@ describe("OIDC provider", () => {
     await expect(
       jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
         issuer: `http://${host}`,
-        audience: "rollover-email-optional-claim-client",
+        audience: "ede08b68-3817-4a60-8c41-771043c69f35",
       }),
     ).resolves.toBeDefined();
-    await context.clientStore.delete("rollover-email-optional-claim-client");
+    await context.clientStore.delete("ede08b68-3817-4a60-8c41-771043c69f35");
   });
-
   it("does not consume token faults for preflight and preserves CORS/cache headers", async () => {
     context.store.set({
       scenario: "TOKEN_400",
@@ -1187,7 +991,6 @@ describe("OIDC provider", () => {
     expect(preflight.headers["access-control-allow-origin"]).toBe(origin);
     expect(preflight.headers.vary).toContain("Origin");
     expect(context.store.get().remainingFailures).toBe(1);
-
     const fault = await context.app.inject({
       method: "POST",
       url: tokenPath,
@@ -1204,7 +1007,6 @@ describe("OIDC provider", () => {
     expect(fault.headers["cache-control"]).toBe("no-store");
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it.each([
     ["TOKEN_TIMEOUT", "POST", tokenPath, 400],
     ["JWKS_TIMEOUT", "GET", jwksPath, 200],
@@ -1230,7 +1032,6 @@ describe("OIDC provider", () => {
     expect(Date.now() - started).toBeGreaterThanOrEqual(30);
     expect(context.store.get().scenario).toBe("NORMAL");
   });
-
   it.each(["WRONG_ISSUER", "NO_GROUPS"] as const)(
     "does not retroactively apply %s activated during a token timeout",
     async (nextScenario) => {
@@ -1244,7 +1045,6 @@ describe("OIDC provider", () => {
       const pending = exchange(flow.code, flow.verifier);
       await vi.waitFor(() => expect(context.store.get().scenario).toBe("NORMAL"));
       context.store.set({ scenario: nextScenario, mode: "CONTINUOUS" });
-
       const response = await pending;
       expect(response.statusCode, response.body).toBe(200);
       const tokens = response.json<{
@@ -1254,7 +1054,7 @@ describe("OIDC provider", () => {
       for (const token of [tokens.id_token, tokens.access_token]) {
         expect(decodeJwt(token)).toMatchObject({
           iss: `http://${host}`,
-          groups: ["app-admin-group-id", "app-user-group-id"],
+          groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
         });
       }
       expect(context.store.get()).toMatchObject({

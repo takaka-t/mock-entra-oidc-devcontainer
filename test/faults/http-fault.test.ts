@@ -156,7 +156,7 @@ describe("HTTP fault middleware", () => {
   });
 
   it.each(endpointCases)(
-    "answers OPTIONS for $endpoint with CORS headers without consuming",
+    "answers OPTIONS for $endpoint without owning CORS headers or consuming",
     ({ serverError, url }) => {
       const store = new InMemoryScenarioStore();
       store.set({
@@ -171,8 +171,8 @@ describe("HTTP fault middleware", () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.response.statusCode).toBe(204);
-      expect(res.headers.get("access-control-allow-origin")).toBe("*");
-      expect(res.headers.get("access-control-allow-methods")).toBe("GET, HEAD, POST, OPTIONS");
+      expect(res.headers.get("access-control-allow-origin")).toBeUndefined();
+      expect(res.headers.get("access-control-allow-methods")).toBeUndefined();
       expect(store.get().remainingFailures).toBe(1);
     },
   );
@@ -256,7 +256,7 @@ describe("HTTP fault middleware", () => {
 
     expect(next).toHaveBeenCalledOnce();
     expect(res.end).not.toHaveBeenCalled();
-    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("access-control-allow-origin")).toBeUndefined();
     expect(store.get().remainingFailures).toBe(1);
   });
 
@@ -274,7 +274,7 @@ describe("HTTP fault middleware", () => {
 
     expect(next).not.toHaveBeenCalled();
     expect(res.response.statusCode).toBe(204);
-    expect(res.headers.get("access-control-allow-methods")).toBe("GET, HEAD, POST, OPTIONS");
+    expect(res.headers.get("access-control-allow-methods")).toBeUndefined();
     expect(store.get().remainingFailures).toBe(1);
   });
 
@@ -303,7 +303,7 @@ describe("HTTP fault middleware", () => {
     });
   });
 
-  it("adds CORS and no-store headers to injected errors", () => {
+  it("leaves CORS to its middleware and adds no-store headers to injected errors", () => {
     const store = new InMemoryScenarioStore();
     store.set({ scenario: "TOKEN_400", mode: "CONTINUOUS" });
     const res = response();
@@ -319,8 +319,8 @@ describe("HTTP fault middleware", () => {
     );
 
     expect(res.response.statusCode).toBe(400);
-    expect(res.headers.get("access-control-allow-origin")).toBe("https://rp.example.test");
-    expect(res.headers.get("vary")).toBe("Origin");
+    expect(res.headers.get("access-control-allow-origin")).toBeUndefined();
+    expect(res.headers.get("vary")).toBeUndefined();
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("pragma")).toBe("no-cache");
     expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");

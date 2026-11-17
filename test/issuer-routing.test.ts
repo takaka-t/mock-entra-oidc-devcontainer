@@ -17,7 +17,6 @@ import {
 } from "../src/config.js";
 import { v1TokenValidationPaths } from "../src/oidc/access-token-version.js";
 import { testConfig } from "./test-config.js";
-
 const host = new URL(mockOrigin).host;
 const issuerPath = mockIssuerPath;
 const encodedIssuerPath = issuerPath.replace("/a", "/%61");
@@ -25,7 +24,6 @@ const issuer = `http://${host}${issuerPath}`;
 const authorizeUrl = `http://${host}${mockAuthorizePath}`;
 const tokenUrl = `http://${host}${mockTokenPath}`;
 const jwksUrl = `http://${host}${mockJwksPath}`;
-
 function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
     current
@@ -40,11 +38,9 @@ function updateCookies(current: string, headers: OutgoingHttpHeaders): string {
   }
   return [...jar.values()].join("; ");
 }
-
 describe("issuer routing and origin enforcement", () => {
   let context: AppContext;
   let keyDirectory: string;
-
   beforeAll(async () => {
     keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-path-"));
     context = await buildApp(
@@ -57,7 +53,6 @@ describe("issuer routing and origin enforcement", () => {
       { https: false },
     );
   });
-
   afterAll(async () => {
     try {
       await context.app.close();
@@ -65,10 +60,13 @@ describe("issuer routing and origin enforcement", () => {
       await rm(keyDirectory, { recursive: true, force: true });
     }
   });
-
   it.each(["2.0", "1.0"] as const)("verifies %s access tokens below a tenant issuer path", async (version) => {
-    const clientId = `routing-${version}`;
-    await context.clientStore.create({ ...context.clientStore.list()[0]!, clientId, accessTokenVersion: version });
+    const clientId = "00000000-0000-4000-8000-000000000001";
+    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
+    await context.resourceStore.update(resourceAppId, {
+      ...resource,
+      requestedAccessTokenVersion: version === "2.0" ? 2 : 1,
+    });
     const discovery = await context.app.inject({
       url: `${issuerPath}/.well-known/openid-configuration`,
       headers: { host },
@@ -80,14 +78,13 @@ describe("issuer routing and origin enforcement", () => {
       token_endpoint: tokenUrl,
       jwks_uri: jwksUrl,
     });
-
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
       client_id: clientId,
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
-      scope: "openid profile",
+      scope: "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
       state: "path-state",
       nonce: "path-nonce",
       code_challenge: challenge,
@@ -101,7 +98,6 @@ describe("issuer routing and origin enforcement", () => {
     jar = updateCookies(jar, response.headers);
     const interaction = new URL(String(response.headers.location), issuer);
     expect(interaction.pathname).toMatch(new RegExp(`^${issuerPath}/interaction/`));
-
     response = await context.app.inject({
       url: `${interaction.pathname}${interaction.search}`,
       headers: { host, cookie: jar },
@@ -109,7 +105,6 @@ describe("issuer routing and origin enforcement", () => {
     jar = updateCookies(jar, response.headers);
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain("テストユーザーを選択してください。");
-
     response = await context.app.inject({
       method: "POST",
       url: `${interaction.pathname}${interaction.search}`,
@@ -140,7 +135,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(callback.searchParams.get("state")).toBe("path-state");
     const code = callback.searchParams.get("code");
     expect(code).toBeTruthy();
-
     const token = await context.app.inject({
       method: "POST",
       url: mockTokenPath,
@@ -157,7 +151,10 @@ describe("issuer routing and origin enforcement", () => {
       }).toString(),
     });
     expect(token.statusCode, token.body).toBe(200);
-    const tokens = token.json<{ id_token: string; access_token: string }>();
+    const tokens = token.json<{
+      id_token: string;
+      access_token: string;
+    }>();
     const jwks = (
       await context.app.inject({
         url: mockJwksPath,
@@ -173,7 +170,12 @@ describe("issuer routing and origin enforcement", () => {
     expect(v1Keys.json()).toEqual(jwks);
     for (const [jwt, audience, tokenIssuer, tokenVersion] of [
       [tokens.id_token, clientId, issuer, "2.0"],
-      [tokens.access_token, "urn:mock-api", version === "1.0" ? validation.issuer : issuer, version],
+      [
+        tokens.access_token,
+        version === "2.0" ? "55555555-5555-4555-8555-555555555555" : "api://55555555-5555-4555-8555-555555555555",
+        version === "1.0" ? validation.issuer : issuer,
+        version,
+      ],
     ] as const) {
       const verified = await jwtVerify(jwt, createLocalJWKSet(jwks), {
         issuer: tokenIssuer,
@@ -188,7 +190,6 @@ describe("issuer routing and origin enforcement", () => {
       expect(verified.payload.tid).toBe(mockTenantId);
     }
   });
-
   it.each([
     ["DISCOVERY_500", "discoveryPath", "discovery"],
     ["JWKS_500", "jwksPath", "jwks"],
@@ -226,7 +227,6 @@ describe("issuer routing and origin enforcement", () => {
       }
     },
   );
-
   it("rejects a mismatched Host before a fault is consumed", async () => {
     context.store.set({
       scenario: "DISCOVERY_500",
@@ -240,7 +240,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(mismatch.statusCode).toBe(400);
     expect(mismatch.json().error).toBe("invalid_request_origin");
     expect(context.store.get().remainingFailures).toBe(1);
-
     expect(
       (
         await context.app.inject({
@@ -250,7 +249,6 @@ describe("issuer routing and origin enforcement", () => {
       ).statusCode,
     ).toBe(500);
   });
-
   it("applies resilience scenarios only below the configured issuer path", async () => {
     context.store.set({
       scenario: "TOKEN_429",
@@ -268,7 +266,6 @@ describe("issuer routing and origin enforcement", () => {
     });
     expect(throttled.statusCode).toBe(429);
     expect(throttled.headers["retry-after"]).toBeUndefined();
-
     context.store.set({
       scenario: "DISCOVERY_429",
       mode: "LIMITED",
@@ -280,7 +277,6 @@ describe("issuer routing and origin enforcement", () => {
     });
     expect(discoveryThrottled.statusCode).toBe(429);
     expect(discoveryThrottled.headers["retry-after"]).toBeUndefined();
-
     const verifier = randomBytes(32).toString("base64url");
     context.store.set({
       scenario: "AUTH_500",
@@ -291,7 +287,7 @@ describe("issuer routing and origin enforcement", () => {
       url:
         `${mockAuthorizePath}?` +
         new URLSearchParams({
-          client_id: "mock-public-client",
+          client_id: "00000000-0000-4000-8000-000000000001",
           redirect_uri: "http://localhost:3000/callback",
           response_type: "code",
           scope: "openid",
@@ -309,7 +305,6 @@ describe("issuer routing and origin enforcement", () => {
       remainingFailures: 1,
       triggeredCount: 0,
     });
-
     // The probe stays at the server root even though the issuer is nested.
     const probeFailed = await context.app.inject({
       method: "HEAD",
@@ -319,7 +314,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(probeFailed.statusCode).toBe(500);
     expect(probeFailed.body).toBe("");
     expect(context.store.get().scenario).toBe("NORMAL");
-
     context.store.set({
       scenario: "JWKS_INVALID",
       mode: "LIMITED",
@@ -333,7 +327,6 @@ describe("issuer routing and origin enforcement", () => {
         })
       ).json(),
     ).toEqual({ keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }] });
-
     context.store.set({
       scenario: "SIGNING_KEY_ROLLOVER",
       mode: "CONTINUOUS",
@@ -344,11 +337,12 @@ describe("issuer routing and origin enforcement", () => {
           url: mockJwksPath,
           headers: { host },
         })
-      ).json<{ keys: unknown[] }>().keys,
+      ).json<{
+        keys: unknown[];
+      }>().keys,
     ).toHaveLength(2);
     context.store.reset();
   });
-
   it.each([
     `attacker@${host}`,
     `${host}/path`,
@@ -364,7 +358,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_request_origin");
   });
-
   it("only serves Admin routes through the issuer origin", async () => {
     expect(
       (
@@ -381,7 +374,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(mismatch.statusCode).toBe(400);
     expect(mismatch.json().error).toBe("invalid_request_origin");
   });
-
   it.each(["GET", "POST"] as const)("rejects %s encoded issuer interactions from a mismatched Host", async (method) => {
     const response = await context.app.inject({
       method,
@@ -392,11 +384,9 @@ describe("issuer routing and origin enforcement", () => {
       },
       ...(method === "POST" ? { payload: "accountId=user-admin" } : {}),
     });
-
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_request_origin");
   });
-
   it("enforces Admin protections for percent-encoded static route spellings", async () => {
     const encodedClientsPath = "/%5f%5fmock/api/clients";
     expect(
@@ -407,14 +397,12 @@ describe("issuer routing and origin enforcement", () => {
         })
       ).statusCode,
     ).toBe(200);
-
     const wrongHost = await context.app.inject({
       url: encodedClientsPath,
       headers: { host: "unexpected.test:19000" },
     });
     expect(wrongHost.statusCode).toBe(400);
     expect(wrongHost.json().error).toBe("invalid_request_origin");
-
     const before = context.store.get();
     const crossSiteForm = await context.app.inject({
       method: "PUT",
@@ -429,7 +417,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(crossSiteForm.statusCode).toBe(403);
     expect(crossSiteForm.json().error).toBe("invalid_admin_origin");
     expect(context.store.get()).toEqual(before);
-
     const nonJson = await context.app.inject({
       method: "PUT",
       url: "/%5f%5fmock/api/scenario",
@@ -444,7 +431,6 @@ describe("issuer routing and origin enforcement", () => {
     expect(nonJson.json().error).toBe("unsupported_media_type");
     expect(context.store.get()).toEqual(before);
   });
-
   it("does not mount path-based endpoints at the origin root", async () => {
     const response = await context.app.inject({
       url: "/authorize",
@@ -477,7 +463,6 @@ describe("issuer routing and origin enforcement", () => {
     ).toBe(200);
   });
 });
-
 describe("trusted HTTPS proxy", () => {
   it("uses forwarded origin only when proxy trust is enabled", async () => {
     const keyDirectory = await mkdtemp(join(tmpdir(), "mock-idp-proxy-"));
@@ -538,7 +523,6 @@ describe("trusted HTTPS proxy", () => {
         expect(rejected.statusCode).toBe(400);
         expect(rejected.json().error).toBe("invalid_request_origin");
       }
-
       const encodedInteraction = await context.app.inject({
         url: `${encodedIssuerPath}/interaction/not-a-real-interaction`,
         headers: {

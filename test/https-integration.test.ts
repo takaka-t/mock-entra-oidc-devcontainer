@@ -21,17 +21,14 @@ import {
   mockTokenPath,
 } from "../src/config.js";
 import { loadTlsServerOptions } from "../src/tls.js";
-
 const execFileAsync = promisify(execFile);
 const setupTlsScript = fileURLToPath(new URL("../scripts/setup-tls.mjs", import.meta.url));
 const issuerUrl = new URL(mockOrigin);
-
 interface NetworkResponse {
   statusCode: number;
   headers: IncomingHttpHeaders;
   body: Buffer;
 }
-
 interface TlsRequestOptions {
   method?: string;
   headers?: OutgoingHttpHeaders;
@@ -39,7 +36,6 @@ interface TlsRequestOptions {
   servername?: string;
   trustCa?: boolean;
 }
-
 function updateCookies(current: string, setCookie: string | string[] | undefined): string {
   const jar = new Map(
     current
@@ -54,13 +50,11 @@ function updateCookies(current: string, setCookie: string | string[] | undefined
   }
   return [...jar.values()].join("; ");
 }
-
 describe("direct HTTPS hosting", () => {
   let context: AppContext;
   let stateDirectory: string;
   let ca: Buffer;
   let port: number;
-
   function requestTls(path: string, options: TlsRequestOptions = {}): Promise<NetworkResponse> {
     return new Promise((resolve, reject) => {
       const request = httpsRequest(
@@ -93,7 +87,6 @@ describe("direct HTTPS hosting", () => {
       request.end();
     });
   }
-
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-https-"));
     const tlsDirectory = join(stateDirectory, "tls");
@@ -110,6 +103,7 @@ describe("direct HTTPS hosting", () => {
       host: "127.0.0.1",
       keyDirectory: join(stateDirectory, "keys"),
       clientConfigFile: join(stateDirectory, "clients.json"),
+      resourceConfigFile: join(stateDirectory, "resources.json"),
       userConfigFile: join(stateDirectory, "users.json"),
       tlsCaCertificateFile: join(tlsDirectory, "ca.crt"),
       tlsCertificateFile: join(tlsDirectory, "server.crt"),
@@ -124,8 +118,7 @@ describe("direct HTTPS hosting", () => {
     const address = context.app.server.address();
     if (!address || typeof address === "string") throw new Error("HTTPS test server did not expose a TCP address");
     port = address.port;
-  }, 20_000);
-
+  }, 20000);
   afterAll(async () => {
     try {
       await context?.app.close();
@@ -133,7 +126,6 @@ describe("direct HTTPS hosting", () => {
       if (stateDirectory) await rm(stateDirectory, { recursive: true, force: true });
     }
   });
-
   it("completes an authorization code flow with HTTPS metadata and issuers", async () => {
     const discovery = await requestTls(`${mockIssuerPath}/.well-known/openid-configuration`);
     expect(discovery.statusCode, discovery.body.toString()).toBe(200);
@@ -144,13 +136,12 @@ describe("direct HTTPS hosting", () => {
       token_endpoint: `${mockOrigin}${mockTokenPath}`,
       jwks_uri: `${mockOrigin}${mockJwksPath}`,
     });
-
     const verifier = randomBytes(32).toString("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
-      scope: "openid profile",
+      scope: "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
       state: "https-state",
       nonce: "https-nonce",
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
@@ -161,7 +152,6 @@ describe("direct HTTPS hosting", () => {
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(303);
     expect(response.headers["set-cookie"]?.join(";")).toMatch(/;\s*secure(?:;|$)/i);
-
     const interaction = new URL(String(response.headers.location), mockIssuer);
     response = await requestTls(`${interaction.pathname}${interaction.search}`, {
       headers: { cookie: jar },
@@ -169,7 +159,6 @@ describe("direct HTTPS hosting", () => {
     jar = updateCookies(jar, response.headers["set-cookie"]);
     expect(response.statusCode).toBe(200);
     expect(response.body.toString()).toContain("テストユーザーを選択してください。");
-
     const selection = "accountId=user-admin";
     response = await requestTls(`${interaction.pathname}${interaction.search}`, {
       method: "POST",
@@ -194,15 +183,13 @@ describe("direct HTTPS hosting", () => {
       });
       jar = updateCookies(jar, response.headers["set-cookie"]);
     }
-
     const callback = new URL(String(response.headers.location));
     expect(callback.searchParams.get("state")).toBe("https-state");
     const code = callback.searchParams.get("code");
     expect(code).toBeTruthy();
-
     const tokenBody = new URLSearchParams({
       grant_type: "authorization_code",
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       code: String(code),
       code_verifier: verifier,
@@ -225,24 +212,22 @@ describe("direct HTTPS hosting", () => {
     await expect(
       jwtVerify(tokens.id_token, createLocalJWKSet(jwks), {
         issuer: mockIssuer,
-        audience: "mock-public-client",
+        audience: "00000000-0000-4000-8000-000000000001",
       }),
     ).resolves.toBeDefined();
     await expect(
       jwtVerify(tokens.access_token, createLocalJWKSet(jwks), {
         issuer: mockIssuer,
-        audience: "urn:mock-api",
+        audience: "55555555-5555-4555-8555-555555555555",
       }),
     ).resolves.toBeDefined();
   });
-
   it("rejects untrusted CAs and a hostname outside the certificate SAN", async () => {
     await expect(requestTls("/health", { trustCa: false })).rejects.toBeDefined();
     await expect(requestTls("/health", { servername: "unexpected.test" })).rejects.toMatchObject({
       code: "ERR_TLS_CERT_ALTNAME_INVALID",
     });
   });
-
   it("does not accept plaintext HTTP on the TLS listener", async () => {
     await expect(
       new Promise<void>((resolve, reject) => {
@@ -255,14 +240,11 @@ describe("direct HTTPS hosting", () => {
       }),
     ).rejects.toBeDefined();
   });
-
   it("keeps origin enforcement active behind the TLS connection", async () => {
     const health = await requestTls("/health");
     expect(health.statusCode).toBe(200);
-
     const admin = await requestTls("/__mock");
     expect(admin.statusCode).toBe(200);
-
     const rejectedAdmin = await requestTls("/__mock", {
       headers: { host: "unexpected.test:19000" },
     });
@@ -270,7 +252,6 @@ describe("direct HTTPS hosting", () => {
     expect(JSON.parse(rejectedAdmin.body.toString())).toMatchObject({
       error: "invalid_request_origin",
     });
-
     const rejectedDiscovery = await requestTls(`${mockIssuerPath}/.well-known/openid-configuration`, {
       headers: { host: "unexpected.test:19000" },
     });

@@ -7,7 +7,6 @@ import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { testConfig } from "./test-config.js";
-
 const host = "mock-idp.test:9000";
 const issuer = `http://${host}`;
 const authorizePath = "/oauth2/v2.0/authorize";
@@ -17,7 +16,6 @@ const jwksPath = "/discovery/v2.0/keys";
 // server root even though this suite mounts the issuer there too.
 const commonProbePath = "/common/oauth2/v2.0/authorize";
 const probeContentType = "text/html; charset=utf-8";
-
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
     current
@@ -32,11 +30,9 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
   }
   return [...jar.values()].join("; ");
 }
-
 describe("official Entra resilience scenarios", () => {
   let context: AppContext;
   let stateDirectory: string;
-
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-resilience-"));
     context = await buildApp(
@@ -49,9 +45,7 @@ describe("official Entra resilience scenarios", () => {
       { https: false },
     );
   });
-
   beforeEach(() => context.store.reset());
-
   afterAll(async () => {
     try {
       await context.app.close();
@@ -59,7 +53,6 @@ describe("official Entra resilience scenarios", () => {
       await rm(stateDirectory, { recursive: true, force: true });
     }
   });
-
   function authorizationRequest(state = randomBytes(8).toString("base64url")) {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -68,10 +61,10 @@ describe("official Entra resilience scenarios", () => {
       url:
         `${authorizePath}?` +
         new URLSearchParams({
-          client_id: "mock-public-client",
+          client_id: "00000000-0000-4000-8000-000000000001",
           redirect_uri: "http://localhost:3000/callback",
           response_type: "code",
-          scope: "openid profile",
+          scope: "openid profile api://55555555-5555-4555-8555-555555555555/access_as_user",
           state,
           nonce: randomBytes(8).toString("base64url"),
           code_challenge: challenge,
@@ -79,8 +72,10 @@ describe("official Entra resilience scenarios", () => {
         }).toString(),
     };
   }
-
-  async function authorize(): Promise<{ code: string; verifier: string }> {
+  async function authorize(): Promise<{
+    code: string;
+    verifier: string;
+  }> {
     const request = authorizationRequest();
     let jar = "";
     let response = await context.app.inject({
@@ -126,7 +121,6 @@ describe("official Entra resilience scenarios", () => {
       verifier: request.verifier,
     };
   }
-
   async function exchange(code: string, verifier: string) {
     return context.app.inject({
       method: "POST",
@@ -137,14 +131,13 @@ describe("official Entra resilience scenarios", () => {
       },
       payload: new URLSearchParams({
         grant_type: "authorization_code",
-        client_id: "mock-public-client",
+        client_id: "00000000-0000-4000-8000-000000000001",
         redirect_uri: "http://localhost:3000/callback",
         code,
         code_verifier: verifier,
       }).toString(),
     });
   }
-
   async function invalidTokenRequest(origin?: string) {
     return context.app.inject({
       method: "POST",
@@ -157,14 +150,11 @@ describe("official Entra resilience scenarios", () => {
       payload: "grant_type=authorization_code&code=invalid",
     });
   }
-
   type HttpEndpoint = "authorization-http" | "token" | "jwks" | "discovery";
-
   function withTrailingSlashes(url: string, trailingSlashes: number): string {
     const parsed = new URL(url, issuer);
     return `${parsed.pathname}${"/".repeat(trailingSlashes)}${parsed.search}`;
   }
-
   async function requestEndpoint(endpoint: HttpEndpoint, origin?: string, trailingSlashes = 0) {
     switch (endpoint) {
       case "authorization-http":
@@ -196,7 +186,6 @@ describe("official Entra resilience scenarios", () => {
         });
     }
   }
-
   it.each([
     ["AUTH_429", "authorization-http"],
     ["TOKEN_429", "token"],
@@ -209,7 +198,6 @@ describe("official Entra resilience scenarios", () => {
       parameters: { retryAfterSeconds: 60 },
     });
     const response = await requestEndpoint(endpoint, "http://localhost:3000");
-
     expect(response.statusCode).toBe(429);
     expect(response.headers["retry-after"]).toBe("60");
     expect(response.headers["access-control-expose-headers"]).toContain("Retry-After");
@@ -230,7 +218,6 @@ describe("official Entra resilience scenarios", () => {
       status: "ACTIVE",
       triggeredCount: 1,
     });
-
     context.store.set({
       scenario,
       mode: "CONTINUOUS",
@@ -240,7 +227,6 @@ describe("official Entra resilience scenarios", () => {
     expect(withoutRetryAfter.headers["retry-after"]).toBeUndefined();
     expect(withoutRetryAfter.headers["access-control-expose-headers"]).toBeUndefined();
   });
-
   it.each([
     ["AUTH_500", "authorization-http"],
     ["TOKEN_500", "token"],
@@ -266,7 +252,6 @@ describe("official Entra resilience scenarios", () => {
         error_description: `Injected ${scenario} fault`,
       });
     }
-
     context.store.set({
       scenario,
       mode: "CONTINUOUS",
@@ -275,7 +260,6 @@ describe("official Entra resilience scenarios", () => {
     expect(response.statusCode).toBe(500);
     expect(response.headers["retry-after"]).toBeUndefined();
   });
-
   it.each([
     ["AUTH_400", "authorization-http", 400, 200],
     ["AUTH_429", "authorization-http", 429, 200],
@@ -292,7 +276,6 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 2,
     });
-
     expect((await requestEndpoint(endpoint)).statusCode).toBe(faultStatus);
     expect(context.store.get()).toMatchObject({
       scenario,
@@ -302,7 +285,6 @@ describe("official Entra resilience scenarios", () => {
     expect(context.store.get().scenario).toBe("NORMAL");
     expect((await requestEndpoint(endpoint)).statusCode).toBe(normalStatus);
   });
-
   it.each([
     ["AUTH_500", "authorization-http", 200],
     ["TOKEN_500", "token", 400],
@@ -314,7 +296,6 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-
     expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(500);
     expect(context.store.get()).toMatchObject({
       scenario: "NORMAL",
@@ -322,7 +303,6 @@ describe("official Entra resilience scenarios", () => {
     });
     expect((await requestEndpoint(endpoint, undefined, 1)).statusCode).toBe(normalStatus);
   });
-
   it.each([
     ["AUTH_500", "authorization-http"],
     ["TOKEN_500", "token"],
@@ -334,7 +314,6 @@ describe("official Entra resilience scenarios", () => {
       mode: "LIMITED",
       failureCount: 1,
     });
-
     expect((await requestEndpoint(endpoint, undefined, 2)).statusCode).toBe(404);
     expect(context.store.get()).toMatchObject({
       scenario,
@@ -342,7 +321,6 @@ describe("official Entra resilience scenarios", () => {
       triggeredCount: 0,
     });
   });
-
   it("delays two AUTH_TIMEOUT probes and then answers them normally", async () => {
     context.store.set({
       scenario: "AUTH_TIMEOUT",
@@ -350,7 +328,6 @@ describe("official Entra resilience scenarios", () => {
       failureCount: 2,
       parameters: { delayMs: 40 },
     });
-
     for (const remainingFailures of [1, 0]) {
       const started = Date.now();
       const response = await requestEndpoint("authorization-http");
@@ -359,17 +336,14 @@ describe("official Entra resilience scenarios", () => {
       if (remainingFailures === 0) expect(context.store.get().scenario).toBe("NORMAL");
       else expect(context.store.get().remainingFailures).toBe(remainingFailures);
     }
-
     expect((await requestEndpoint("authorization-http")).statusCode).toBe(200);
   });
-
   it("keeps CONTINUOUS AUTH_TIMEOUT active across delayed requests", async () => {
     context.store.set({
       scenario: "AUTH_TIMEOUT",
       mode: "CONTINUOUS",
       parameters: { delayMs: 20 },
     });
-
     for (let attempt = 0; attempt < 2; attempt++) {
       const started = Date.now();
       const response = await requestEndpoint("authorization-http");
@@ -382,7 +356,6 @@ describe("official Entra resilience scenarios", () => {
       triggeredCount: 2,
     });
   });
-
   it("isolates connectivity probe faults from other endpoints and Token faults from the probe", async () => {
     context.store.set({
       scenario: "AUTH_500",
@@ -398,7 +371,6 @@ describe("official Entra resilience scenarios", () => {
       triggeredCount: 0,
     });
     expect((await requestEndpoint("authorization-http")).statusCode).toBe(500);
-
     context.store.set({
       scenario: "TOKEN_429",
       mode: "LIMITED",
@@ -412,7 +384,6 @@ describe("official Entra resilience scenarios", () => {
     });
     expect((await requestEndpoint("token")).statusCode).toBe(429);
   });
-
   it.each([
     ["AUTH_500", "authorization-http"],
     ["TOKEN_500", "token"],
@@ -433,7 +404,6 @@ describe("official Entra resilience scenarios", () => {
       const trailingSlashUrl = withTrailingSlashes(url, 1);
       // The probe consumes HEAD, so GET is its non-target method.
       const otherMethod = endpoint === "authorization-http" ? "GET" : "HEAD";
-
       const options = await context.app.inject({
         method: "OPTIONS",
         url: trailingSlashUrl,
@@ -445,7 +415,6 @@ describe("official Entra resilience scenarios", () => {
         url: trailingSlashUrl,
         headers: { host },
       });
-
       expect(context.store.get()).toMatchObject({
         scenario,
         remainingFailures: 1,
@@ -453,20 +422,17 @@ describe("official Entra resilience scenarios", () => {
       });
     },
   );
-
   it.each(["", "/"] as const)("answers a healthy connectivity probe at the path with '%s' appended", async (suffix) => {
     const response = await context.app.inject({
       method: "HEAD",
       url: `${commonProbePath}${suffix}`,
       headers: { host },
     });
-
     expect(response.statusCode).toBe(200);
     expect(response.body).toBe("");
     expect(response.headers["content-type"]).toBe(probeContentType);
     expect(response.headers["cache-control"]).toBe("no-store");
   });
-
   it.each(["GET", "POST"] as const)(
     "leaves the connectivity probe path a 404 for %s and consumes no count",
     async (method) => {
@@ -475,13 +441,11 @@ describe("official Entra resilience scenarios", () => {
         mode: "LIMITED",
         failureCount: 1,
       });
-
       const response = await context.app.inject({
         method,
         url: commonProbePath,
         headers: { host },
       });
-
       expect(response.statusCode).toBe(404);
       expect(context.store.get()).toMatchObject({
         scenario: "AUTH_500",
@@ -490,14 +454,12 @@ describe("official Entra resilience scenarios", () => {
       });
     },
   );
-
   it("returns AUTH_400 as a bodyless probe failure without Retry-After", async () => {
     context.store.set({
       scenario: "AUTH_400",
       mode: "CONTINUOUS",
     });
     const response = await requestEndpoint("authorization-http", "http://localhost:3000");
-
     expect(response.statusCode).toBe(400);
     expect(response.body).toBe("");
     expect(response.headers["content-type"]).toBe(probeContentType);
@@ -512,7 +474,6 @@ describe("official Entra resilience scenarios", () => {
       triggeredCount: 1,
     });
   });
-
   it.each(["AUTH_400", "AUTH_500"] as const)(
     "keeps a real Authorization request unaffected while %s is active",
     async (scenario) => {
@@ -520,12 +481,10 @@ describe("official Entra resilience scenarios", () => {
         scenario,
         mode: "CONTINUOUS",
       });
-
       const response = await context.app.inject({
         url: authorizationRequest().url,
         headers: { host },
       });
-
       expect(response.statusCode, response.body).toBe(303);
       expect(response.headers.location).toBeDefined();
       expect(context.store.get()).toMatchObject({
@@ -534,25 +493,21 @@ describe("official Entra resilience scenarios", () => {
       });
     },
   );
-
   it("does not consume AUTH_429 when the probe Host is invalid", async () => {
     context.store.set({
       scenario: "AUTH_429",
       mode: "LIMITED",
       failureCount: 1,
     });
-
     const rejected = await context.app.inject({
       method: "HEAD",
       url: commonProbePath,
       headers: { host: "evil.test" },
     });
-
     expect(rejected.statusCode).toBe(400);
     expect(context.store.get().remainingFailures).toBe(1);
     expect((await requestEndpoint("authorization-http")).statusCode).toBe(429);
   });
-
   it("does not consume TOKEN_429 when the request Host is invalid", async () => {
     context.store.set({
       scenario: "TOKEN_429",
@@ -572,7 +527,6 @@ describe("official Entra resilience scenarios", () => {
     expect(context.store.get().remainingFailures).toBe(1);
     expect((await invalidTokenRequest()).statusCode).toBe(429);
   });
-
   it("returns and recovers from JWKS_INVALID", async () => {
     context.store.set({
       scenario: "JWKS_INVALID",
@@ -588,39 +542,46 @@ describe("official Entra resilience scenarios", () => {
       keys: [{ kty: "RSA", kid: "mock-invalid-jwk" }],
     });
     expect(context.store.get().scenario).toBe("NORMAL");
-
     const recovered = await context.app.inject({
       url: jwksPath,
       headers: { host },
     });
     expect(recovered.statusCode).toBe(200);
-    expect(recovered.json<{ keys: unknown[] }>().keys.length).toBe(1);
+    expect(
+      recovered.json<{
+        keys: unknown[];
+      }>().keys.length,
+    ).toBe(1);
   });
-
   it("supports successful signing-key rollover and keeps both public keys until reset", async () => {
     const initialJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
-      keys: Array<{ kid?: string }>;
+      keys: Array<{
+        kid?: string;
+      }>;
     }>();
     expect(initialJwks.keys).toHaveLength(1);
     const initialKid = initialJwks.keys[0]?.kid;
     const flow = await authorize();
-
     context.store.set({
       scenario: "SIGNING_KEY_ROLLOVER",
       mode: "LIMITED",
       failureCount: 1,
     });
     const publishedJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
-      keys: Array<{ kid?: string }>;
+      keys: Array<{
+        kid?: string;
+      }>;
     }>();
     expect(publishedJwks.keys.map(({ kid }) => kid)).toEqual([initialKid, "mock-rollover-key"]);
-
     const response = await exchange(flow.code, flow.verifier);
     expect(response.statusCode, response.body).toBe(200);
-    const tokens = response.json<{ id_token: string; access_token: string }>();
+    const tokens = response.json<{
+      id_token: string;
+      access_token: string;
+    }>();
     for (const [token, audience] of [
-      [tokens.id_token, "mock-public-client"],
-      [tokens.access_token, "urn:mock-api"],
+      [tokens.id_token, "00000000-0000-4000-8000-000000000001"],
+      [tokens.access_token, "55555555-5555-4555-8555-555555555555"],
     ] as const) {
       expect(decodeProtectedHeader(token).kid).toBe("mock-rollover-key");
       await expect(
@@ -642,19 +603,20 @@ describe("official Entra resilience scenarios", () => {
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
-
     context.store.reset();
     const resetJwks = (await context.app.inject({ url: jwksPath, headers: { host } })).json<{
-      keys: Array<{ kid?: string }>;
+      keys: Array<{
+        kid?: string;
+      }>;
     }>();
     expect(resetJwks.keys.map(({ kid }) => kid)).toEqual([initialKid]);
-
     const normalFlow = await authorize();
     const normalResponse = await exchange(normalFlow.code, normalFlow.verifier);
-    const normalToken = normalResponse.json<{ id_token: string }>().id_token;
+    const normalToken = normalResponse.json<{
+      id_token: string;
+    }>().id_token;
     expect(decodeProtectedHeader(normalToken).kid).toBe(initialKid);
   });
-
   it("gives JWKS faults precedence over the published rollover key set", async () => {
     context.store.set({
       scenario: "SIGNING_KEY_ROLLOVER",
@@ -666,7 +628,6 @@ describe("official Entra resilience scenarios", () => {
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
-
     context.store.set({
       scenario: "JWKS_429",
       mode: "LIMITED",
@@ -678,7 +639,6 @@ describe("official Entra resilience scenarios", () => {
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
-
     context.store.set({
       scenario: "JWKS_INVALID",
       mode: "LIMITED",
@@ -692,7 +652,6 @@ describe("official Entra resilience scenarios", () => {
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
-
     context.store.set({
       scenario: "JWKS_500",
       mode: "LIMITED",
@@ -704,7 +663,6 @@ describe("official Entra resilience scenarios", () => {
         keys: unknown[];
       }>().keys,
     ).toHaveLength(2);
-
     context.store.set({
       scenario: "JWKS_TIMEOUT",
       mode: "LIMITED",
@@ -717,7 +675,6 @@ describe("official Entra resilience scenarios", () => {
       }>().keys,
     ).toHaveLength(2);
   });
-
   it("starts with only the original public key after a restart", async () => {
     const restartDirectory = await mkdtemp(join(tmpdir(), "mock-idp-rollover-restart-"));
     const restartConfig = testConfig({
@@ -741,10 +698,11 @@ describe("official Entra resilience scenarios", () => {
       ).toHaveLength(2);
       await original.app.close();
       original = undefined;
-
       restarted = await buildApp(restartConfig, { https: false });
       const restartedKeys = (await restarted.app.inject({ url: jwksPath, headers: { host } })).json<{
-        keys: Array<{ kid?: string }>;
+        keys: Array<{
+          kid?: string;
+        }>;
       }>().keys;
       expect(restartedKeys.map(({ kid }) => kid)).toEqual(["mock-normal-key"]);
     } finally {

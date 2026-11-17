@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type AppConfig } from "../src/config.js";
 
@@ -28,12 +28,14 @@ export function testConfig(overrides: TestConfigOverrides): AppConfig {
   assertOutsideRepositoryData("keyDirectory", overrides.keyDirectory);
   assertOutsideRepositoryData("clientConfigFile", overrides.clientConfigFile);
   assertOutsideRepositoryData("userConfigFile", overrides.userConfigFile);
+  if (overrides.resourceConfigFile) assertOutsideRepositoryData("resourceConfigFile", overrides.resourceConfigFile);
   const issuer = overrides.issuer ?? defaults.issuer;
   const url = new URL(issuer);
   const issuerPath = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
   const tenantBasePath = tenantBasePathFor(issuerPath);
   return {
     ...defaults,
+    resourceConfigFile: join(dirname(overrides.clientConfigFile), "resources.json"),
     logger: false,
     ...overrides,
     issuer: `${url.origin}${issuerPath}`,

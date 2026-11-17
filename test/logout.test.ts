@@ -7,13 +7,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildApp, type AppContext } from "../src/app.js";
 import { mockAuthorizePath, mockIssuerPath, mockLogoutPath, mockOrigin, mockTokenPath } from "../src/config.js";
 import { testConfig } from "./test-config.js";
-
 const host = new URL(mockOrigin).host;
 const origin = `http://${host}`;
-const clientId = "logout-client";
+const clientId = "62409ef4-37d5-41c1-822c-e35252d575ec";
 const redirectUri = "http://localhost:3000/callback";
 const postLogoutRedirectUri = "http://localhost:3000/signed-out";
-
 function cookies(current: string, headers: OutgoingHttpHeaders): string {
   const jar = new Map(
     current
@@ -26,11 +24,9 @@ function cookies(current: string, headers: OutgoingHttpHeaders): string {
     jar.set(cookie.split(";")[0]!.split("=")[0]!, cookie.split(";")[0]!);
   return [...jar.values()].join("; ");
 }
-
 describe("RP-initiated logout", () => {
   let context: AppContext;
   let stateDirectory: string;
-
   beforeAll(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-logout-"));
     context = await buildApp(
@@ -46,14 +42,15 @@ describe("RP-initiated logout", () => {
       clientId,
       clientType: "PUBLIC",
       tokenEndpointAuthMethod: "none",
-      redirectUris: [redirectUri],
-      postLogoutRedirectUris: [postLogoutRedirectUri],
-      accessTokenAudience: "urn:mock-api",
-      accessTokenScope: "access_as_user",
+      redirectUris: [
+        { uri: redirectUri, type: "native" as const },
+        { uri: postLogoutRedirectUri, type: "native" as const },
+      ],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     });
   });
-
   afterAll(async () => {
     try {
       await context.app.close();
@@ -61,9 +58,11 @@ describe("RP-initiated logout", () => {
       await rm(stateDirectory, { recursive: true, force: true });
     }
   });
-
   /** Signs in and returns the ID token plus the browser session cookies. */
-  async function signIn(): Promise<{ idToken: string; jar: string }> {
+  async function signIn(): Promise<{
+    idToken: string;
+    jar: string;
+  }> {
     const verifier = randomBytes(32).toString("base64url");
     const query = new URLSearchParams({
       client_id: clientId,
@@ -126,17 +125,21 @@ describe("RP-initiated logout", () => {
     });
     expect(token.statusCode, token.body).toBe(200);
     return {
-      idToken: token.json<{ id_token: string }>().id_token,
+      idToken: token.json<{
+        id_token: string;
+      }>().id_token,
       jar,
     };
   }
-
   /** Requests logout and returns the confirmation form's action and xsrf token. */
   async function requestLogout(
     idToken: string,
     jar: string,
     withPostLogoutRedirectUri: boolean,
-  ): Promise<{ action: string; xsrf: string }> {
+  ): Promise<{
+    action: string;
+    xsrf: string;
+  }> {
     const query = new URLSearchParams({
       id_token_hint: idToken,
       ...(withPostLogoutRedirectUri ? { post_logout_redirect_uri: postLogoutRedirectUri, state: "bye" } : {}),
@@ -151,7 +154,6 @@ describe("RP-initiated logout", () => {
       xsrf: String(/name="xsrf" value="([^"]+)"/.exec(response.body)?.[1]),
     };
   }
-
   it("advertises the Entra-compliant end_session_endpoint", async () => {
     const discovery = await context.app.inject({
       url: `${mockIssuerPath}/.well-known/openid-configuration`,
@@ -161,21 +163,17 @@ describe("RP-initiated logout", () => {
       end_session_endpoint: `${origin}${mockLogoutPath}`,
     });
   });
-
   it("points the confirmation form at the tenant-scoped logout path", async () => {
     const { idToken, jar } = await signIn();
     const { action, xsrf } = await requestLogout(idToken, jar, true);
-
     expect(action).toBe(`${origin}${mockLogoutPath}/confirm`);
     // The mount prefix must not be lost: an origin-level path is unroutable.
     expect(new URL(action).pathname).not.toBe("/session/end/confirm");
     expect(xsrf).not.toBe("undefined");
   });
-
   it("completes sign-out at the registered post_logout_redirect_uri", async () => {
     const { idToken, jar } = await signIn();
     const { action, xsrf } = await requestLogout(idToken, jar, true);
-
     const confirmed = await context.app.inject({
       method: "POST",
       url: new URL(action).pathname,
@@ -186,17 +184,14 @@ describe("RP-initiated logout", () => {
       },
       payload: new URLSearchParams({ xsrf, logout: "yes" }).toString(),
     });
-
     expect(confirmed.statusCode, confirmed.body).toBe(303);
     const location = new URL(String(confirmed.headers.location));
     expect(`${location.origin}${location.pathname}`).toBe(postLogoutRedirectUri);
     expect(location.searchParams.get("state")).toBe("bye");
   });
-
   it("serves its own success page when no post_logout_redirect_uri is given", async () => {
     const { idToken, jar } = await signIn();
     const { action, xsrf } = await requestLogout(idToken, jar, false);
-
     const confirmed = await context.app.inject({
       method: "POST",
       url: new URL(action).pathname,
@@ -210,14 +205,12 @@ describe("RP-initiated logout", () => {
     expect(confirmed.statusCode, confirmed.body).toBe(303);
     const success = new URL(String(confirmed.headers.location));
     expect(success.pathname).toBe(`${mockLogoutPath}/success`);
-
     const page = await context.app.inject({
       url: `${success.pathname}${success.search}`,
       headers: { host, cookie: jar },
     });
     expect(page.statusCode, page.body).toBe(200);
   });
-
   it("protects the confirmation page like the sign-in interaction pages", async () => {
     const { idToken, jar } = await signIn();
     const query = new URLSearchParams({
@@ -228,7 +221,6 @@ describe("RP-initiated logout", () => {
       url: `${mockLogoutPath}?${query}`,
       headers: { host, cookie: jar },
     });
-
     expect(response.statusCode, response.body).toBe(200);
     expect(response.headers).toMatchObject({
       "cache-control": "no-store",
@@ -238,7 +230,6 @@ describe("RP-initiated logout", () => {
       "x-frame-options": "DENY",
     });
   });
-
   it.each([
     ["/session/end", "origin-level internal route"],
     ["/session/end/confirm", "origin-level confirmation route"],

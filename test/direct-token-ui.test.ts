@@ -1,9 +1,9 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { renderAdminHtml } from "../src/admin/ui.js";
-
 class Element {
   value = "";
+  checked = false;
   textContent = "";
   disabled = false;
   open = false;
@@ -23,6 +23,7 @@ class Element {
   remove = vi.fn();
   onclick?: () => Promise<void> | void;
   onchange?: () => void;
+  oninput?: () => void;
   onsubmit?: (event: { preventDefault: () => void }) => Promise<void>;
   replaceChildren(...children: Element[]) {
     this.children = [];
@@ -48,12 +49,11 @@ class Element {
     this.open = false;
   }
 }
-
-const client = (clientId = "public") => ({
+const client = (clientId = "efa1f375-d761-44fa-81a3-556a97e641e6") => ({
   clientId,
   clientType: "PUBLIC",
   redirectUris: [],
-  accessTokenVersion: "2.0",
+  requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
 });
 const user = (sub = "user") => ({ sub, name: "User", preferred_username: "user@example.com", groups: [] });
 function deferred<T>() {
@@ -65,7 +65,6 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-
 async function setup(initial?: { clients: Promise<unknown> }) {
   const html = renderAdminHtml("tenant", "http://localhost", "http://localhost/logout");
   const script = /<script>([\s\S]+)<\/script>/.exec(html)?.[1];
@@ -78,10 +77,19 @@ async function setup(initial?: { clients: Promise<unknown> }) {
   get("scenario").value = "NORMAL";
   get("mode").value = "CONTINUOUS";
   const server = { clients: [client()], users: [user()] };
-  const request = vi.fn<(url: string, options?: { method?: string; body?: string }) => Promise<unknown>>();
+  const request = vi.fn<
+    (
+      url: string,
+      options?: {
+        method?: string;
+        body?: string;
+      },
+    ) => Promise<unknown>
+  >();
   const readServer = async (url: string) => {
     if (url === "/__mock/api/clients") return structuredClone(server.clients);
     if (url === "/__mock/api/users") return structuredClone(server.users);
+    if (url === "/__mock/api/resources") return [];
     if (url === "/__mock/api/access-log") return [];
     if (url === "/__mock/api/scenario") return { scenario: "NORMAL", status: "NORMAL", triggeredCount: 0 };
     throw new Error("Unexpected request: " + url);
@@ -107,7 +115,13 @@ async function setup(initial?: { clients: Promise<unknown> }) {
       activeElement: new Element(),
       body: new Element(),
     },
-    fetch: async (url: string, options?: { method?: string; body?: string }) => ({
+    fetch: async (
+      url: string,
+      options?: {
+        method?: string;
+        body?: string;
+      },
+    ) => ({
       ok: true,
       text: async () => JSON.stringify(await request(url, options)),
     }),
@@ -126,7 +140,7 @@ async function setup(initial?: { clients: Promise<unknown> }) {
   request.mockClear();
   const populate = () => {
     runInNewContext(
-      `setTokenChoices('client',[{clientId:'public'}]);setTokenChoices('user',[{sub:'user',name:'User'}]);`,
+      `setTokenChoices('client',[{clientId:'efa1f375-d761-44fa-81a3-556a97e641e6',requiredResourceAccess:[{resourceAppId:'55555555-5555-4555-8555-555555555555',scopes:['access_as_user']}]}]);setTokenChoices('user',[{sub:'user',name:'User'}]);`,
       sandbox,
     );
   };
@@ -148,13 +162,113 @@ async function setup(initial?: { clients: Promise<unknown> }) {
     readServer,
   };
 }
-
 const result = {
   access_token: "test.jwt.token",
   fault: { scenario: "NO_GROUPS", mode: "LIMITED", remainingBefore: 1, remainingAfter: 0 },
 };
-
 describe("direct token Admin UI interactions", () => {
+  it("preserves narrowed scopes when candidates are reloaded or permissions grow", async () => {
+    const ui = await setup();
+    ui.server.clients[0]!.requiredResourceAccess[0]!.scopes.push("write");
+    ui.get("tokenScopes").value = "access_as_user";
+    await ui.reload();
+    expect(ui.get("tokenScopes").value).toBe("access_as_user");
+    ui.request.mockResolvedValueOnce(result);
+    await ui.submit();
+    const payload = JSON.parse(ui.request.mock.calls.find(([url]) => url.endsWith("/tokens"))![1]!.body!);
+    expect(payload.scopes).toEqual(["access_as_user"]);
+  });
+  it("keeps intentionally cleared scopes empty across reloads and disables issuance", async () => {
+    const ui = await setup();
+    ui.get("tokenScopes").value = "";
+    await ui.reload();
+    expect(ui.get("tokenScopes").value).toBe("");
+    expect(ui.get("issueToken").disabled).toBe(true);
+    ui.get("tokenScopes").value = "access_as_user";
+    ui.get("tokenScopes").oninput!();
+    expect(ui.get("issueToken").disabled).toBe(false);
+  });
+  it("uses the new permission defaults when the client or API is explicitly changed", async () => {
+    const ui = await setup();
+    const resourceAppId = "66666666-6666-4666-8666-666666666666";
+    const otherClient = {
+      ...client("00000000-0000-4000-8000-000000000004"),
+      requiredResourceAccess: [{ resourceAppId, scopes: ["other.read"] }],
+    };
+    ui.server.clients[0]!.requiredResourceAccess.push({ resourceAppId, scopes: ["read", "write"] });
+    ui.server.clients.push(otherClient);
+    await ui.reload();
+    ui.get("tokenScopes").value = "access_as_user";
+    ui.get("tokenResource").value = resourceAppId;
+    ui.get("tokenResource").onchange!();
+    expect(ui.get("tokenScopes").value).toBe("read write");
+    ui.get("tokenScopes").value = "read";
+    ui.get("tokenClient").value = otherClient.clientId;
+    ui.get("tokenClient").onchange!();
+    expect(ui.get("tokenScopes").value).toBe("other.read");
+  });
+  it("round-trips typed redirect URIs and API permissions through the client editor", async () => {
+    const ui = await setup();
+    const fixture = {
+      ...client(),
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup",
+      redirectUris: [
+        { type: "spa", uri: "https://spa.example.test/callback" },
+        { type: "native", uri: "com.example.app:/callback" },
+      ],
+      requiredResourceAccess: [
+        { resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["read", "write"] },
+        { resourceAppId: "66666666-6666-4666-8666-666666666666", scopes: ["read"] },
+      ],
+    };
+    Object.assign(ui.sandbox, { fixture });
+    runInNewContext("openClient(fixture)", ui.sandbox);
+    expect(ui.get("redirectUris").value).toBe(
+      "spa https://spa.example.test/callback\nnative com.example.app:/callback",
+    );
+    ui.request.mockImplementation((url, options) =>
+      options?.method === "PUT" ? Promise.resolve(fixture) : ui.readServer(url),
+    );
+    await ui.get("clientForm").onsubmit!({ preventDefault: vi.fn() });
+    const body = JSON.parse(ui.request.mock.calls.find(([, options]) => options?.method === "PUT")![1]!.body!);
+    const expected: Record<string, unknown> = { ...fixture, tokenEndpointAuthMethod: "none" };
+    delete expected.clientId;
+    expect(body).toEqual(expected);
+  });
+  it("round-trips API scope lines and a default v1 token version through the resource editor", async () => {
+    const ui = await setup();
+    const fixture = {
+      resourceAppId: "66666666-6666-4666-8666-666666666666",
+      identifierUri: "api://example",
+      scopes: ["read", "write"],
+      requestedAccessTokenVersion: null,
+      emailOptionalClaim: true,
+      groupMembershipClaims: "None",
+    };
+    Object.assign(ui.sandbox, { fixture });
+    runInNewContext("openResource(fixture)", ui.sandbox);
+    expect(ui.get("resourceScopes").value).toBe("read\nwrite");
+    ui.request.mockImplementation((url, options) =>
+      options?.method === "PUT" ? Promise.resolve(fixture) : ui.readServer(url),
+    );
+    await ui.get("resourceForm").onsubmit!({ preventDefault: vi.fn() });
+    const body = JSON.parse(ui.request.mock.calls.find(([, options]) => options?.method === "PUT")![1]!.body!);
+    const expected: Record<string, unknown> = { ...fixture };
+    delete expected.resourceAppId;
+    expect(body).toEqual(expected);
+  });
+  it("keeps token user choices available when loading API registrations fails", async () => {
+    const ui = await setup();
+    ui.request.mockImplementation((url) => {
+      if (url === "/__mock/api/resources") throw new Error("API read failed");
+      return ui.readServer(url);
+    });
+    await runInNewContext("resourceEditor.load()", ui.sandbox);
+    expect(ui.get("resourceError").textContent).toContain("API read failed");
+    expect(ui.get("tokenUser").value).toBe("user");
+    expect(ui.get("issueToken").disabled).toBe(false);
+  });
   it("selects registered candidates, prevents duplicate submissions and displays/copies the result", async () => {
     const ui = await setup();
     ui.populate();
@@ -173,7 +287,14 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.request).toHaveBeenCalledTimes(1);
     expect(ui.request).toHaveBeenCalledWith(
       "/__mock/api/tokens",
-      expect.objectContaining({ body: JSON.stringify({ clientId: "public", userSub: "user" }) }),
+      expect.objectContaining({
+        body: JSON.stringify({
+          clientId: "efa1f375-d761-44fa-81a3-556a97e641e6",
+          userId: "user",
+          resourceAppId: "55555555-5555-4555-8555-555555555555",
+          scopes: ["access_as_user"],
+        }),
+      }),
     );
     finish(result);
     await pending;
@@ -185,7 +306,6 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.writeText).toHaveBeenCalledWith(result.access_token);
     expect(ui.sandbox.localStorage.setItem).not.toHaveBeenCalled();
   });
-
   it("clears an earlier result on an error and refreshes scenario state", async () => {
     const ui = await setup();
     ui.populate();
@@ -199,7 +319,6 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.refresh).toHaveBeenCalledTimes(2);
     expect(ui.get("issueToken").disabled).toBe(false);
   });
-
   it("leaves the token available for manual copying when both clipboard paths fail", async () => {
     const ui = await setup();
     ui.populate();
@@ -214,7 +333,6 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.get("issuedToken").select).toHaveBeenCalled();
     expect(ui.get("tokenMessage").textContent).toContain("手動でコピー");
   });
-
   it("disables issuing for empty candidates and supports reloading after an error", async () => {
     const ui = await setup();
     runInNewContext("setTokenChoices('client',[]);setTokenChoices('user',[]);", ui.sandbox);
@@ -228,7 +346,6 @@ describe("direct token Admin UI interactions", () => {
     await vi.waitFor(() => expect(ui.get("issueToken").disabled).toBe(false));
     expect(ui.get("tokenChoicesError").textContent).toBe("");
   });
-
   it("invalidates the old token when the selected user changes", async () => {
     const ui = await setup();
     ui.populate();
@@ -251,12 +368,13 @@ describe("direct token Admin UI interactions", () => {
     pending.resolve(result);
     await issuing;
     expect(ui.get("issuedToken").value).toBe(result.access_token);
-    expect(ui.get("tokenSubject").textContent).toBe("発行対象: クライアント public / ユーザー user");
+    expect(ui.get("tokenSubject").textContent).toBe(
+      "発行対象: クライアント efa1f375-d761-44fa-81a3-556a97e641e6 / ユーザー user / API 55555555-5555-4555-8555-555555555555 / スコープ access_as_user",
+    );
     expect(ui.get("tokenResult").classes.has("hidden")).toBe(false);
     await ui.get("copyToken").onclick!();
     expect(ui.writeText).toHaveBeenCalledWith(result.access_token);
   });
-
   it("preserves a completed result across candidate reloads and automatic selection changes", async () => {
     const ui = await setup();
     ui.request.mockResolvedValueOnce(result);
@@ -265,13 +383,14 @@ describe("direct token Admin UI interactions", () => {
     ui.server.users = [];
     await ui.reload();
     expect(ui.get("issuedToken").value).toBe(result.access_token);
-    expect(ui.get("tokenSubject").textContent).toBe("発行対象: クライアント public / ユーザー user");
+    expect(ui.get("tokenSubject").textContent).toBe(
+      "発行対象: クライアント efa1f375-d761-44fa-81a3-556a97e641e6 / ユーザー user / API 55555555-5555-4555-8555-555555555555 / スコープ access_as_user",
+    );
     expect(ui.get("issueToken").disabled).toBe(true);
     expect(ui.get("copyToken").disabled).toBe(false);
     await ui.get("copyToken").onclick!();
     expect(ui.writeText).toHaveBeenCalledWith(result.access_token);
   });
-
   it("shares the initial list generation with a later candidate reload", async () => {
     const first = deferred<unknown>();
     const ui = await setup({ clients: first.promise });
@@ -285,7 +404,6 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.get("clients").children[0]).toBeDefined();
     expect(ui.get("issueToken").disabled).toBe(false);
   });
-
   it("ignores a stale failed reload after a newer list has succeeded", async () => {
     const ui = await setup();
     const stale = deferred<unknown>();
@@ -300,7 +418,6 @@ describe("direct token Admin UI interactions", () => {
     expect(ui.get("tokenChoicesError").textContent).toBe("");
     expect(ui.get("issueToken").disabled).toBe(false);
   });
-
   it.each(["client", "user"] as const)(
     "disables only unavailable %s candidates and recovers through the shared loader",
     async (kind) => {
@@ -324,7 +441,6 @@ describe("direct token Admin UI interactions", () => {
       expect(ui.get("issueToken").disabled).toBe(false);
     },
   );
-
   it.each([
     ["client", "save"],
     ["client", "delete"],
@@ -357,7 +473,12 @@ describe("direct token Admin UI interactions", () => {
       await ui.get(kind === "client" ? "resetClients" : "resetUsers").onclick!();
     } else if (action === "save") {
       await (runInNewContext(
-        kind + "Editor.open('" + (kind === "client" ? "public" : "user") + "');" + kind + "Editor.save({})",
+        kind +
+          "Editor.open('" +
+          (kind === "client" ? "efa1f375-d761-44fa-81a3-556a97e641e6" : "user") +
+          "');" +
+          kind +
+          "Editor.save({})",
         ui.sandbox,
       ) as Promise<void>);
     } else {

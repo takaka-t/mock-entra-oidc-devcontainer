@@ -7,10 +7,8 @@ import { buildApp, type AppContext } from "../src/app.js";
 import { mockTenantId, type AppConfig } from "../src/config.js";
 import { scenarioNames } from "../src/scenario/types.js";
 import { testConfig } from "./test-config.js";
-
 const tokenPath = "/oauth2/v2.0/token";
 const jwksPath = "/discovery/v2.0/keys";
-
 describe("test configuration safety", () => {
   it.each([
     {
@@ -35,12 +33,10 @@ describe("test configuration safety", () => {
     expect(() => testConfig(paths)).toThrow("must not resolve inside the repository .data directory");
   });
 });
-
 describe("admin API and UI", () => {
   let context: AppContext;
   let appConfig: AppConfig;
   let stateDirectory: string;
-
   beforeEach(async () => {
     stateDirectory = await mkdtemp(join(tmpdir(), "mock-idp-admin-"));
     appConfig = testConfig({
@@ -58,7 +54,6 @@ describe("admin API and UI", () => {
       await rm(stateDirectory, { recursive: true, force: true });
     }
   });
-
   it("sets, reads, clears, and resets scenarios", async () => {
     const set = await context.app.inject({
       method: "PUT",
@@ -89,7 +84,6 @@ describe("admin API and UI", () => {
       ).json().lastCompleted,
     ).toBeNull();
   });
-
   it("exposes automatic LIMITED completion and history through the API", async () => {
     await context.app.inject({
       method: "PUT",
@@ -121,7 +115,6 @@ describe("admin API and UI", () => {
       },
     });
   });
-
   it("records OIDC requests in the access log with the scenario that applied", async () => {
     await context.app.inject({
       method: "PUT",
@@ -158,7 +151,6 @@ describe("admin API and UI", () => {
         })
       ).statusCode,
     ).toBe(404);
-
     const listed = await context.app.inject("/__mock/api/access-log");
     expect(listed.statusCode).toBe(200);
     expect(listed.headers["cache-control"]).toBe("no-store");
@@ -216,7 +208,6 @@ describe("admin API and UI", () => {
     expect(entries.some((entry) => String(entry.path).startsWith("/__mock"))).toBe(false);
     expect(entries.some((entry) => entry.path === "/health")).toBe(false);
     expect(entries.some((entry) => entry.path === "/favicon.ico")).toBe(false);
-
     const cleared = await context.app.inject({
       method: "DELETE",
       url: "/__mock/api/access-log",
@@ -227,7 +218,6 @@ describe("admin API and UI", () => {
       lastCompleted: { scenario: "TOKEN_500" },
     });
   });
-
   it("rejects cross-site access log clears and leaves the log intact", async () => {
     await context.app.inject({
       url: jwksPath,
@@ -242,16 +232,18 @@ describe("admin API and UI", () => {
     expect(crossSite.json().error).toBe("invalid_admin_origin");
     expect((await context.app.inject("/__mock/api/access-log")).json()).toHaveLength(1);
   });
-
   it("resets the active count and published signing key through the Reset API", async () => {
     const initialKeys = (
       await context.app.inject({
         url: jwksPath,
         headers: { host: "localhost" },
       })
-    ).json<{ keys: Array<{ kid?: string }> }>().keys;
+    ).json<{
+      keys: Array<{
+        kid?: string;
+      }>;
+    }>().keys;
     expect(initialKeys).toHaveLength(1);
-
     await context.app.inject({
       method: "PUT",
       url: "/__mock/api/scenario",
@@ -263,9 +255,10 @@ describe("admin API and UI", () => {
           url: jwksPath,
           headers: { host: "localhost" },
         })
-      ).json<{ keys: unknown[] }>().keys,
+      ).json<{
+        keys: unknown[];
+      }>().keys,
     ).toHaveLength(2);
-
     await context.app.inject({ method: "DELETE", url: "/__mock/api/scenario" });
     expect(
       (
@@ -273,7 +266,9 @@ describe("admin API and UI", () => {
           url: jwksPath,
           headers: { host: "localhost" },
         })
-      ).json<{ keys: unknown[] }>().keys,
+      ).json<{
+        keys: unknown[];
+      }>().keys,
     ).toHaveLength(2);
     await context.app.inject({
       method: "PUT",
@@ -284,7 +279,6 @@ describe("admin API and UI", () => {
         failureCount: 2,
       },
     });
-
     const reset = await context.app.inject({
       method: "POST",
       url: "/__mock/api/reset",
@@ -304,10 +298,13 @@ describe("admin API and UI", () => {
         url: jwksPath,
         headers: { host: "localhost" },
       })
-    ).json<{ keys: Array<{ kid?: string }> }>().keys;
+    ).json<{
+      keys: Array<{
+        kid?: string;
+      }>;
+    }>().keys;
     expect(resetKeys.map(({ kid }) => kid)).toEqual([initialKeys[0]?.kid]);
   });
-
   it.each([
     { scenario: "TOKEN_500", mode: "LIMITED" },
     { scenario: "TOKEN_500", mode: "LIMITED", failureCount: 0 },
@@ -322,7 +319,7 @@ describe("admin API and UI", () => {
     {
       scenario: "TOKEN_TIMEOUT",
       mode: "CONTINUOUS",
-      parameters: { delayMs: 300_001 },
+      parameters: { delayMs: 300001 },
     },
     {
       scenario: "TOKEN_500",
@@ -362,7 +359,7 @@ describe("admin API and UI", () => {
     {
       scenario: "FUTURE_NBF",
       mode: "CONTINUOUS",
-      parameters: { nbfAheadSeconds: 3_600 },
+      parameters: { nbfAheadSeconds: 3600 },
     },
     {
       scenario: "FUTURE_NBF",
@@ -388,7 +385,6 @@ describe("admin API and UI", () => {
       ).statusCode,
     ).toBe(400);
   });
-
   it("preserves optional Retry-After for every 429 and 500", async () => {
     for (const scenario of [
       "AUTH_429",
@@ -411,7 +407,6 @@ describe("admin API and UI", () => {
       });
       expect(configured.statusCode).toBe(200);
       expect(configured.json().parameters).toEqual({ retryAfterSeconds: 15 });
-
       const omitted = await context.app.inject({
         method: "PUT",
         url: "/__mock/api/scenario",
@@ -421,7 +416,6 @@ describe("admin API and UI", () => {
       expect(omitted.json().parameters).toEqual({});
     }
   });
-
   it("defaults and preserves the EXPIRED_TOKEN and FUTURE_NBF time offsets", async () => {
     for (const [scenario, key] of [
       ["EXPIRED_TOKEN", "expiredAgoSeconds"],
@@ -434,7 +428,6 @@ describe("admin API and UI", () => {
       });
       expect(omitted.statusCode).toBe(200);
       expect(omitted.json().parameters).toEqual({ [key]: 600 });
-
       const configured = await context.app.inject({
         method: "PUT",
         url: "/__mock/api/scenario",
@@ -444,7 +437,6 @@ describe("admin API and UI", () => {
       expect(configured.json().parameters).toEqual({ [key]: 30 });
     }
   });
-
   it("serves the admin UI", async () => {
     const response = await context.app.inject("/__mock");
     expect(response.statusCode).toBe(200);
@@ -519,12 +511,10 @@ describe("admin API and UI", () => {
       "clientId",
       "clientSecret",
       "redirectUris",
-      "audience",
-      "scope",
+      "permissions",
       "userOid",
       "userName",
       "userPreferredUsername",
-      "userMail",
       "failureCount",
     ])
       expect(response.body).toContain(`for="${requiredFor}" class="required"`);
@@ -595,7 +585,7 @@ describe("admin API and UI", () => {
     expect(response.body).toContain(
       'id="retryAfter" type="number" min="1" step="1" placeholder="Retry-Afterヘッダーを付与しない">',
     );
-    expect(response.body).toContain('id="userMail" type="email" required');
+    expect(response.body).toContain('id="userMail" type="email"');
     expect(response.body).toContain(
       '<select id="claim"><option selected>sub</option><option>oid</option><option>tid</option><option>iss</option><option>aud</option><option>exp</option><option>iat</option></select>',
     );
@@ -626,7 +616,7 @@ describe("admin API and UI", () => {
       if (count) expect(details[1]).toContain(`<span id="${count}" class="count">`);
       else expect(details[1]).not.toContain('class="count"');
     }
-    expect(response.body.match(/<details class="card"/g)).toHaveLength(5);
+    expect(response.body.match(/<details class="card"/g)).toHaveLength(6);
     expect(response.body).not.toMatch(/<details[^>]* open[ >]/);
     // The page never polls and never injects markup from API responses.
     expect(response.body).not.toContain("setInterval");
@@ -635,7 +625,6 @@ describe("admin API and UI", () => {
     if (!inlineScript) throw new Error("Admin UI inline script was not found");
     expect(() => new Script(inlineScript)).not.toThrow();
   });
-
   it("serves accessible registration dialogs and dismissible result notices", async () => {
     const { body } = await context.app.inject("/__mock");
     for (const kind of ["client", "user"]) {
@@ -655,7 +644,6 @@ describe("admin API and UI", () => {
       expect(body.indexOf(`id="${kind}Notice"`)).toBeLessThan(body.indexOf(`id="${kind}s"`));
     }
   });
-
   it("returns localized Admin API messages without changing error codes", async () => {
     const scenario = await context.app.inject({
       method: "PUT",
@@ -667,7 +655,6 @@ describe("admin API and UI", () => {
       error: "invalid_scenario",
       message: "NORMAL では mode、failureCount、parameters を指定できません",
     });
-
     const user = await context.app.inject({
       method: "POST",
       url: "/__mock/api/users",
@@ -685,20 +672,18 @@ describe("admin API and UI", () => {
       error: "invalid_user",
       message: "表示名（name）：値が短すぎるか、少なすぎます",
     });
-
     const client = await context.app.inject({
       method: "POST",
       url: "/__mock/api/clients",
       payload: {
-        clientId: "localized-message-client",
+        clientId: "c47e9e58-a45c-4eef-8c3d-64f57a29560b",
         clientType: "PUBLIC",
         clientSecret: "must-not-be-present",
         tokenEndpointAuthMethod: "none",
-        redirectUris: ["http://localhost:3000/callback"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:localized-message",
-        accessTokenScope: "access_as_user",
+        redirectUris: [{ uri: "http://localhost:3000/callback", type: "native" as const }],
+        requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
         emailOptionalClaim: false,
+        groupMembershipClaims: "SecurityGroup" as const,
       },
     });
     expect(client.statusCode).toBe(400);
@@ -708,7 +693,6 @@ describe("admin API and UI", () => {
         "クライアントシークレット（client_secret）：PUBLIC クライアントにはクライアントシークレットを指定できません",
     });
   });
-
   it.each(["users", "clients"] as const)(
     "keeps %s identifiers consistent across the UI, API, and persistence",
     async (kind) => {
@@ -721,16 +705,17 @@ describe("admin API and UI", () => {
               name: "境界値ユーザー",
               preferred_username: "boundary@example.com",
               mail: "boundary@example.com",
-              groups: ["日本語のグループ"],
+              groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"],
             }
           : {
               clientType: "PUBLIC",
               tokenEndpointAuthMethod: "none",
-              redirectUris: ["http://localhost/callback"],
-              postLogoutRedirectUris: [],
-              accessTokenAudience: "urn:boundary",
-              accessTokenScope: "access_as_user",
+              redirectUris: [{ uri: "http://localhost/callback", type: "native" as const }],
+              requiredResourceAccess: [
+                { resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] },
+              ],
               emailOptionalClaim: false,
+              groupMembershipClaims: "SecurityGroup" as const,
             };
       const url = "/__mock/api/" + kind;
       const file = kind === "users" ? context.userStore.filePath : context.clientStore.filePath;
@@ -738,8 +723,9 @@ describe("admin API and UI", () => {
       const pattern = new RegExp('<input id="' + inputId + '" pattern="([^"]+)"').exec(html)?.[1];
       expect(pattern).toBeTruthy();
       const browserPattern = new RegExp("^(?:" + pattern + ")$", "v");
-
-      for (const id of ["a".repeat(100), "  " + "b".repeat(100) + "  ", "a/b?c#d% e", "..."]) {
+      for (const id of kind === "users"
+        ? ["a".repeat(100), "  " + "b".repeat(100) + "  ", "a/b?c#d% e", "..."]
+        : ["88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999"]) {
         expect(browserPattern.test(id), id).toBe(true);
         const created = await context.app.inject({
           method: "POST",
@@ -764,7 +750,6 @@ describe("admin API and UI", () => {
         });
         expect(deleted.statusCode, deleted.body).toBe(204);
       }
-
       const before = await readFile(file, "utf8");
       for (const id of [".", "..", " . ", "a".repeat(101), " ", "bad\nid", "利用者"]) {
         expect(browserPattern.test(id), id).toBe(false);
@@ -779,7 +764,6 @@ describe("admin API and UI", () => {
       expect(await readFile(file, "utf8")).toBe(before);
     },
   );
-
   it("rejects multiline user fields on create and update without changing state", async () => {
     const payload = {
       oid: "44444444-4444-4444-4444-444444444444",
@@ -812,18 +796,19 @@ describe("admin API and UI", () => {
     }
     expect(await readFile(context.userStore.filePath, "utf8")).toBe(before);
   });
-
   it("creates, updates, deletes, and resets OIDC clients independently", async () => {
     const payload = {
-      clientId: "admin-api-client",
+      clientId: "ad1e7561-0b59-437b-834b-1fbbe6c66ca2",
       clientType: "CONFIDENTIAL",
       clientSecret: "visible-secret",
       tokenEndpointAuthMethod: "client_secret_post",
-      redirectUris: ["http://localhost:4321/callback"],
-      postLogoutRedirectUris: ["http://localhost:4321/signed-out"],
-      accessTokenAudience: "urn:admin-api",
-      accessTokenScope: "access_as_user",
+      redirectUris: [
+        { uri: "http://localhost:4321/callback", type: "web" as const },
+        { uri: "http://localhost:4321/signed-out", type: "web" as const },
+      ],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     };
     const created = await context.app.inject({
       method: "POST",
@@ -834,7 +819,7 @@ describe("admin API and UI", () => {
     expect(created.json()).toMatchObject({
       clientId: payload.clientId,
       clientSecret: "visible-secret",
-      accessTokenVersion: "2.0",
+      groupMembershipClaims: "SecurityGroup",
     });
     expect(created.json()).not.toHaveProperty("scopes");
     expect(
@@ -846,7 +831,6 @@ describe("admin API and UI", () => {
         })
       ).statusCode,
     ).toBe(409);
-
     const { clientId, ...updatePayload } = payload;
     const updated = await context.app.inject({
       method: "PUT",
@@ -854,24 +838,22 @@ describe("admin API and UI", () => {
       payload: {
         ...updatePayload,
         clientSecret: "changed",
-        accessTokenVersion: "1.0",
+        emailOptionalClaim: true,
       },
     });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({
       clientId: payload.clientId,
       clientSecret: "changed",
-      accessTokenVersion: "1.0",
+      emailOptionalClaim: true,
     });
-
     const preserved = await context.app.inject({
       method: "PUT",
       url: `/__mock/api/clients/${clientId}`,
       payload: { ...updatePayload, clientSecret: "preserved-version" },
     });
     expect(preserved.statusCode).toBe(200);
-    expect(preserved.json()).toMatchObject({ clientSecret: "preserved-version", accessTokenVersion: "1.0" });
-
+    expect(preserved.json()).toMatchObject({ clientSecret: "preserved-version", emailOptionalClaim: false });
     await context.app.inject({
       method: "PUT",
       url: "/__mock/api/scenario",
@@ -883,7 +865,7 @@ describe("admin API and UI", () => {
       payload: {},
     });
     expect((await context.app.inject("/__mock/api/scenario")).json().scenario).toBe("TOKEN_500");
-    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(2);
+    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(3);
     expect(
       (
         await context.app.inject({
@@ -893,59 +875,53 @@ describe("admin API and UI", () => {
       ).statusCode,
     ).toBe(404);
   });
-
   it.each([
     {
-      clientId: "bad",
+      clientId: "2f05d4b6-89d2-40ca-8b02-285f35f44866",
       clientType: "PUBLIC",
       clientSecret: "no",
       tokenEndpointAuthMethod: "none",
-      redirectUris: ["http://localhost/cb"],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "urn:x",
-      accessTokenScope: "access_as_user",
+      redirectUris: [{ uri: "http://localhost/cb", type: "native" as const }],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     },
     {
-      clientId: "bad",
+      clientId: "2f05d4b6-89d2-40ca-8b02-285f35f44866",
       clientType: "CONFIDENTIAL",
       tokenEndpointAuthMethod: "client_secret_basic",
-      redirectUris: ["http://localhost/cb"],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "urn:x",
-      accessTokenScope: "access_as_user",
+      redirectUris: [{ uri: "http://localhost/cb", type: "web" as const }],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     },
     {
-      clientId: "bad",
+      clientId: "2f05d4b6-89d2-40ca-8b02-285f35f44866",
       clientType: "PUBLIC",
       tokenEndpointAuthMethod: "none",
       redirectUris: [],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "urn:x",
-      accessTokenScope: "access_as_user",
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     },
     {
-      clientId: "bad",
+      clientId: "2f05d4b6-89d2-40ca-8b02-285f35f44866",
       clientType: "PUBLIC",
       tokenEndpointAuthMethod: "none",
-      redirectUris: ["relative"],
-      postLogoutRedirectUris: [],
-      accessTokenAudience: "not a uri",
-      accessTokenScope: "access_as_user",
+      redirectUris: [{ uri: "relative", type: "native" as const }],
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     },
     {
-      clientId: "legacy-api-input",
+      clientId: "cf953055-1666-43bc-8c7d-696f3a942b28",
       clientType: "PUBLIC",
       tokenEndpointAuthMethod: "none",
-      redirectUris: ["http://localhost/cb"],
-      postLogoutRedirectUris: [],
+      redirectUris: [{ uri: "http://localhost/cb", type: "native" as const }],
       scopes: ["openid"],
-      accessTokenAudience: "urn:x",
-      accessTokenScope: "access_as_user",
+      requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
       emailOptionalClaim: false,
+      groupMembershipClaims: "SecurityGroup" as const,
     },
   ])("rejects invalid OIDC client %#", async (payload) => {
     const response = await context.app.inject({
@@ -956,7 +932,6 @@ describe("admin API and UI", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_client");
   });
-
   it("creates, updates, deletes, and resets test users independently", async () => {
     const payload = {
       sub: "admin-api-user",
@@ -964,7 +939,11 @@ describe("admin API and UI", () => {
       name: "API User",
       preferred_username: "api@example.com",
       mail: "api@example.com",
-      groups: ["g1", "g1", "g2"],
+      groups: [
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
+      ],
     };
     const created = await context.app.inject({
       method: "POST",
@@ -975,7 +954,7 @@ describe("admin API and UI", () => {
     expect(created.json()).toEqual({
       ...payload,
       oid: payload.oid.toLowerCase(),
-      groups: ["g1", "g2"],
+      groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
     });
     const duplicate = await context.app.inject({
       method: "POST",
@@ -997,7 +976,6 @@ describe("admin API and UI", () => {
     expect(oidTaken.json().message).toContain(
       "同じユーザー ID、オブジェクト ID、または優先ユーザー名を持つテストユーザーが既に登録されています",
     );
-
     const { sub: _sub, ...update } = payload;
     void _sub;
     const updated = await context.app.inject({
@@ -1018,13 +996,15 @@ describe("admin API and UI", () => {
     });
     expect(missing.statusCode).toBe(404);
     expect(missing.json().error).toBe("user_not_found");
-    expect((await context.app.inject("/__mock/api/users")).json<{ sub: string }[]>().map((user) => user.sub)).toEqual([
-      "user-admin",
-      "user-normal",
-      "user-unauthorized",
-      "admin-api-user",
-    ]);
-
+    expect(
+      (await context.app.inject("/__mock/api/users"))
+        .json<
+          {
+            sub: string;
+          }[]
+        >()
+        .map((user) => user.sub),
+    ).toEqual(["user-admin", "user-normal", "user-unauthorized", "admin-api-user"]);
     await context.app.inject({
       method: "PUT",
       url: "/__mock/api/scenario",
@@ -1034,14 +1014,13 @@ describe("admin API and UI", () => {
       method: "POST",
       url: "/__mock/api/clients",
       payload: {
-        clientId: "extra-client",
+        clientId: "a6ba67f8-93b0-4b63-8efb-9107565fd848",
         clientType: "PUBLIC",
         tokenEndpointAuthMethod: "none",
-        redirectUris: ["http://localhost/cb"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:x",
-        accessTokenScope: "access_as_user",
+        redirectUris: [{ uri: "http://localhost/cb", type: "native" as const }],
+        requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
         emailOptionalClaim: false,
+        groupMembershipClaims: "SecurityGroup" as const,
       },
     });
     expect(extraClient.statusCode).toBe(201);
@@ -1063,8 +1042,7 @@ describe("admin API and UI", () => {
       scenario: "TOKEN_500",
       status: "ACTIVE",
     });
-    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(3);
-
+    expect((await context.app.inject("/__mock/api/clients")).json()).toHaveLength(4);
     const deleteMissing = await context.app.inject({
       method: "DELETE",
       url: "/__mock/api/users/admin-api-user",
@@ -1076,13 +1054,17 @@ describe("admin API and UI", () => {
     });
     expect(deleted.statusCode).toBe(204);
     expect(deleted.body).toBe("");
-
     await context.app.close();
     context = await buildApp(appConfig, { https: false });
-    expect((await context.app.inject("/__mock/api/users")).json<{ sub: string }[]>().map((user) => user.sub)).toEqual([
-      "user-admin",
-      "user-normal",
-    ]);
+    expect(
+      (await context.app.inject("/__mock/api/users"))
+        .json<
+          {
+            sub: string;
+          }[]
+        >()
+        .map((user) => user.sub),
+    ).toEqual(["user-admin", "user-normal"]);
     const clientReset = await context.app.inject({
       method: "POST",
       url: "/__mock/api/clients/reset",
@@ -1091,7 +1073,6 @@ describe("admin API and UI", () => {
     expect(clientReset.statusCode).toBe(200);
     expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(2);
   });
-
   it("generates and returns a persistent sub for a test user when omitted", async () => {
     const response = await context.app.inject({
       method: "POST",
@@ -1105,27 +1086,28 @@ describe("admin API and UI", () => {
       },
     });
     expect(response.statusCode).toBe(201);
-    const user = response.json<{ sub: string }>();
+    const user = response.json<{
+      sub: string;
+    }>();
     expect(user.sub).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect((await context.app.inject("/__mock/api/users")).json()).toContainEqual(
       expect.objectContaining({ sub: user.sub }),
     );
   });
-
   it.each([
     { oid: "not-a-guid" },
     { mail: "nope" },
     { name: "   " },
     { tid: mockTenantId },
     { unknown: true },
-    { groups: "g1" },
+    { groups: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1" },
     { sub: "" },
   ])("rejects invalid test user %#", async (overrides) => {
     const response = await context.app.inject({
       method: "POST",
       url: "/__mock/api/users",
       payload: {
-        sub: "bad",
+        sub: "2f05d4b6-89d2-40ca-8b02-285f35f44866",
         oid: "abcdef01-2345-6789-abcd-ef0123456789",
         name: "Bad",
         preferred_username: "bad@example.com",
@@ -1138,7 +1120,6 @@ describe("admin API and UI", () => {
     expect(response.json().error).toBe("invalid_user");
     expect((await context.app.inject("/__mock/api/users")).json()).toHaveLength(3);
   });
-
   it("rejects provider-incompatible client metadata without changing persisted restart state", async () => {
     const clientFile = context.clientStore.filePath;
     const beforeFile = await readFile(clientFile, "utf8");
@@ -1147,27 +1128,25 @@ describe("admin API and UI", () => {
       method: "POST",
       url: "/__mock/api/clients",
       payload: {
-        clientId: "fragment-client",
+        clientId: "40f06dbb-f5bb-4122-89f5-adffc99b8318",
         clientType: "PUBLIC",
         tokenEndpointAuthMethod: "none",
-        redirectUris: ["http://localhost/callback#fragment"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:fragment-client",
-        accessTokenScope: "access_as_user",
+        redirectUris: [{ uri: "http://localhost/callback#fragment", type: "native" as const }],
+        requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
         emailOptionalClaim: false,
+        groupMembershipClaims: "SecurityGroup" as const,
       },
     });
     const update = await context.app.inject({
       method: "PUT",
-      url: "/__mock/api/clients/mock-public-client",
+      url: "/__mock/api/clients/00000000-0000-4000-8000-000000000001",
       payload: {
         clientType: "PUBLIC",
         tokenEndpointAuthMethod: "none",
-        redirectUris: ["http://localhost:3000/callback"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:mock-api#fragment",
-        accessTokenScope: "access_as_user",
+        redirectUris: [{ uri: "http://localhost:3000/callback#fragment", type: "native" as const }],
+        requiredResourceAccess: [{ resourceAppId: "55555555-5555-4555-8555-555555555555", scopes: ["access_as_user"] }],
         emailOptionalClaim: false,
+        groupMembershipClaims: "SecurityGroup" as const,
       },
     });
     for (const response of [create, update]) {
@@ -1176,12 +1155,10 @@ describe("admin API and UI", () => {
     }
     expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(before);
     expect(await readFile(clientFile, "utf8")).toBe(beforeFile);
-
     await context.app.close();
     context = await buildApp(appConfig, { https: false });
     expect((await context.app.inject("/__mock/api/clients")).json()).toEqual(before);
   });
-
   it.each(["https://evil.test", "null"])("rejects Admin mutations from Origin %s", async (origin) => {
     const before = context.store.get();
     const response = await context.app.inject({
@@ -1201,7 +1178,6 @@ describe("admin API and UI", () => {
     expect(userDelete.statusCode).toBe(403);
     expect(context.userStore.find("user-admin")).toBeDefined();
   });
-
   it("allows same-origin and Origin-less JSON mutations", async () => {
     const sameOrigin = await context.app.inject({
       method: "PUT",
@@ -1217,7 +1193,6 @@ describe("admin API and UI", () => {
     expect(commandLine.statusCode).toBe(200);
     expect(commandLine.json().scenario).toBe("NORMAL");
   });
-
   it("rejects non-JSON bodies and requires reset to receive exactly {}", async () => {
     const crossSiteForm = await context.app.inject({
       method: "PUT",
@@ -1230,7 +1205,6 @@ describe("admin API and UI", () => {
     });
     expect(crossSiteForm.statusCode).toBe(403);
     expect(crossSiteForm.json().error).toBe("invalid_admin_origin");
-
     const form = await context.app.inject({
       method: "PUT",
       url: "/__mock/api/scenario",
@@ -1242,7 +1216,6 @@ describe("admin API and UI", () => {
     });
     expect(form.statusCode).toBe(415);
     expect(form.json().error).toBe("unsupported_media_type");
-
     const invalidReset = await context.app.inject({
       method: "POST",
       url: "/__mock/api/reset",
@@ -1260,7 +1233,6 @@ describe("admin API and UI", () => {
       ).statusCode,
     ).toBe(200);
   });
-
   it("sets protective headers on Admin pages and responses with secrets", async () => {
     for (const response of [
       await context.app.inject("/__mock"),

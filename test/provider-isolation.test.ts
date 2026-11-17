@@ -46,7 +46,7 @@ function authorizationUrl(clientId: string, scope: string) {
 }
 
 async function authorize(context: AppContext, issuer: string, host: string, scope: string) {
-  const request = authorizationUrl("mock-public-client", scope);
+  const request = authorizationUrl("00000000-0000-4000-8000-000000000001", scope);
   let jar = "";
   let response = await context.app.inject({
     url: request.url,
@@ -97,7 +97,7 @@ async function exchangeCode(context: AppContext, host: string, code: string, ver
     headers: { host, "content-type": "application/x-www-form-urlencoded" },
     payload: new URLSearchParams({
       grant_type: "authorization_code",
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       code,
       code_verifier: verifier,
@@ -112,7 +112,7 @@ async function refresh(context: AppContext, host: string, refreshToken: string) 
     headers: { host, "content-type": "application/x-www-form-urlencoded" },
     payload: new URLSearchParams({
       grant_type: "refresh_token",
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       refresh_token: refreshToken,
     }).toString(),
   });
@@ -158,16 +158,15 @@ describe("Provider instance isolation", () => {
       expect((await refresh(contextA, "issuer-a.test", refreshToken)).statusCode).toBe(200);
 
       await contextA.clientStore.create({
-        clientId: "provider-a-only",
+        clientId: "88888888-8888-4888-8888-888888888888",
         clientType: "PUBLIC",
         tokenEndpointAuthMethod: "none",
-        redirectUris: ["http://localhost:3000/callback"],
-        postLogoutRedirectUris: [],
-        accessTokenAudience: "urn:provider-a-only",
-        accessTokenScope: "access_as_user",
+        redirectUris: [{ uri: "http://localhost:3000/callback", type: "native" }],
+        requiredResourceAccess: [],
+        groupMembershipClaims: "None",
         emailOptionalClaim: false,
       });
-      const dynamicRequest = authorizationUrl("provider-a-only", "openid");
+      const dynamicRequest = authorizationUrl("88888888-8888-4888-8888-888888888888", "openid");
       expect(
         (
           await contextA.app.inject({

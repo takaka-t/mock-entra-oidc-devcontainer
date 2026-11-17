@@ -16,12 +16,21 @@ const idTokenOnlyScenarios: ReadonlySet<FaultScenarioName> = new Set(["NONCE_MIS
  * request sent none) must not consume a LIMITED count, or the RP would pass a
  * rejection test against an unmodified response.
  */
-export function tokenResponseFaultApplies(scenario: FaultScenarioName, body: unknown): boolean {
-  if (scenario !== "TOKEN_NO_ID_TOKEN" && !idTokenOnlyScenarios.has(scenario)) return true;
+export function tokenResponseFaultApplies(
+  scenario: FaultScenarioName,
+  body: unknown,
+  claim = defaultMissingClaim,
+): boolean {
   if (!body || typeof body !== "object") return false;
-  const idToken = (body as Record<string, unknown>).id_token;
-  if (typeof idToken !== "string") return false;
-  return scenario === "TOKEN_NO_ID_TOKEN" || decodeJwt(idToken).nonce !== undefined;
+  const response = body as Record<string, unknown>;
+  const idToken = response.id_token;
+  if (scenario === "TOKEN_NO_ID_TOKEN") return typeof idToken === "string";
+  if (idTokenOnlyScenarios.has(scenario)) return typeof idToken === "string" && decodeJwt(idToken).nonce !== undefined;
+  const tokens = [idToken, response.access_token].filter(
+    (token): token is string => typeof token === "string" && token.split(".").length === 3,
+  );
+  if (scenario === "MISSING_CLAIM") return tokens.some((token) => decodeJwt(token)[claim] !== undefined);
+  return tokens.length > 0;
 }
 
 function unsignedJwt(header: Record<string, unknown>, payload: Record<string, unknown>): string {

@@ -6,7 +6,15 @@ import {
   SerialQueue,
   stageJsonFile,
 } from "../persistence/json-file.js";
-import type { CreateOidcClientInput, OidcClientConfig, UpdateOidcClientInput } from "./types.js";
+import {
+  publicClientId,
+  confidentialClientId,
+  spaClientId,
+  type CreateOidcClientInput,
+  type OidcClientConfig,
+  type UpdateOidcClientInput,
+} from "./types.js";
+import { defaultResourceAppId } from "../resources/types.js";
 import { parseCreateClient, parseUpdateClient, persistedClientSchema } from "./validation.js";
 
 export class ClientConflictError extends Error {}
@@ -23,27 +31,38 @@ export class ClientValidationError extends Error {
 
 export const defaultClients = (): OidcClientConfig[] => [
   {
-    clientId: "mock-public-client",
+    clientId: publicClientId,
     clientType: "PUBLIC",
     tokenEndpointAuthMethod: "none",
-    redirectUris: ["http://localhost:3000/callback"],
-    postLogoutRedirectUris: [],
-    accessTokenAudience: "urn:mock-api",
-    accessTokenScope: "access_as_user",
-    accessTokenVersion: "2.0",
+    redirectUris: [{ uri: "http://localhost:3000/callback", type: "native" }],
+    requiredResourceAccess: [
+      { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
+    ],
     emailOptionalClaim: false,
+    groupMembershipClaims: "SecurityGroup",
   },
   {
-    clientId: "mock-confidential-client",
+    clientId: confidentialClientId,
     clientType: "CONFIDENTIAL",
     clientSecret: "mock-client-secret-change-me",
     tokenEndpointAuthMethod: "client_secret_basic",
-    redirectUris: ["http://localhost:3000/callback"],
-    postLogoutRedirectUris: [],
-    accessTokenAudience: "urn:mock-api",
-    accessTokenScope: "access_as_user",
-    accessTokenVersion: "2.0",
+    redirectUris: [{ uri: "http://localhost:3000/callback", type: "web" }],
+    requiredResourceAccess: [
+      { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
+    ],
     emailOptionalClaim: false,
+    groupMembershipClaims: "SecurityGroup",
+  },
+  {
+    clientId: spaClientId,
+    clientType: "PUBLIC",
+    tokenEndpointAuthMethod: "none",
+    redirectUris: [{ uri: "http://localhost:3000/callback", type: "spa" }],
+    requiredResourceAccess: [
+      { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
+    ],
+    emailOptionalClaim: false,
+    groupMembershipClaims: "SecurityGroup",
   },
 ];
 
@@ -53,25 +72,25 @@ export type ValidateClient = (client: OidcClientConfig) => void | Promise<void>;
 
 export class OidcClientStore {
   #clients = new Map<string, OidcClientConfig>();
-  readonly #queue = new SerialQueue();
+  readonly #queue: SerialQueue;
 
   constructor(
     readonly filePath: string,
     private readonly applyClient: ApplyClient,
     private readonly removeClient: RemoveClient,
     private readonly validateClient: ValidateClient = () => undefined,
-  ) {}
+    queue = new SerialQueue(),
+  ) {
+    this.#queue = queue;
+  }
 
   async initialize(): Promise<void> {
     let clients: OidcClientConfig[];
-    let migrated = false;
     let missing = false;
     const contents = await readJsonFile(this.filePath);
     if (contents.exists) {
       const raw = contents.value;
-      migrated =
-        Array.isArray(raw) && raw.some((client) => typeof client === "object" && client !== null && "scopes" in client);
-      clients = z.array(persistedClientSchema).parse(raw) as OidcClientConfig[];
+      clients = z.array(persistedClientSchema).parse(raw);
     } else {
       clients = defaultClients();
       missing = true;
@@ -83,7 +102,7 @@ export class OidcClientStore {
     }
     await this.validateClients(clients);
 
-    const temporary = missing || migrated ? await stageJsonFile(this.filePath, clients) : undefined;
+    const temporary = missing ? await stageJsonFile(this.filePath, clients) : undefined;
     try {
       await this.applyInitialClients(clients);
       if (temporary)
@@ -130,7 +149,6 @@ export class OidcClientStore {
       const client = {
         clientId,
         ...update,
-        accessTokenVersion: update.accessTokenVersion ?? previous.accessTokenVersion,
       };
       const next = new Map(this.#clients).set(clientId, client);
       await this.commit(

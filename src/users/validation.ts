@@ -12,8 +12,8 @@ const singleLine = z
   .trim()
   .min(1)
   .refine((value) => !/[\r\n]/.test(value), "改行は使用できません");
-const mail = z.email();
-const groups = z.array(singleLine).transform(unique);
+const mail = z.union([z.email(), z.literal("")]);
+const groups = z.array(z.guid().transform((value) => value.toLowerCase())).transform(unique);
 
 const commonShape = {
   oid,

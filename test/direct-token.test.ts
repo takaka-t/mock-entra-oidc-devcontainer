@@ -11,9 +11,13 @@ import type { DirectTokenResponse } from "../src/oidc/direct-token.js";
 import { scenarioNames, type FaultScenarioName } from "../src/scenario/types.js";
 import { testConfig } from "./test-config.js";
 import { parseScenarioInput } from "../src/scenario/validation.js";
-
 const path = "/__mock/api/tokens";
-const input = { clientId: "mock-public-client", userSub: "user-admin" };
+const input = {
+  clientId: "00000000-0000-4000-8000-000000000001",
+  userId: "user-admin",
+  resourceAppId: "55555555-5555-4555-8555-555555555555",
+  scopes: ["access_as_user"],
+};
 const supported = [
   "NO_GROUPS",
   "WRONG_AUDIENCE",
@@ -27,7 +31,6 @@ const supported = [
   "WRONG_TENANT",
   "MISSING_CLAIM",
 ] as const satisfies readonly FaultScenarioName[];
-
 describe("direct development access tokens", () => {
   let context: AppContext;
   let config: AppConfig;
@@ -45,6 +48,7 @@ describe("direct development access tokens", () => {
   beforeEach(async () => {
     context.store.reset();
     await context.clientStore.reset();
+    await context.resourceStore.reset();
     await context.userStore.reset();
     context.accessLog.clear();
   });
@@ -63,8 +67,7 @@ describe("direct development access tokens", () => {
       headers: { "content-type": "application/json" },
     });
   const jwks = async () => createLocalJWKSet((await context.app.inject(config.jwksPath)).json());
-
-  it.each(["mock-public-client", "mock-confidential-client"])(
+  it.each(["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"])(
     "issues a verifiable token for %s without session or persisted tokens",
     async (clientId) => {
       const files = [config.clientConfigFile, config.userConfigFile];
@@ -75,24 +78,24 @@ describe("direct development access tokens", () => {
       expect(result).toMatchObject({
         token_type: "Bearer",
         expires_in: mockTokenTtlSeconds,
-        scope: "access_as_user",
+        scope: "api://55555555-5555-4555-8555-555555555555/access_as_user",
         fault: null,
       });
       const { payload, protectedHeader } = await jwtVerify(result.access_token, await jwks(), {
         issuer: config.issuer,
-        audience: "urn:mock-api",
+        audience: "55555555-5555-4555-8555-555555555555",
       });
       expect(protectedHeader).toMatchObject({ typ: "JWT", alg: "RS256", kid: "mock-normal-key" });
       expect(payload).toMatchObject({
-        sub: "user-admin",
+        sub: expect.any(String),
         oid: "11111111-1111-1111-1111-111111111111",
         tid: config.tenantId,
         name: "Admin User",
         preferred_username: "admin@example.com",
-        groups: ["app-admin-group-id", "app-user-group-id"],
+        groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
         ver: "2.0",
         azp: clientId,
-        azpacr: clientId === "mock-public-client" ? "0" : "1",
+        azpacr: clientId === "00000000-0000-4000-8000-000000000001" ? "0" : "1",
         scp: "access_as_user",
       });
       expect(payload.nbf).toBe(payload.iat);
@@ -109,25 +112,30 @@ describe("direct development access tokens", () => {
       expect(decodeJwt((await issue()).json<DirectTokenResponse>().access_token).jti).not.toBe(payload.jti);
     },
   );
-
   it("reflects current client settings, user changes and v1 metadata", async () => {
-    const { clientId, ...client } = context.clientStore.list()[0]!;
-    await context.clientStore.update(clientId, {
-      ...client,
-      accessTokenAudience: "urn:changed",
-      accessTokenScope: "read",
-      accessTokenVersion: "1.0",
+    const clientId = context.clientStore.list()[0]!.clientId;
+    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
+    await context.resourceStore.update(resourceAppId, {
+      ...resource,
+      requestedAccessTokenVersion: 1,
       emailOptionalClaim: true,
     });
     const user = context.userStore.find("user-normal")!;
     const { sub, ...update } = user;
-    await context.userStore.update(sub, { ...update, name: "Changed", groups: ["new-group"] });
-    const result = (await issue({ clientId, userSub: sub })).json<DirectTokenResponse>();
+    await context.userStore.update(sub, {
+      ...update,
+      name: "Changed",
+      groups: ["a0000000-0000-4000-8000-000000000004"],
+    });
+    const result = (await issue({ ...input, clientId, userId: sub })).json<DirectTokenResponse>();
     const v1 = v1TokenValidationPaths(config.issuerPath);
     const issuer = `${config.issuerOrigin}${v1.issuerPath}`;
     const metadata = (await context.app.inject(v1.discoveryPath)).json();
     expect(metadata.issuer).toBe(issuer);
-    const { payload } = await jwtVerify(result.access_token, await jwks(), { issuer, audience: "urn:changed" });
+    const { payload } = await jwtVerify(result.access_token, await jwks(), {
+      issuer,
+      audience: "api://55555555-5555-4555-8555-555555555555",
+    });
     expect(payload).toMatchObject({
       ver: "1.0",
       appid: clientId,
@@ -135,25 +143,23 @@ describe("direct development access tokens", () => {
       unique_name: user.preferred_username,
       email: user.mail,
       name: "Changed",
-      groups: ["new-group"],
-      scp: "read",
+      groups: ["a0000000-0000-4000-8000-000000000004"],
+      scp: "access_as_user",
     });
     for (const claim of ["azp", "azpacr", "preferred_username", "sid"]) expect(payload).not.toHaveProperty(claim);
-    expect(result.scope).toBe("read");
+    expect(result.scope).toBe("api://55555555-5555-4555-8555-555555555555/access_as_user");
   });
-
-  it.each(["user-normal", "user-unauthorized"])("preserves the groups of %s", async (userSub) => {
-    const result = (await issue({ ...input, userSub })).json<DirectTokenResponse>();
-    expect(decodeJwt(result.access_token).groups).toEqual(context.userStore.find(userSub)!.groups);
+  it.each(["user-normal", "user-unauthorized"])("preserves the groups of %s", async (userId) => {
+    const result = (await issue({ ...input, userId })).json<DirectTokenResponse>();
+    expect(decodeJwt(result.access_token).groups ?? []).toEqual(context.userStore.find(userId)!.groups);
   });
-
   it.each([
     null,
     {},
     { clientId: input.clientId },
-    { userSub: input.userSub },
+    { userId: input.userId },
     { ...input, extra: true },
-    { ...input, userSub: " " },
+    { ...input, userId: " " },
     { ...input, clientId: 12 },
     { ...input, clientId: "a\nb" },
   ])("rejects invalid body %# without consuming faults", async (body) => {
@@ -163,10 +169,9 @@ describe("direct development access tokens", () => {
     expect(response.json()).toMatchObject({ error: "invalid_token_request", message: expect.any(String) });
     expect(context.store.get().remainingFailures).toBe(1);
   });
-
   it.each([
-    { body: { ...input, clientId: "missing" }, error: "client_not_found" },
-    { body: { ...input, userSub: "missing" }, error: "user_not_found" },
+    { body: { ...input, clientId: "ffa63583-dfa6-406b-87d2-84b86b0d693a" }, error: "client_not_found" },
+    { body: { ...input, userId: "ffa63583-dfa6-406b-87d2-84b86b0d693a" }, error: "user_not_found" },
   ])("rejects unregistered identifiers: $error", async ({ body, error }) => {
     context.store.set({ scenario: "NO_GROUPS", mode: "LIMITED", failureCount: 1 });
     const response = await issue(body);
@@ -174,7 +179,6 @@ describe("direct development access tokens", () => {
     expect(response.json()).toMatchObject({ error, message: expect.any(String) });
     expect(context.store.get().remainingFailures).toBe(1);
   });
-
   it.each([
     { headers: { host: "elsewhere.test", "content-type": "application/json" }, status: 400 },
     { headers: { origin: "http://elsewhere.test", "content-type": "application/json" }, status: 403 },
@@ -186,7 +190,6 @@ describe("direct development access tokens", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(context.store.get().remainingFailures).toBe(1);
   });
-
   it.each(supported)("applies %s once and completes LIMITED", async (scenario) => {
     const normalKey = await jwks();
     context.store.set(
@@ -249,9 +252,8 @@ describe("direct development access tokens", () => {
       await jwtVerify(result.access_token, normalKey, { currentDate: new Date((payload.nbf as number) * 1000) });
     const next = (await issue()).json<DirectTokenResponse>();
     expect(next.fault).toBeNull();
-    expect(decodeJwt(next.access_token).groups).toEqual(context.userStore.find(input.userSub)!.groups);
+    expect(decodeJwt(next.access_token).groups).toEqual(context.userStore.find(input.userId)!.groups);
   });
-
   it.each(
     scenarioNames.filter(
       (scenario): scenario is FaultScenarioName =>
@@ -264,13 +266,11 @@ describe("direct development access tokens", () => {
     expect(response.json<DirectTokenResponse>().fault).toBeNull();
     expect(context.store.get()).toMatchObject({ scenario, remainingFailures: 1, triggeredCount: 0 });
   });
-
   it("keeps CONTINUOUS active", async () => {
     context.store.set({ scenario: "NO_GROUPS", mode: "CONTINUOUS" });
     for (let i = 0; i < 2; i++) expect((await issue()).json<DirectTokenResponse>().fault?.scenario).toBe("NO_GROUPS");
     expect(context.store.get()).toMatchObject({ scenario: "NO_GROUPS", triggeredCount: 2 });
   });
-
   it("allows one winner among concurrent requests when LIMITED has one remaining", async () => {
     context.store.set({ scenario: "EXPIRED_TOKEN", mode: "LIMITED", failureCount: 1 });
     const results = await Promise.all(Array.from({ length: 12 }, () => issue()));

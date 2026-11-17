@@ -1,3 +1,6 @@
+import { ApiResourceStore, ResourceConflictError, ResourceNotFoundError } from "../resources/store.js";
+import { guid, scopeName } from "../resources/validation.js";
+import { resolveScopes } from "../oidc/scopes.js";
 import type Provider from "oidc-provider";
 import type { InMemoryAccessLog } from "../access-log/store.js";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -23,7 +26,9 @@ import { renderAdminHtml } from "./ui.js";
 
 const interactionBodySchema = z.object({ accountId: z.string().min(1) }).strict();
 const resetBodySchema = z.object({}).strict();
-const tokenBodySchema = z.object({ clientId: identifier, userSub: identifier }).strict();
+const tokenBodySchema = z
+  .object({ clientId: guid, userId: identifier, resourceAppId: guid, scopes: z.array(scopeName).min(1) })
+  .strict();
 
 function adminMutation(method: string, requestPath: string): boolean {
   return requestPath.startsWith("/__mock/") && ["DELETE", "PATCH", "POST", "PUT"].includes(method);
@@ -71,10 +76,8 @@ const clientFieldLabels: Record<string, string> = {
   clientSecret: "クライアントシークレット（client_secret）",
   tokenEndpointAuthMethod: "トークンエンドポイント認証方式（tokenEndpointAuthMethod）",
   redirectUris: "リダイレクト URI（redirectUris）",
-  postLogoutRedirectUris: "ログアウト後のリダイレクト URI（postLogoutRedirectUris）",
-  accessTokenAudience: "アクセストークンの対象者（accessTokenAudience / aud）",
-  accessTokenScope: "アクセストークンのスコープ（accessTokenScope / scp）",
-  accessTokenVersion: "アクセストークンのバージョン（accessTokenVersion）",
+  requiredResourceAccess: "API 権限（requiredResourceAccess）",
+  groupMembershipClaims: "グループ claim 設定（groupMembershipClaims）",
   emailOptionalClaim: "email claim（email）",
 };
 
@@ -185,6 +188,7 @@ export async function registerRoutes(
   accessLog: InMemoryAccessLog,
   config: AppConfig,
   keys: SigningKeys,
+  resourceStore: ApiResourceStore,
 ): Promise<void> {
   app.addHook("onRequest", async (request, reply) => {
     const requestPath = routedPathname(request.url);
@@ -221,19 +225,37 @@ export async function registerRoutes(
         error: "invalid_token_request",
         message: formatZodIssues(parsed.error, {
           clientId: "クライアント ID（clientId）",
-          userSub: "ユーザー ID（userSub）",
+          userId: "ユーザー ID（userId）",
         }),
       });
     const client = clientStore.list().find((entry) => entry.clientId === parsed.data.clientId);
     if (!client) return clientError(reply, new ClientNotFoundError());
-    const user = userStore.find(parsed.data.userSub);
+    const user = userStore.find(parsed.data.userId);
     if (!user) return userError(reply, new UserNotFoundError());
     try {
-      const result = await issueAccessToken(config, keys, store, client, user, store.getRequestTicket(request.raw));
+      const resource = resourceStore.find(parsed.data.resourceAppId);
+      if (!resource) return reply.code(404).send({ error: "resource_not_found" });
+      const resolved = resolveScopes(
+        parsed.data.scopes.map((scope) => `${resource.identifierUri}/${scope}`).join(" "),
+        client,
+        resourceStore,
+      );
+      const result = await issueAccessToken(
+        config,
+        keys,
+        store,
+        client,
+        resource,
+        resolved.targets[0]!.scopes,
+        user,
+        store.getRequestTicket(request.raw),
+      );
       if (result.fault)
         app.log.warn({ ...result.fault, faultInjected: true }, "[MOCK-IDP] direct token fault injected");
       return result;
     } catch (error) {
+      if (error instanceof Error && error.name === "InvalidScope")
+        return reply.code(400).send({ error: "invalid_scope", message: error.message });
       app.log.error({ err: error }, "[MOCK-IDP] direct token issuance failed");
       return reply.code(500).send({ error: "token_issue_failed", message: "アクセストークンの発行に失敗しました" });
     }
@@ -252,6 +274,37 @@ export async function registerRoutes(
   app.post("/__mock/api/reset", async (request, reply) => {
     if (!resetBodySchema.safeParse(request.body).success) return invalidResetBody(reply);
     return store.reset();
+  });
+  app.get("/__mock/api/resources", async () => resourceStore.list());
+  app.post("/__mock/api/resources", async (request, reply) => {
+    try {
+      return reply.code(201).send(await resourceStore.create(request.body));
+    } catch (error) {
+      return resourceError(reply, error);
+    }
+  });
+  app.put<{ Params: { id: string } }>("/__mock/api/resources/:id", async (request, reply) => {
+    try {
+      return await resourceStore.update(request.params.id, request.body);
+    } catch (error) {
+      return resourceError(reply, error);
+    }
+  });
+  app.delete<{ Params: { id: string } }>("/__mock/api/resources/:id", async (request, reply) => {
+    try {
+      await resourceStore.delete(request.params.id);
+      return reply.code(204).send();
+    } catch (error) {
+      return resourceError(reply, error);
+    }
+  });
+  app.post("/__mock/api/resources/reset", async (request, reply) => {
+    if (!resetBodySchema.safeParse(request.body).success) return invalidResetBody(reply);
+    try {
+      return await resourceStore.reset();
+    } catch (error) {
+      return resourceError(reply, error);
+    }
   });
   app.get("/__mock/api/clients", async () => clientStore.list());
   app.post("/__mock/api/clients", async (request, reply) => {
@@ -278,7 +331,11 @@ export async function registerRoutes(
   });
   app.post("/__mock/api/clients/reset", async (request, reply) => {
     if (!resetBodySchema.safeParse(request.body).success) return invalidResetBody(reply);
-    return reply.send(await clientStore.reset());
+    try {
+      return reply.send(await clientStore.reset());
+    } catch (error) {
+      return clientError(reply, error);
+    }
   });
   app.get("/__mock/api/users", async () => userStore.list());
   app.post("/__mock/api/users", async (request, reply) => {
@@ -349,7 +406,8 @@ export async function registerRoutes(
     const body = interactionBodySchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "invalid_interaction_body" });
     const { accountId } = body.data;
-    if (!userStore.find(accountId)) return reply.code(400).send({ error: "unknown_user" });
+    const user = userStore.find(accountId);
+    if (!user) return reply.code(400).send({ error: "unknown_user" });
     const requestedPrompts = new Set(typeof details.params.prompt === "string" ? details.params.prompt.split(" ") : []);
     reply.hijack();
     await provider.interactionFinished(
@@ -357,7 +415,7 @@ export async function registerRoutes(
       reply.raw,
       {
         login: {
-          accountId,
+          accountId: user.oid,
           acr: "urn:mace:incommon:iap:password",
           amr: ["pwd"],
           remember: false,
@@ -409,7 +467,16 @@ function clientError(reply: import("fastify").FastifyReply, error: unknown) {
   if (error instanceof ClientValidationError)
     return reply.code(400).send({
       error: "invalid_client",
-      message: "OIDC Provider がクライアント設定を受け入れませんでした",
+      message: `クライアント「${error.clientId}」の設定が正しくありません: ${error.message}`,
     });
+  throw error;
+}
+
+function resourceError(reply: FastifyReply, error: unknown) {
+  if (error instanceof ResourceConflictError)
+    return reply.code(409).send({ error: "resource_conflict", message: error.message });
+  if (error instanceof ResourceNotFoundError) return reply.code(404).send({ error: "resource_not_found" });
+  if (error instanceof ZodError)
+    return reply.code(400).send({ error: "invalid_resource", message: formatZodIssues(error) });
   throw error;
 }

@@ -44,12 +44,13 @@ class BrowserFlow {
       prompt?: string;
       state?: string;
       responseMode?: "query" | "form_post";
+      method?: "GET" | "POST";
     } = {},
   ) {
     const verifier = randomBytes(32).toString("base64url");
     const challenge = createHash("sha256").update(verifier).digest("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid profile",
@@ -60,7 +61,13 @@ class BrowserFlow {
       ...(options.prompt ? { prompt: options.prompt } : {}),
       ...(options.responseMode ? { response_mode: options.responseMode } : {}),
     });
-    return this.inject(`${authorizePath}?${query}`);
+    return options.method === "POST"
+      ? this.inject(authorizePath, {
+          method: "POST",
+          contentType: "application/x-www-form-urlencoded",
+          payload: query.toString(),
+        })
+      : this.inject(`${authorizePath}?${query}`);
   }
 
   async openLocation(response: LightMyRequestResponse) {
@@ -338,7 +345,7 @@ describe("custom interaction policy", () => {
     });
     const verifier = randomBytes(32).toString("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "https://unregistered.example.test/callback",
       response_type: "code",
       scope: "openid",
@@ -370,6 +377,50 @@ describe("custom interaction policy", () => {
     expect(callback.searchParams.get("error")).toBe("login_required");
     expect(callback.searchParams.get("state")).toBe("fresh-silent-login");
     expect(callback.searchParams.get("code")).toBeNull();
+  });
+  it("applies authorization faults to POST authorize even when SSO skips login", async () => {
+    const browser = new BrowserFlow(context);
+    await browser.complete();
+    context.store.set({ scenario: "AUTH_LOGIN_REQUIRED", mode: "LIMITED", failureCount: 1 });
+    const callback = await browser.followToCallback(await browser.start({ method: "POST", prompt: "none" }));
+    expect(callback.searchParams.get("error")).toBe("login_required");
+    expect(context.store.get().lastCompleted?.triggeredCount).toBe(1);
+  });
+  it.each(["update", "recreate"] as const)(
+    "requires authentication when %s replaces a signed-in user's oid",
+    async (operation) => {
+      const original = context.userStore.find("user-normal")!;
+      const { sub, ...user } = original;
+      const browser = new BrowserFlow(context);
+      await browser.complete();
+      try {
+        const replacement = { ...user, oid: "99999999-9999-4999-8999-999999999999" };
+        if (operation === "update") await context.userStore.update(sub, replacement);
+        else {
+          await context.userStore.delete(sub);
+          await context.userStore.create({ sub, ...replacement });
+        }
+        const callback = await browser.followToCallback(await browser.start({ prompt: "none" }));
+        expect(callback.searchParams.get("error")).toBe("login_required");
+        const recovered = await browser.complete();
+        expect(recovered.searchParams.get("code")).toEqual(expect.any(String));
+      } finally {
+        await context.userStore.update(sub, user);
+      }
+    },
+  );
+  it("keeps silent SSO available for profile changes that preserve oid", async () => {
+    const { sub, ...user } = context.userStore.find("user-normal")!;
+    const browser = new BrowserFlow(context);
+    await browser.complete();
+    try {
+      await context.userStore.update(sub, { ...user, name: "Updated profile", groups: [] });
+      const callback = await browser.followToCallback(await browser.start({ prompt: "none" }));
+      expect(callback.searchParams.get("code")).toEqual(expect.any(String));
+      expect(callback.searchParams.get("error")).toBeNull();
+    } finally {
+      await context.userStore.update(sub, user);
+    }
   });
 
   it("injects AUTH_LOGIN_REQUIRED when an existing session could authenticate silently", async () => {
@@ -465,7 +516,7 @@ describe("custom interaction policy", () => {
     context.store.set({ scenario, mode: "LIMITED", failureCount: 1 });
     const verifier = randomBytes(32).toString("base64url");
     const query = new URLSearchParams({
-      client_id: "mock-public-client",
+      client_id: "00000000-0000-4000-8000-000000000001",
       redirect_uri: "http://localhost:3000/callback",
       response_type: "code",
       scope: "openid",

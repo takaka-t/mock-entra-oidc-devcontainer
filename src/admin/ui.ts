@@ -47,9 +47,10 @@ details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;li
 <p id="rolloverNote" class="warning">SIGNING_KEY_ROLLOVERを有効にすると、シナリオの完了後、NORMALに戻した後、または別のシナリオを選択した後も、新しい署名鍵はJWKSで公開され続けます。シナリオを初期状態に戻すと、初期の鍵セットに戻ります。</p>
 <div class="actions"><button class="primary" type="submit">適用</button><div class="action"><button id="normal" type="button">NORMALに戻す</button><p class="action-hint">シナリオを停止します（履歴は残ります）</p></div><div class="action"><button id="reset" class="danger" type="button">シナリオを初期状態に戻す</button><p class="action-hint danger-hint">履歴と鍵の状態を初期化します</p></div></div><p id="error" class="error" aria-live="polite"></p></form></section>
 <details class="card" id="tokenPanel"><summary><h2>アクセストークン発行</h2></summary>
-<p class="hint">バックエンド API の動作確認用に、登録済みユーザーのアクセストークンを発行します。クライアント設定の対象者・スコープ・バージョンを使用します。有効期間は通常 3,600 秒です。</p>
+<p class="hint">バックエンド API の動作確認用に、登録済みユーザーのアクセストークンを発行します。API 登録の対象者・バージョンと、クライアントに許可したスコープを使用します。有効期間は通常 3,600 秒です。</p>
 <p class="hint">有効な JWT・claim 障害シナリオを適用します。ID Token 専用・HTTP・認可・Discovery・JWKS 障害は直接発行に適用しません。</p>
 <form id="tokenForm"><div class="grid"><div><label for="tokenClient" class="required">クライアント</label><select id="tokenClient" required disabled><option value="">読み込み中…</option></select></div><div><label for="tokenUser" class="required">テストユーザー</label><select id="tokenUser" required disabled><option value="">読み込み中…</option></select></div></div>
+<label for="tokenResource" class="required">対象 API</label><select id="tokenResource" required></select><label for="tokenScopes" class="required">スコープ（空白区切り）</label><input id="tokenScopes" required>
 <div class="actions"><button id="issueToken" class="primary" type="submit" disabled>発行</button><button id="refreshTokenChoices" type="button">候補を再読み込み</button></div></form>
 <p id="tokenChoicesError" class="error" role="alert"></p><p id="tokenError" class="error" role="alert"></p>
 <div id="tokenResult" class="hidden"><p id="tokenSubject"></p><label for="issuedToken">アクセストークン</label><textarea id="issuedToken" rows="5" readonly spellcheck="false"></textarea><p id="tokenFault" aria-live="polite"></p><button id="copyToken" type="button" disabled>アクセストークンをコピー</button><p id="tokenMessage" role="status"></p></div>
@@ -66,14 +67,12 @@ details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;li
 <div id="clients">読み込み中…</div><div class="actions"><button id="newClient" class="primary" type="button">OIDC クライアントを登録</button><button id="resetClients" class="danger" type="button">OIDC クライアントを初期状態に戻す</button></div></details>
 <dialog id="clientEditor" class="editor" aria-labelledby="clientEditorTitle"><div class="editor-header"><h2 id="clientEditorTitle">OIDC クライアントを登録</h2><button id="closeClient" type="button" aria-label="OIDC クライアントのダイアログを閉じる">閉じる</button></div><form id="clientForm">
 <p class="hint">＊は必須項目です</p>
-<label for="clientId" class="required">クライアント ID（client_id）</label><input id="clientId" pattern="${escapeHtml(identifierInputPattern)}" title="${identifierHint}" required><p class="hint">${identifierHint}</p>
+<label for="clientId" class="required">クライアント ID（client_id）</label><input id="clientId" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required><p class="hint">アプリケーション ID（GUID）。新規登録時に自動生成します。</p>
 <label for="clientType">クライアント種別（clientType）</label><select id="clientType"><option>PUBLIC</option><option>CONFIDENTIAL</option></select>
 <div id="secretFields"><label for="clientSecret" class="required">クライアントシークレット（client_secret）</label><input id="clientSecret"><label for="authMethod">トークンエンドポイント認証方式（tokenEndpointAuthMethod）</label><select id="authMethod"><option value="client_secret_basic">client_secret_basic</option><option value="client_secret_post">client_secret_post</option></select></div>
-<label for="redirectUris" class="required">リダイレクト URI（redirectUris、1行に1件）</label><textarea id="redirectUris" required></textarea>
-<label for="logoutUris">ログアウト後のリダイレクト URI（postLogoutRedirectUris、1行に1件）</label><textarea id="logoutUris"></textarea>
-<label for="audience" class="required">アクセストークンの対象者（accessTokenAudience / aud）</label><input id="audience" value="urn:mock-api" required>
-<label for="scope" class="required">アクセストークンのスコープ（accessTokenScope / scp）</label><input id="scope" value="access_as_user" required>
-<label for="accessTokenVersion" class="required">アクセストークンのバージョン（accessTokenVersion）</label><select id="accessTokenVersion"><option value="2.0">v2.0</option><option value="1.0">v1.0</option></select><p class="hint">ID トークンと SPA の認証フローは v2.0 のままです。</p>
+<label for="redirectUris" class="required">リダイレクト URI（1行に「種別 URI」）</label><textarea id="redirectUris" required></textarea><p class="hint">例: spa http://localhost:3000/callback。種別は spa / web / native。ログアウト先もここに登録します。</p>
+<label for="permissions" class="required">API 権限（1行に「API ID スコープ…」）</label><textarea id="permissions"></textarea><p class="hint">API 一覧のアプリケーション ID と公開スコープ名を指定してください。</p>
+<label for="clientGroups">ID トークンのグループ</label><select id="clientGroups"><option value="None">付与しない</option><option value="SecurityGroup">セキュリティグループ</option></select>
 <label><input id="emailOptionalClaim" type="checkbox"> email claim（email）をオプションの claim として常に含める（email スコープの要求有無にかかわらず付与）</label>
 <p id="editorError" class="error" role="alert" tabindex="-1"></p><div class="actions"><button id="saveClient" class="primary" type="submit">登録</button><button id="cancelClient" type="button">キャンセル</button></div></form></dialog>
 <details class="card" id="userPanel"><summary><h2>テストユーザー一覧 <span id="userCount" class="count"></span></h2></summary><p class="hint">サインイン画面に表示されるユーザーです。テナント ID（tid）は常にこの Mock の値になります。</p>
@@ -81,13 +80,23 @@ details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;li
 <div id="users">読み込み中…</div><div class="actions"><button id="newUser" class="primary" type="button">テストユーザーを登録</button><button id="resetUsers" class="danger" type="button">テストユーザーを初期状態に戻す</button></div></details>
 <dialog id="userEditor" class="editor" aria-labelledby="userEditorTitle"><div class="editor-header"><h2 id="userEditorTitle">テストユーザーを登録</h2><button id="closeUser" type="button" aria-label="テストユーザーのダイアログを閉じる">閉じる</button></div><form id="userForm">
 <p class="hint">＊は必須項目です</p>
-<label for="userSub">ユーザー ID（sub）</label><input id="userSub" pattern="${escapeHtml(identifierInputPattern)}" title="${identifierHint}"><p class="hint">${identifierHint} 保存後は変更できません。未入力の場合はランダムな UUID を自動生成します。</p>
+<label for="userSub">ユーザー内部 ID</label><input id="userSub" pattern="${escapeHtml(identifierInputPattern)}" title="${identifierHint}"><p class="hint">${identifierHint} 保存後は変更できません。未入力の場合はランダムな UUID を自動生成します。</p>
 <label for="userOid" class="required">オブジェクト ID（oid）</label><input id="userOid" pattern="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" required><p class="hint">GUID形式で入力してください。</p>
 <label for="userName" class="required">表示名（name）</label><input id="userName" required>
 <label for="userPreferredUsername" class="required">優先ユーザー名（preferred_username）</label><input id="userPreferredUsername" required>
-<label for="userMail" class="required">メールアドレス（mail）</label><input id="userMail" type="email" required><p class="hint">email claim（email）として返されます。</p>
-<label for="userGroups">グループ（groups）</label><textarea id="userGroups"></textarea><p class="hint">1行に1件入力してください。</p>
+<label for="userMail">メールアドレス（mail）</label><input id="userMail" type="email"><p class="hint">email claim（email）として返されます。</p>
+<label for="userGroups">グループ（groups）</label><textarea id="userGroups"></textarea><p class="hint">セキュリティグループのオブジェクト ID（GUID）を1行に1件入力してください。</p>
 <p id="userEditorError" class="error" role="alert" tabindex="-1"></p><div class="actions"><button id="saveUser" class="primary" type="submit">登録</button><button id="cancelUser" type="button">キャンセル</button></div></form></dialog>
+<details class="card" id="resourcePanel"><summary><h2>API 登録一覧 <span id="resourceCount" class="count"></span></h2></summary>
+<div id="resourceNotice" class="notice hidden"><p id="resourceMessage" role="status"></p><button id="dismissResourceNotice" type="button">閉じる</button></div><p id="resourceError" class="error" role="alert"></p><button id="retryResources" class="hidden" type="button">一覧を再読み込み</button>
+<div id="resources">読み込み中…</div><button id="newResource" type="button">API を登録</button><button id="resetResources" type="button">API を初期状態に戻す</button></details>
+<dialog id="resourceEditor" class="editor" aria-labelledby="resourceEditorTitle"><div class="editor-header"><h2 id="resourceEditorTitle">API を登録</h2><button id="closeResource" type="button">閉じる</button></div><form id="resourceForm">
+<label for="resourceAppId" class="required">API アプリケーション ID（GUID）</label><input id="resourceAppId" required>
+<label for="resourceUri" class="required">Application ID URI</label><input id="resourceUri" required>
+<label for="resourceScopes" class="required">公開スコープ（1行に1件）</label><textarea id="resourceScopes" required></textarea>
+<label for="resourceVersion">requestedAccessTokenVersion</label><select id="resourceVersion"><option value="2">2（v2.0）</option><option value="1">1（v1.0）</option><option value="">null（v1.0）</option></select>
+<label><input id="resourceEmail" type="checkbox">アクセストークンに email を含める</label><label for="resourceGroups">アクセストークンのグループ</label><select id="resourceGroups"><option value="None">付与しない</option><option value="SecurityGroup">セキュリティグループ</option></select>
+<p id="resourceEditorError" class="error" role="alert" tabindex="-1"></p><button id="saveResource" type="submit">登録</button><button id="cancelResource" type="button">キャンセル</button></form></dialog>
 </main><script>
 const $=id=>document.getElementById(id),metadata=${uiMetadata},defaults=${uiDefaults},connection=${connectionValues};
 let sequence=0,lastSettled=0,pendingUpdates=0;
@@ -122,23 +131,27 @@ function updateTokenControls() {
   const disabled = tokenBusy || Object.values(tokenChoiceState).some(state => state.loading);
   $("tokenClient").disabled = disabled || !tokenClients.length;
   $("tokenUser").disabled = disabled || !tokenUsers.length;
+  $("tokenResource").disabled = disabled;
+  $("tokenScopes").disabled = disabled;
   $("issueToken").disabled =
     disabled ||
     !tokenClients.length ||
     !tokenUsers.length ||
     !$("tokenClient").value ||
-    !$("tokenUser").value;
+    !$("tokenUser").value || !$("tokenResource").value || !$("tokenScopes").value.trim();
   $("refreshTokenChoices").disabled = disabled;
   $("issueToken").textContent = tokenBusy ? "発行中…" : "発行";
   $("tokenForm").setAttribute("aria-busy", String(disabled));
 }
 function setTokenChoiceStatus(kind, loading, error = '') {
+  if (kind !== "client" && kind !== "user") return;
   tokenChoiceState[kind] = { loading, error };
   $('tokenChoicesError').textContent = Object.values(tokenChoiceState)
     .map(state => state.error).filter(Boolean).join(' ');
   updateTokenControls();
 }
 function setTokenChoices(kind, items) {
+  if (kind !== "client" && kind !== "user") return;
   const select = $(kind === "client" ? "tokenClient" : "tokenUser"),
     previous = select.value;
   select.replaceChildren();
@@ -166,11 +179,13 @@ function setTokenChoices(kind, items) {
   )
     select.value = previous;
   setTokenChoiceStatus(kind, false);
+  if (kind === "client") updateTokenResources(previous === select.value);
 }
 async function loadTokenChoices() {
   await Promise.all([clientEditor.load(), userEditor.load()]);
 }
 $("tokenClient").onchange = () => {
+  updateTokenResources();
   clearTokenResult();
   updateTokenControls();
 };
@@ -185,7 +200,7 @@ $("tokenForm").onsubmit = async (event) => {
   clearTokenResult();
   $("tokenError").textContent = "";
   const id = ++tokenResultSequence;
-  const subject = { clientId: $('tokenClient').value, userSub: $('tokenUser').value };
+  const subject = { clientId: $('tokenClient').value, userId: $('tokenUser').value, resourceAppId: $('tokenResource').value, scopes: $('tokenScopes').value.trim().split(/\\s+/).filter(Boolean) };
   tokenBusy = true;
   updateTokenControls();
   try {
@@ -196,7 +211,7 @@ $("tokenForm").onsubmit = async (event) => {
     });
     if (id !== tokenResultSequence) return;
     $("issuedToken").value = data.access_token;
-    $('tokenSubject').textContent = '発行対象: クライアント ' + subject.clientId + ' / ユーザー ' + subject.userSub;
+    $('tokenSubject').textContent = '発行対象: クライアント ' + subject.clientId + ' / ユーザー ' + subject.userId + ' / API ' + subject.resourceAppId + ' / スコープ ' + subject.scopes.join(' ');
     $("tokenFault").textContent = data.fault
       ? "適用した障害: " +
         data.fault.scenario +
@@ -267,7 +282,7 @@ function savedPanels(){try{const saved=JSON.parse(localStorage.getItem(panelStor
 function revealPanel(id){const panel=$(id);if(panel.open)return;panel.dataset.autoOpen='';panel.open=true}
 for(const panel of document.querySelectorAll('details.card')){const saved=savedPanels()[panel.id];if(typeof saved==='boolean')panel.open=saved;panel.addEventListener('toggle',()=>{if('autoOpen' in panel.dataset){delete panel.dataset.autoOpen;return}try{localStorage.setItem(panelStorageKey,JSON.stringify({...savedPanels(),[panel.id]:panel.open}))}catch{}})}
 function lines(value){return [...new Set(value.split(/\\r?\\n/).map(x=>x.trim()).filter(Boolean))]}
-// Shared lifecycle keeps both editors consistent, including partial save success.
+// Shared lifecycle keeps all editors consistent, including partial save success.
 function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
   const cap = kind[0].toUpperCase() + kind.slice(1),
     dialog = $(kind + 'Editor'),
@@ -450,14 +465,14 @@ const userEditor = createEditor(
   (user) => user.name + '（' + user.sub + '）',
 );
 function clientTypeFields(){$('secretFields').classList.toggle('hidden',$('clientType').value==='PUBLIC')}
-function openClient(client){$('clientId').value=client?.clientId??'';$('clientId').disabled=!!client;$('clientType').value=client?.clientType??'PUBLIC';$('clientSecret').value=client?.clientSecret??'';$('authMethod').value=client?.tokenEndpointAuthMethod==='client_secret_post'?'client_secret_post':'client_secret_basic';$('redirectUris').value=(client?.redirectUris??['http://localhost:3000/callback']).join('\\n');$('logoutUris').value=(client?.postLogoutRedirectUris??[]).join('\\n');$('audience').value=client?.accessTokenAudience??'urn:mock-api';$('scope').value=client?.accessTokenScope??'access_as_user';$('accessTokenVersion').value=client?.accessTokenVersion??'2.0';$('emailOptionalClaim').checked=client?.emailOptionalClaim??false;clientTypeFields();clientEditor.open(client?.clientId??null)}
+function openClient(client){$('clientId').value=client?.clientId??newUuid();$('clientId').disabled=!!client;$('clientType').value=client?.clientType??'PUBLIC';$('clientSecret').value=client?.clientSecret??'';$('authMethod').value=client?.tokenEndpointAuthMethod==='client_secret_post'?'client_secret_post':'client_secret_basic';$('redirectUris').value=(client?.redirectUris??[{uri:'http://localhost:3000/callback',type:'spa'}]).map(item=>item.type+' '+item.uri).join('\\n');$('permissions').value=(client?.requiredResourceAccess??[]).map(item=>item.resourceAppId+' '+item.scopes.join(' ')).join('\\n');$('clientGroups').value=client?.groupMembershipClaims??'None';$('emailOptionalClaim').checked=client?.emailOptionalClaim??false;clientTypeFields();clientEditor.open(client?.clientId??null)}
 // Lists show only what identifies an item; every field stays editable in the dialog.
 function listTable(root,headers){const table=document.createElement('table');table.className='data-table list-table';const head=document.createElement('thead'),headRow=document.createElement('tr');for(const text of headers){const th=document.createElement('th');th.scope='col';th.textContent=text;headRow.append(th)}head.append(headRow);const body=document.createElement('tbody');table.append(head,body);root.replaceChildren(table);return body}
 function rowActions(editId,onEdit,onDelete){const actions=document.createElement('div');actions.className='actions';const edit=document.createElement('button');edit.type='button';edit.textContent='編集';edit.dataset.editId=editId;edit.onclick=onEdit;const del=document.createElement('button');del.type='button';del.className='danger';del.textContent='削除';del.onclick=onDelete;actions.append(edit,del);const td=document.createElement('td');td.className='ops';td.append(actions);return td}
-function renderClients(items){setTokenChoices('client',items);const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','Access Token バージョン','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri;uris.append(line)}row.append(id,cell(client.clientType),cell('v'+(client.accessTokenVersion??'2.0')),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients();clientEditor.notice('OIDC クライアント「'+client.clientId+'」を削除しました。')}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
+function renderClients(items){setTokenChoices('client',items);const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri.type+' '+uri.uri;uris.append(line)}row.append(id,cell(client.clientType),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients();clientEditor.notice('OIDC クライアント「'+client.clientId+'」を削除しました。')}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
 async function loadClients(){await clientEditor.load()}
 $('newClient').onclick=()=>openClient(null);$('clientType').onchange=clientTypeFields;
-$('clientForm').onsubmit=async event=>{event.preventDefault();const type=$('clientType').value,payload={clientType:type,...(type==='CONFIDENTIAL'?{clientSecret:$('clientSecret').value,tokenEndpointAuthMethod:$('authMethod').value}:{tokenEndpointAuthMethod:'none'}),redirectUris:lines($('redirectUris').value),postLogoutRedirectUris:lines($('logoutUris').value),accessTokenAudience:$('audience').value,accessTokenScope:$('scope').value,accessTokenVersion:$('accessTokenVersion').value,emailOptionalClaim:$('emailOptionalClaim').checked};await clientEditor.save({clientId:$('clientId').value,...payload})};
+$('clientForm').onsubmit=async event=>{event.preventDefault();try{const type=$('clientType').value,payload={clientType:type,...(type==='CONFIDENTIAL'?{clientSecret:$('clientSecret').value,tokenEndpointAuthMethod:$('authMethod').value}:{tokenEndpointAuthMethod:'none'}),redirectUris:lines($('redirectUris').value).map(line=>{const [type,...uri]=line.split(/\\s+/);return {type,uri:uri.join(' ')}}),requiredResourceAccess:lines($('permissions').value).map(line=>{const [resourceAppId,...scopes]=line.split(/\\s+/);return {resourceAppId,scopes}}),emailOptionalClaim:$('emailOptionalClaim').checked,groupMembershipClaims:$('clientGroups').value};await clientEditor.save({clientId:$('clientId').value,...payload})}catch(error){$('editorError').textContent=message(error)}};
 $('resetClients').onclick=async()=>{if(!confirm('すべての OIDC クライアントを初期状態に戻しますか？'))return;clientEditor.beginChange();try{clientEditor.replaceItems(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent='';clientEditor.notice('OIDC クライアントを初期状態に戻しました。')}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
 function newUuid(){if(crypto.randomUUID)return crypto.randomUUID();const b=crypto.getRandomValues(new Uint8Array(16));b[6]=b[6]&15|64;b[8]=b[8]&63|128;const h=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20)}
 function openUser(user){$('userSub').value=user?.sub??newUuid();$('userSub').disabled=!!user;$('userOid').value=user?.oid??newUuid();$('userName').value=user?.name??'';$('userPreferredUsername').value=user?.preferred_username??'';$('userMail').value=user?.mail??'';$('userGroups').value=(user?.groups??[]).join('\\n');userEditor.open(user?.sub??null)}
@@ -466,5 +481,14 @@ async function loadUsers(){await userEditor.load()}
 $('newUser').onclick=()=>openUser(null);
 $('userForm').onsubmit=async event=>{event.preventDefault();const payload={oid:$('userOid').value.trim(),name:$('userName').value,preferred_username:$('userPreferredUsername').value,mail:$('userMail').value.trim(),groups:lines($('userGroups').value)},sub=$('userSub').value.trim();await userEditor.save({...(sub?{sub}:{}),...payload})};
 $('resetUsers').onclick=async()=>{if(!confirm('すべてのテストユーザーを初期状態に戻しますか？'))return;userEditor.beginChange();try{userEditor.replaceItems(await request('/__mock/api/users/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('userError').textContent='';userEditor.notice('テストユーザーを初期状態に戻しました。')}catch(error){$('userError').textContent=message(error)}};void loadUsers();
+
+function updateTokenResources(preserveScopes=false){const client=tokenClients.find(item=>item.clientId===$('tokenClient').value),select=$('tokenResource'),previous=select.value;select.replaceChildren();for(const permission of client?.requiredResourceAccess??[]){const option=document.createElement('option');option.value=permission.resourceAppId;option.textContent=permission.resourceAppId;select.append(option)}if(client?.requiredResourceAccess?.some(item=>item.resourceAppId===previous))select.value=previous;if(!preserveScopes||select.value!==previous)updateTokenScopes();updateTokenControls()}
+function updateTokenScopes(){const permission=tokenClients.find(item=>item.clientId===$('tokenClient').value)?.requiredResourceAccess?.find(item=>item.resourceAppId===$('tokenResource').value);$('tokenScopes').value=permission?.scopes.join(' ')??''}
+$('tokenResource').onchange=()=>{clearTokenResult();updateTokenScopes();updateTokenControls()};$('tokenScopes').oninput=$('tokenScopes').onchange=()=>{clearTokenResult();updateTokenControls()};
+const resourceEditor=createEditor('resource','API','resourceAppId','resourceEditorError',renderResources,item=>item.identifierUri);
+function openResource(item){$('resourceAppId').value=item?.resourceAppId??newUuid();$('resourceAppId').disabled=!!item;$('resourceUri').value=item?.identifierUri??'api://'+$('resourceAppId').value;$('resourceScopes').value=(item?.scopes??['access_as_user']).join('\\n');$('resourceVersion').value=item?String(item.requestedAccessTokenVersion??''):'2';$('resourceEmail').checked=item?.emailOptionalClaim??false;$('resourceGroups').value=item?.groupMembershipClaims??'None';resourceEditor.open(item?.resourceAppId??null)}
+function renderResources(items){$('resourceCount').textContent='（'+items.length+' 件）';const body=listTable($('resources'),['API ID','Application ID URI','バージョン','公開スコープ','操作']);for(const item of items){const row=document.createElement('tr');row.append(cell(item.resourceAppId),cell(item.identifierUri),cell(item.requestedAccessTokenVersion===2?'v2.0':'v1.0'),cell(item.scopes.join(', ')),rowActions(item.resourceAppId,()=>openResource(item),async()=>{if(!confirm('API「'+item.identifierUri+'」を削除しますか？'))return;resourceEditor.beginChange();try{await request('/__mock/api/resources/'+encodeURIComponent(item.resourceAppId),{method:'DELETE'});await resourceEditor.load()}catch(error){$('resourceError').textContent=message(error)}}));body.append(row)}}
+$('newResource').onclick=()=>openResource(null);$('resourceForm').onsubmit=async event=>{event.preventDefault();await resourceEditor.save({resourceAppId:$('resourceAppId').value,identifierUri:$('resourceUri').value,scopes:lines($('resourceScopes').value),requestedAccessTokenVersion:$('resourceVersion').value===''?null:Number($('resourceVersion').value),emailOptionalClaim:$('resourceEmail').checked,groupMembershipClaims:$('resourceGroups').value})};
+$('resetResources').onclick=async()=>{if(!confirm('API を初期状態に戻しますか？'))return;resourceEditor.beginChange();try{resourceEditor.replaceItems(await request('/__mock/api/resources/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}))}catch(error){$('resourceError').textContent=message(error)}};void resourceEditor.load();
 </script></body></html>`;
 }

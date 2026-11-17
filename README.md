@@ -1,6 +1,6 @@
 # Mock Entra ID / OIDC Provider
 
-Microsoft Entra IDをIdPとするアプリケーションのローカル開発・障害試験用OIDC Providerです。正常処理は`oidc-provider`、HTTP障害・遅延・不正JWT・claim変更の注入は独立したシナリオ層が担います。Entra ID完全互換ではなく、Microsoft Graph APIも提供しません。
+Microsoft Entra IDをIdPとするアプリケーションのローカル開発・障害試験用OIDC Providerです。認可とセッション管理は`oidc-provider`、Entra 固有のトークン発行は公開 grant 拡張と`jose`、HTTP障害・遅延・不正JWT・claim変更の注入は独立したシナリオ層が担います。Entra ID完全互換ではなく、Microsoft Graph APIも提供しません。
 
 > ローカル試験専用です。インターネットへ公開しないでください。HTTPSでもAdmin APIは認証なし、ユーザー認証は選択式です。Client Secretは設定ファイル・Admin API・Admin UIで平文として扱います。
 
@@ -58,7 +58,7 @@ Mock IdPは直接HTTPSで待ち受け、HTTP listenerやHTTPSへのredirectは�
 
 - **path**: tenant直下の`/v2.0`はissuerとDiscovery用です。authorize/token/logoutは`/oauth2/v2.0`、JWKSは`/discovery/v2.0`配下にあります。Admin UI・Admin API・Healthはorigin直下です。
 - **issuer**: SPAなどのauthority/issuerには固定のv2.0 issuerを設定します。Discoveryの各endpointと正常なID Tokenの`iss`はこれを基準に生成し、`tid`は固定Tenant IDです。Access Tokenは[バージョン別の設定](#アクセストークンのバージョン)を参照してください。OIDC要求のscheme・Hostがissuerのoriginと一致しない場合は`400 invalid_request_origin`です。
-- **Logout**: 確認ページを経由します。送信先はtenant直下の`/oauth2/v2.0/logout/confirm`、完了ページは`/oauth2/v2.0/logout/success`で、クライアントから直接呼びません。`post_logout_redirect_uri`は対象クライアントのPost Logout Redirect URIに登録済みの値だけを受け付けます。
+- **Logout**: 確認ページを経由します。送信先はtenant直下の`/oauth2/v2.0/logout/confirm`、完了ページは`/oauth2/v2.0/logout/success`で、クライアントから直接呼びません。`post_logout_redirect_uri`はアプリのリダイレクト URI に登録済みの値だけを受け付けます。GET・POST と hint の省略に対応します。
 - **Connectivity Probe**: Entraへのサインイン前の到達性確認（`HEAD https://login.microsoftonline.com/common/oauth2/v2.0/authorize`）に対応します。Mockでは表のorigin直下のURLを使用し、`HEAD`のみ受け付けます（CORS preflightの`OPTIONS`は204、他のmethodは404）。Entraのmulti-tenant aliasである`common`を使った認証フローは未対応です。
 - **PAR**: EntraのDiscoveryと同じく`pushed_authorization_request_endpoint`を公開せず、機能を無効化しています。
 
@@ -167,215 +167,157 @@ networks:
 
 ## OIDCクライアントとテストユーザー
 
-### 共通の動作
+API 登録・OIDC クライアント・テストユーザーを Admin UI または Admin API で管理します。変更は再起動なしで反映し、設定は `.data/resources.json`・`.data/clients.json`・`.data/users.json` に0600で保存します。初回起動では初期データを作成します。
 
-- **初期化と保存**: 初回起動で[初期クライアント](#oidcクライアント)・[初期ユーザー](#テストユーザー)を作成します。Admin UIの「OIDC クライアント一覧」「テストユーザー一覧」またはAdmin APIで追加・編集・削除でき、再起動なしで反映します（ユーザーはサインイン画面・トークンに反映）。保存先とpermissionは[鍵と状態](#鍵と状態)を参照してください。
-- **Admin UI**: 登録・編集ダイアログは保存成功で閉じて通知し、失敗時は入力を保持してエラーを表示します。一覧更新だけの失敗は「一覧を再読み込み」で再試行できます。未保存で閉じる場合は確認します。シナリオ以外のカードは見出しで折りたため、初回は閉じた状態です。開閉状態はブラウザに保存します。
-- **IDと検証**: Client ID・`sub`は前後の空白を除いて1〜100文字の印字可能ASCII（`.`・`..`は不可）。作成後の変更は削除・再作成が必要です。Admin APIの必須項目不足は400です。設定ファイルにも同じ検証を適用し、不適合なIDや改行入りの項目は自動変換せず起動に失敗します。該当ファイルを修正してください。
-- **reset**: `POST /__mock/api/clients/reset`はクライアントだけ、`POST /__mock/api/users/reset`はユーザーだけを初期化し、シナリオや他方へ影響しません。
-- **発行済み状態**: 設定の削除・resetでは、発行済みJWTを含むartifactは完全には失効しません。Provider内部状態はインスタンス単位のメモリに保持し、Providerを含むappの再構築・プロセス再起動で破棄します（[保持対象](#鍵と状態)）。
-- **ユーザー削除・reset後**: 消えたユーザーのセッションは次の認可要求でユーザーを再選択し、`prompt=none`なら`login_required`を返します。そのユーザーの認可コード・Refresh Token交換は`invalid_grant`です。同じ`sub`を再作成すると残存セッション・Grantを再利用できる場合があります。
+API 登録でアクセストークンの形式と公開スコープを、クライアント登録で要求可能な API 権限と ID トークンの claim 設定を管理します。
 
-### OIDCクライアント
+### API 登録
 
-初期クライアントは次のとおりです。
-
-| 項目                           | 既定値                             |
-| ------------------------------ | ---------------------------------- |
-| Public client                  | `mock-public-client`（secretなし） |
-| Confidential client            | `mock-confidential-client`         |
-| Confidential secret            | `mock-client-secret-change-me`     |
-| Redirect URI                   | `http://localhost:3000/callback`   |
-| Access token audience/resource | `urn:mock-api`                     |
-
-通常のOIDCフローでは全クライアントでAuthorization Code FlowとS256 PKCEが必須です。APIだけの検証には[アクセストークンの直接発行](#開発用アクセストークンの直接発行)も使えます。Discovery・issuer・audience・期限・署名・JWKS・redirect URI・client IDの検証は無効化しないでください。
-
-| 設定項目               | 内容                                                                                            |
-| ---------------------- | ----------------------------------------------------------------------------------------------- |
-| クライアント           | Client ID、Public/Confidential種別、secret                                                      |
-| Token Endpoint認証方式 | Public: `none`。Confidential: `client_secret_basic`または`client_secret_post`                   |
-| Redirect先             | Redirect URI、Post Logout Redirect URI                                                          |
-| Access Token           | Audience、`accessTokenScope`（`scp`の委任scope名）、[バージョン](#アクセストークンのバージョン) |
-| email                  | `emailOptionalClaim`（[emailを常に含める設定](#トークンのclaim)）                               |
-
-`accessTokenScope`・`emailOptionalClaim`はAdmin APIの作成（`POST`）・更新（`PUT`）で必須です。Admin UIの新規作成時はscopeに`access_as_user`を入力済みです。
-
-- **標準OIDC scope**: 全クライアントで`openid`, `profile`, `email`, `offline_access`を利用できます。Entra IDのアプリ登録項目ではなく、認可リクエストの`scope`で要求します。`offline_access`でRefresh Tokenを発行し、`email`は[claimの条件](#トークンのclaim)に従います。
-- **制限**: `scp`はクライアントに設定した単一の委任scope名を返す簡易モデルです。Microsoft Graph・独自Web APIの複数permission、admin consent、Expose an APIの管理UIは対象外です。
-
-```bash
-CURL_CA=.data/tls/ca.crt
-
-curl --cacert "$CURL_CA" https://mock-idp.test:9000/__mock/api/clients
-
-curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients \
-  -H 'content-type: application/json' \
-  -d '{
-    "clientId":"my-app",
-    "clientType":"PUBLIC",
-    "tokenEndpointAuthMethod":"none",
-    "redirectUris":["http://localhost:8080/callback"],
-    "postLogoutRedirectUris":[],
-    "accessTokenAudience":"urn:my-api",
-    "accessTokenScope":"access_as_user",
-    "accessTokenVersion":"2.0",
-    "emailOptionalClaim":false
-  }'
-
-curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/clients/reset \
-  -H 'content-type: application/json' \
-  -d '{}'
-```
-
-### アクセストークンのバージョン
-
-Admin UIのクライアント編集、またはAdmin APIの`accessTokenVersion`で`"1.0"`・`"2.0"`を選びます。作成時・`clients.json`での省略は`"2.0"`、更新時の省略は現在値を維持します。変更は次の取得・更新から反映し、発行済みトークンは変わりません。
-
-SPAのauthority・Authorization/Token endpoint・ID Tokenはv2.0です。Access TokenはAuthorization Code・Refresh Tokenのどちらでも選択したバージョンになります。これはEntra IDの[認証エンドポイントから独立したバージョン指定](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#token-ownership)に相当します。
-
-バックエンドAPIの検証設定は次のとおりです。`aud`は両バージョンとも`accessTokenAudience`です。
-
-| バックエンドの検証設定 | v1.0                                                                                               | v2.0                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| issuer（`iss`）        | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/`（末尾`/`あり）                  | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0`                                  |
-| メタデータURL          | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/.well-known/openid-configuration` | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0/.well-known/openid-configuration` |
-| JWKS URL               | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/keys`                   | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/discovery/v2.0/keys`                   |
-
-v1.0のメタデータはAPIのAccess Token検証専用で、`issuer`・`jwks_uri`・`id_token_signing_alg_values_supported`を返します。メタデータ・JWKSにはorigin検証、CORS、Discovery/JWKS障害、署名鍵ローテーション、アクセスログを適用します。v1.0のAuthorization/Token endpointや`resource`による認証要求は未対応です。SPAのサインイン用Discoveryにはv2.0を使ってください。
-
-Entra IDはAPI側の`requestedAccessTokenVersion`で指定しますが、MockはAPI登録を持たず、Audience・scopeと同じくクライアントに保持します。同じAPIを使うクライアントには同じバージョンを設定してください。v1.0 issuerは実環境の`sts.windows.net`を使わず、Mockのoriginです。
-
-### テストユーザー
-
-初期ユーザーは次のとおりです。
-
-| sub                 | 表示名            | username                   | oid                                    | groups                                    |
-| ------------------- | ----------------- | -------------------------- | -------------------------------------- | ----------------------------------------- |
-| `user-admin`        | Admin User        | `admin@example.com`        | `11111111-1111-1111-1111-111111111111` | `app-admin-group-id`, `app-user-group-id` |
-| `user-normal`       | Normal User       | `user@example.com`         | `22222222-2222-2222-2222-222222222222` | `app-user-group-id`                       |
-| `user-unauthorized` | Unauthorized User | `unauthorized@example.com` | `33333333-3333-3333-3333-333333333333` | なし                                      |
-
-| 項目                 | 内容                                                                                                                                                             |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sub`                | サインイン画面の選択値・トークンの`sub`。新規作成時のAdmin UIは編集可能なランダムUUIDを入力済み。空欄保存・Admin APIでの省略時はサーバーがUUIDを一度生成して保存 |
-| `oid`                | GUID形式で、小文字に正規化して保存。新規作成時のAdmin UIは編集可能なランダムUUIDを入力済み                                                                       |
-| `name`               | 表示名                                                                                                                                                           |
-| `preferred_username` | UPN相当の値                                                                                                                                                      |
-| `mail`               | メール形式。`email` claimとして返される                                                                                                                          |
-| `groups`             | Admin UIは1行1件、Admin APIは文字列配列。重複を除去し、空も指定可能                                                                                              |
-
-- `name`・`preferred_username`・各グループ名は前後の空白を除去し、改行（CR/LF）を拒否します。Unicode・内部の空白は保持します。
-- `oid`・`preferred_username`はユーザー間で重複不可（後者は大文字小文字を区別しない）。`tid`は固定Tenant IDで設定不可です。`users.json`に含めると起動時に検証エラーになります。
-- Admin APIの作成（`POST /__mock/api/users`）は`sub`以外の全項目、更新（`PUT /__mock/api/users/:sub`）は全項目が必須です。エラーは`invalid_user`（400）、`user_conflict`（409）、`user_not_found`（404）です。
-
-```bash
-CURL_CA=.data/tls/ca.crt
-
-curl --cacert "$CURL_CA" https://mock-idp.test:9000/__mock/api/users
-
-curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users \
-  -H 'content-type: application/json' \
-  -d '{
-    "sub":"user-auditor",
-    "oid":"44444444-4444-4444-4444-444444444444",
-    "name":"Auditor User",
-    "preferred_username":"auditor@example.com",
-    "mail":"auditor@example.com",
-    "groups":["app-auditor-group-id"]
-  }'
-
-curl --cacert "$CURL_CA" -X PUT https://mock-idp.test:9000/__mock/api/users/user-auditor \
-  -H 'content-type: application/json' \
-  -d '{
-    "oid":"44444444-4444-4444-4444-444444444444",
-    "name":"Auditor User",
-    "preferred_username":"auditor@example.com",
-    "mail":"auditor@example.com",
-    "groups":["app-auditor-group-id","app-user-group-id"]
-  }'
-
-curl --cacert "$CURL_CA" -X DELETE https://mock-idp.test:9000/__mock/api/users/user-auditor
-
-curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users/reset \
-  -H 'content-type: application/json' \
-  -d '{}'
-```
-
-### トークンのclaim
-
-通常のOIDCフローの共通claimは`sub`, `oid`, `tid`, `name`, `groups`, `iss`, `aud`, `iat`, `exp`, `nbf`, `ver`, `sid`です。[Entra IDのバージョン差](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)に対応する違いは次のとおりです（`—`は含まない項目）。
-
-| 項目                 | ID Token             | v1.0 Access Token | v2.0 Access Token    |
-| -------------------- | -------------------- | ----------------- | -------------------- |
-| `ver`                | `"2.0"`              | `"1.0"`           | `"2.0"`              |
-| ユーザー名           | `preferred_username` | `unique_name`     | `preferred_username` |
-| client_id            | —                    | `appid`           | `azp`                |
-| クライアント認証方式 | —                    | `appidacr`        | `azpacr`             |
-| 委任scope名          | —                    | `scp`             | `scp`                |
-| JWTヘッダーの`typ`   | 未設定（既知の制限） | `"JWT"`           | `"JWT"`              |
-
-- `unique_name`はユーザーの`preferred_username`の値です。`appidacr`・`azpacr`はPublicで`0`、client secretで認証するConfidentialで`1`です。v1.0 Access Tokenに`azp`・`azpacr`・`preferred_username`は含めません。
-- `scp`はクライアント設定の委任scope名です。JWTに`scope` claimは含めず、`scope`はToken応答とOIDCのスコープ処理で使用します。
-- `email`はユーザーの`mail`の値です。`email` scopeの要求時、または`emailOptionalClaim`有効時に含めます（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)相当）。表示・連絡先に使い、ユーザー識別には`oid`と`tid`の組または`sub`を使ってください。
-- `mail`はMicrosoft Graphのプロパティ名であり、Entra IDのトークンclaimには含まれません。Access Tokenの`typ:"JWT"`はEntra IDと同じですが、ID Tokenの`typ`はEntra IDと異なり未設定です。
-
-## 開発用アクセストークンの直接発行
-
-サインイン操作なしで、バックエンドAPI検証用のAccess Tokenを発行できます。
-
-1. Admin UIの「アクセストークン発行」で登録済みクライアント・ユーザーを選び、「発行」を押す。
-2. 「アクセストークンをコピー」で取得する。コピー失敗時は表示されたトークンを手動でコピーする。
-
-候補の取得失敗時や別画面での設定変更後は「候補を再読み込み」を使ってください。
-
-### Admin APIで発行してAPIを呼び出す
-
-`POST /__mock/api/tokens`にJSONで`clientId`・`userSub`を指定します（両方必須）。PUBLIC／CONFIDENTIALともsecret不要です。ローカル試験専用で、Host・Origin・JSON本文の検証とキャッシュ抑止を適用します。
-
-以下は`jq`を使用します。呼び出し先URLを検証対象のバックエンドAPIに置き換えてください。
-
-```bash
-CURL_CA=.data/tls/ca.crt
-MOCK_ORIGIN=https://mock-idp.test:9000
-
-TOKEN_RESPONSE=$(curl --fail-with-body --silent --show-error --cacert "$CURL_CA" \
-  "$MOCK_ORIGIN/__mock/api/tokens" \
-  -H 'content-type: application/json' \
-  -d '{"clientId":"mock-public-client","userSub":"user-admin"}')
-ACCESS_TOKEN=$(printf '%s' "$TOKEN_RESPONSE" | jq -er '.access_token')
-
-curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8080/api/example
-```
-
-成功時は200で次の形式を返します。
+初期 API は次の設定です。
 
 ```json
 {
-  "access_token": "<署名済みJWT>",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "scope": "access_as_user",
-  "fault": null
+  "resourceAppId": "55555555-5555-4555-8555-555555555555",
+  "identifierUri": "api://55555555-5555-4555-8555-555555555555",
+  "scopes": ["access_as_user", "api.read", "api.write"],
+  "requestedAccessTokenVersion": 2,
+  "emailOptionalClaim": false,
+  "groupMembershipClaims": "SecurityGroup"
 }
 ```
 
-入力不正は400（`invalid_token_request`）、クライアント未登録は404（`client_not_found`）、ユーザー未登録は404（`user_not_found`）で、日本語の`message`を返します。
+- `resourceAppId` は対象 API のアプリケーション ID（GUID）。`identifierUri` は `api://` または `https://` の Application ID URI です。ID・URI は重複できません。
+- `scopes` は公開する委任権限の名前。要求では `<identifierUri>/<scope>` を使用します。API ID を接頭辞にした指定も受け付けます。スコープ名は大文字小文字を区別します。
+- `requestedAccessTokenVersion` は `2` が v2.0、`1`・`null` が v1.0。呼び出し元のクライアントや v2.0 認証エンドポイントから独立して決定します。
+- `emailOptionalClaim` と `groupMembershipClaims` は、この API 向けアクセストークンの claim 設定です。後者は `None` または `SecurityGroup`。登録グループはすべてセキュリティグループとして扱います。
+- クライアントが参照している API の削除、参照スコープの削除、それらを削除するリセットは409です。参照元のクライアント設定を先に変更してください。
 
-- `aud`・`scp`・バージョン・issuerは発行時のクライアント設定に従います。署名鍵は通常のOIDCフローと共通で、同じDiscovery・JWKSで検証できます。
-- ユーザー情報・groupsを含め、emailは`emailOptionalClaim: true`のときだけ含めます。ブラウザセッションと`sid`、ID Token、Refresh Token、アプリ権限のトークンは生成しません。
-- 有効期間は通常3,600秒です。`expires_in`は通常のToken endpointと同じく障害適用前の値で、期限切れ障害などではJWTの実際の期限と異なります。
-- JWTはファイル・ブラウザストレージに保存せず、管理APIの要求は[アクセスログ](#アクセスログ)の対象外です。
+### OIDCクライアント
 
-### 適用する障害シナリオ
+| 初期アプリ | clientId                               | 種別         | URI 種別 | 認証方式            |
+| ---------- | -------------------------------------- | ------------ | -------- | ------------------- |
+| ネイティブ | `00000000-0000-4000-8000-000000000001` | PUBLIC       | native   | none                |
+| Web        | `00000000-0000-4000-8000-000000000002` | CONFIDENTIAL | web      | client_secret_basic |
+| SPA        | `00000000-0000-4000-8000-000000000003` | PUBLIC       | spa      | none                |
 
-有効なシナリオが次のいずれかなら、設定済みパラメーターで自動適用します。
+初期リダイレクト URI は `http://localhost:3000/callback`。Web の secret は `mock-client-secret-change-me`。初期アプリには初期 API の全公開スコープを許可します。
 
-- `NO_GROUPS`、`WRONG_AUDIENCE`、`WRONG_ISSUER`、`WRONG_TENANT`、`MISSING_CLAIM`
-- `EXPIRED_TOKEN`、`FUTURE_NBF`、`INVALID_SIGNATURE`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`、`ALG_NONE`
+```json
+{
+  "clientId": "00000000-0000-4000-8000-000000000003",
+  "clientType": "PUBLIC",
+  "tokenEndpointAuthMethod": "none",
+  "redirectUris": [{ "uri": "http://localhost:3000/callback", "type": "spa" }],
+  "requiredResourceAccess": [
+    {
+      "resourceAppId": "55555555-5555-4555-8555-555555555555",
+      "scopes": ["access_as_user", "api.read", "api.write"]
+    }
+  ],
+  "emailOptionalClaim": false,
+  "groupMembershipClaims": "SecurityGroup"
+}
+```
 
-適用時は`fault`にシナリオ名・モード・パラメーター・残り回数などの`FaultDecision`を返します。Admin UIにも障害を表示し、発行後にシナリオ状態を更新します。
+- `clientId` は GUID。PUBLIC は secret なし・認証方式 `none`、CONFIDENTIAL は secret と `client_secret_basic` または `client_secret_post` を指定します。`web` URI は CONFIDENTIAL、`spa` URI は PUBLIC を使用します。認証方式はこのモックではクライアント単位の設定です。
+- `redirectUris` の各項目は `uri` と `type`（`spa`・`web`・`native`）。HTTPS とローカル HTTP を使用でき、native は登録済みカスタムスキームも使用できます。フラグメント、認証情報、IPv6 localhost、国際化ドメイン、特殊文字 `! $ ' ( ) , ;` は受け付けません。最大256件、各256文字です。localhost は照合時にポートを無視しますが、コード交換の `redirect_uri` は認可時の値と一致させます。パスの大文字小文字は区別します。
+- localhost でポートだけが異なる複数 URI の登録は拒否します。アプリ種別の区別にはパスを変えてください。
+- `requiredResourceAccess` はローカル自動同意の許可リストです。対象 API と公開スコープが存在する必要があります。要求していない API 権限はトークンに追加しません。
+- クライアントの `emailOptionalClaim`・`groupMembershipClaims` は **ID トークン用**です。アクセストークンには対象 API の設定を使用します。
+- ログアウト後の URI も `redirectUris` に登録します。別の `postLogoutRedirectUris` 設定はありません。`post_logout_redirect_uri` 単独での GET／POST ログアウトも処理します。未登録の遷移先へはリダイレクトしません。
 
-LIMITEDは[共通ルール](#シナリオの適用ルール)に従い、1要求で最大1回消費します。入力不正・対象未登録では消費しません。ID Token専用（`NONCE_MISMATCH`・`NONCE_MISSING`・`TOKEN_NO_ID_TOKEN`）、HTTP・認可・Discovery・JWKS障害は直接発行に適用せず、回数も消費しません。Discovery・JWKS障害は、それぞれのURL取得時に作用します。
+### 認可コード・PKCE・スコープ
+
+認可要求の例（実際は URL エンコードしてください）:
+
+```text
+GET /aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/oauth2/v2.0/authorize
+  ?client_id=00000000-0000-4000-8000-000000000003
+  &response_type=code
+  &redirect_uri=http://localhost:3000/callback
+  &scope=openid profile offline_access api://55555555-5555-4555-8555-555555555555/api.read
+  &state=<ランダム値>
+  &nonce=<ランダム値>
+  &code_challenge=<BASE64URL(SHA256(code_verifier))>
+  &code_challenge_method=S256
+```
+
+- SPA は PKCE 必須。Web・native は省略可能ですが、使用を推奨します。指定した PKCE はどのアプリでも検証し、`S256`・`plain` に対応します。challenge のみ指定した場合は `plain` として扱います。
+- SPA のコード交換・更新にはリダイレクト URI と同じ origin の `Origin` ヘッダーが必要です。Web・native のコードはブラウザから交換できません。`Origin` がある要求で client secret を使用できません。
+- `scope=<API URI>/.default` はクライアントに許可した対象 API のスコープへ展開します。`.default` と個別 API スコープの混在はエラーです。認可時は複数 API への同意が可能です。コード交換で `scope` を明示する場合、API は1つに限定します。省略時は認可要求の最初の API 向けに発行します。更新では同意済みの別 API を選択でき、複数 API を指定した場合は最初の API 向けに発行します。
+- 不明な API・スコープ・未許可の権限は `invalid_scope`。更新では取得済み権限の縮小が可能で、新しい権限の追加は拒否します。明示した `scope` から `profile`・`email`・`openid` を外すと、対応する claim・ID トークンも返しません。更新トークンの同意済み権限は保持され、`scope` を省略した更新では、元の認可要求の OIDC スコープと最初の API 権限を使います。
+- `openid` で ID トークン、`profile` で `oid`・`name`・`preferred_username`、`email` またはクライアントの任意 claim 設定で、存在する場合に `email` を返します。
+- OIDC スコープだけの要求には Graph／UserInfo 向けの不透明なモックアクセストークンを返します。カスタム API の権限は付与しません。このモックは Graph／UserInfo API を実装しておらず、そのトークンで実サービスを呼び出すこともできません。
+- `offline_access` でリフレッシュトークンを返します。`prompt=consent` の強制指定は不要です。更新のたびに新しい値を発行し、旧値も期限まで有効です。SPA は最初の発行から24時間を後続値にも継承し、それ以外は発行から90日です。ログアウトだけでは失効しません。
+- 認可コードは60秒、通常の ID／アクセストークンは3600秒です。コードは一度だけ交換でき、並行要求でも再利用を拒否します。
+
+### アクセストークンのバージョン
+
+| 検証対象         | v1.0 Access Token                                                  | v2.0 Access Token / ID Token                                           |
+| ---------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| issuer           | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/` | `https://mock-idp.test:9000/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/v2.0` |
+| Discovery        | `/{tenant}/.well-known/openid-configuration`                       | `/{tenant}/v2.0/.well-known/openid-configuration`                      |
+| JWKS             | `/{tenant}/discovery/keys`                                         | `/{tenant}/discovery/v2.0/keys`                                        |
+| Access Token aud | 要求した API の URI または GUID                                    | 対象 API の `resourceAppId`                                            |
+| 呼び出し元       | `appid`・`appidacr`                                                | `azp`・`azpacr`（Access Token のみ）                                   |
+| ユーザー名       | `unique_name`                                                      | `preferred_username`（profile 要求時）                                 |
+
+ID トークンの `aud` は常に呼び出し元の `clientId`、`ver` は `2.0` です。JWT ヘッダーは `typ: JWT`・`alg: RS256`・`kid` を持ちます。`/token` で発行する ID トークンには `at_hash`・`c_hash` を含めません。`scp` は要求・許可した API スコープ名の空白区切りで、レスポンスの `scope` はその API URI を付けた値です。
+
+v1 の `aud` は、要求スコープの接頭辞が `resourceAppId` なら GUID、`identifierUri` なら URI です。同じ API を両方の接頭辞で指定した場合は先頭の指定を使います。直接発行では `identifierUri` を使います。
+
+v1 の Discovery はアクセストークン検証用で、issuer・JWKS URI・RS256 のみ公開します。v1 の認可／トークンエンドポイントは提供しません。実環境の `sts.windows.net` の代わりに、このモックの origin を使用します。
+
+### テストユーザーと識別子
+
+| 内部 ID（保存上の sub） | 表示名            | preferred_username         | oid                                    | 初期グループ |
+| ----------------------- | ----------------- | -------------------------- | -------------------------------------- | ------------ |
+| `user-admin`            | Admin User        | `admin@example.com`        | `11111111-1111-1111-1111-111111111111` | 管理者・一般 |
+| `user-normal`           | Normal User       | `user@example.com`         | `22222222-2222-2222-2222-222222222222` | 一般         |
+| `user-unauthorized`     | Unauthorized User | `unauthorized@example.com` | `33333333-3333-3333-3333-333333333333` | なし         |
+
+管理者グループ ID は `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1`、一般グループ ID は `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2` です。
+
+- ユーザー設定の `sub` はサインイン画面と Admin API が使用する**内部キー**で、JWT の `sub` とは別です。JWT の `sub` はテナント・ユーザーの `oid`・受信アプリから導出します。ID トークンの受信者はクライアント、アクセストークンの受信者は API。別アプリ間で異なり、同じ受信者には再起動・鍵更新後も同じ値を返します。
+- 内部キーは前後の空白を除いて1〜100文字の印字可能ASCII（`.`・`..` は不可）。作成時に省略すると UUID を生成します。作成後は変更できません。
+- `oid` と `groups` は GUID を小文字に正規化します。`oid` と `preferred_username` はユーザー間で重複不可。表示名・username は Unicode を保持し、改行を拒否します。
+- `mail` はメールアドレスまたは空文字です。空の場合は `email` claim を返しません。`tid` は固定値でユーザー設定には含めません。
+- グループが0件または出力設定が `None` の場合は `groups` を省略します。200件までは GUID 配列、201件以上では `_claim_names`・`_claim_sources` の overage 表現を返します。参照先 Graph API はこのモックの提供範囲外です。
+- `sid` はログインセッションごとの GUID。認可コード交換・更新を通して同じ値を維持します。
+
+### 管理 API
+
+base URL は `https://mock-idp.test:9000`。POST／PUT は `application/json` が必要で、指定された `Origin` はこの origin と一致する必要があります。
+
+| 対象           | 一覧・作成                         | 更新・削除                                          | リセット                           |
+| -------------- | ---------------------------------- | --------------------------------------------------- | ---------------------------------- |
+| API 登録       | GET / POST `/__mock/api/resources` | PUT / DELETE `/__mock/api/resources/:resourceAppId` | POST `/__mock/api/resources/reset` |
+| クライアント   | GET / POST `/__mock/api/clients`   | PUT / DELETE `/__mock/api/clients/:clientId`        | POST `/__mock/api/clients/reset`   |
+| テストユーザー | GET / POST `/__mock/api/users`     | PUT / DELETE `/__mock/api/users/:sub`               | POST `/__mock/api/users/reset`     |
+
+更新本文は ID を除いた全設定、リセット本文は `{}`。作成成功201、削除成功204、入力不正400、未登録404、重複・参照中409です。変更を直列化し、保存に失敗した場合は以前のメモリ・ファイル・Provider 設定を維持します。
+
+Admin UI では URI を「`spa http://localhost:3000/callback`」、権限を「`55555555-5555-4555-8555-555555555555 api.read api.write`」の形式で1行ずつ入力します。保存失敗時は入力を維持し、一覧取得の再試行や未保存で閉じる確認を提供します。
+
+## 開発用アクセストークンの直接発行
+
+通常のサインインを省略して、バックエンド API の試験用 JWT を発行します。Admin UI でクライアント・ユーザー・API・許可スコープを選択するか、次の API を呼びます。これは開発専用機能で、Entra ID の OAuth grant ではありません。profile を要求した通常フロー相当のユーザー情報を付与し、API の任意 claim 設定を適用します。
+
+```bash
+curl --cacert .data/tls/ca.crt \
+  https://mock-idp.test:9000/__mock/api/tokens \
+  -H 'content-type: application/json' \
+  -d '{
+    "clientId":"00000000-0000-4000-8000-000000000001",
+    "userId":"user-admin",
+    "resourceAppId":"55555555-5555-4555-8555-555555555555",
+    "scopes":["api.read"]
+  }'
+```
+
+戻り値は `access_token`・`token_type`（Bearer）・`expires_in`（3600）・`scope`・`fault`。ID／リフレッシュトークンやログインセッションは作成しません。JWT は通常フローと同じ署名鍵・API 設定・権限検証・claim 生成を使用します。未登録対象は404、不正な本文・権限は400で、障害回数を消費しません。
+
+`NO_GROUPS`、`WRONG_AUDIENCE`、`WRONG_ISSUER`、`WRONG_TENANT`、`MISSING_CLAIM`、`EXPIRED_TOKEN`、`FUTURE_NBF`、`INVALID_SIGNATURE`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`、`ALG_NONE` を適用できます。ID トークン専用・HTTP・認可・Discovery・JWKS 障害は直接発行には適用しません。LIMITED は1要求で最大1回消費し、適用した場合は `fault` とアクセスログ以外の管理通知で確認できます。
 
 ## シナリオ API
 
@@ -563,10 +505,10 @@ typoや未対応の`common`・`organizations` authorityなどは`other`に分類
 
 初回起動で`.data/keys`に通常鍵・rollover鍵・異常署名鍵を生成し、秘密鍵は0600で保存します。鍵ディレクトリを削除すると再生成します。JWKSは既定で通常鍵だけ、`SIGNING_KEY_ROLLOVER`適用後は通常鍵とrollover鍵の公開部分を掲載します（[公開状態のリセット](#署名鍵のシナリオ)）。
 
-| 保存先                | 内容                                                                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `.data/`（Git対象外） | 署名鍵（`keys`）、TLS証明書・秘密鍵（`tls`・`tls-private`）、クライアント・ユーザー設定（`clients.json`・`users.json`、0600）        |
-| 単一プロセスのメモリ  | OIDC artifact（認可コード・Session・Grant・Access Token・Refresh Tokenの内部状態）、シナリオストア・履歴、アクセスログ。再起動で消失 |
+| 保存先                | 内容                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.data/`（Git対象外） | 署名鍵（`keys`）、TLS証明書・秘密鍵（`tls`・`tls-private`）、クライアント・ユーザー設定（`resources.json`・`clients.json`・`users.json`、0600） |
+| 単一プロセスのメモリ  | OIDC artifact（認可コード・Session・Grant・Access Token・Refresh Tokenの内部状態）、シナリオストア・履歴、アクセスログ。再起動で消失            |
 
 ## 開発コマンド
 

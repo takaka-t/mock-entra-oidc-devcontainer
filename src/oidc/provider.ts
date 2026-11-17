@@ -1,13 +1,13 @@
+import { parameterValue } from "./parameters.js";
 import Provider, {
   errors,
   interactionPolicy,
-  type Client,
   type Configuration,
   type ErrorOut,
   type KoaContextWithOIDC,
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
-import { decodeJwt, decodeProtectedHeader, SignJWT, type JWTHeaderParameters } from "jose";
+import { requestCompatibility } from "./request-compatibility.js";
 import { mockTokenTtlSeconds, type AppConfig } from "../config.js";
 import { escapeHtml } from "../admin/html.js";
 import type { OidcClientConfig } from "../clients/types.js";
@@ -21,68 +21,12 @@ import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
 import { browserFacingRoutePath, oidcInternalRoutes } from "./routes.js";
 import { v1TokenValidationPaths } from "./access-token-version.js";
-import { applyAccessTokenClaims, userClaims } from "./claims.js";
-
-const supportedScopes = ["openid", "profile", "email", "offline_access"];
-
-function includesScope(value: unknown, scope: string): boolean {
-  return typeof value === "string" && value.split(" ").includes(scope);
-}
-
-function emailOptionalClaimFor(client: Client | undefined): boolean {
-  return client?.metadata().mock_email_optional_claim === true;
-}
-
-/**
- * A stable per-login-session identifier to use as the `sid` claim.
- *
- * oidc-provider only carries its own `Session#sidFor(clientId)` value onto
- * issued tokens for backchannel-logout clients or when the OIDC `claims`
- * request parameter explicitly asks for `sid` (see
- * `helpers/process_response_types.js`) -- neither applies to this mock, and
- * `ctx.oidc.session` at the /token endpoint is a fresh, cookie-less session
- * unrelated to the one that authenticated at /authorize, so it cannot be
- * used directly either. `sessionUid`, however, is copied verbatim from the
- * AuthorizationCode (and its RefreshToken) onto every token derived from a
- * given login, unconditionally, so it is used here as the `sid` value
- * instead. This mock does not implement backchannel logout, so it does not
- * need to match oidc-provider's own `sid` value bit-for-bit -- only be
- * stable per login session, which `sessionUid` already is.
- */
-function sessionIdFor(ctx: KoaContextWithOIDC): string | undefined {
-  return (
-    ctx.oidc.entities.AuthorizationCode?.sessionUid ??
-    ctx.oidc.entities.RefreshToken?.sessionUid ??
-    ctx.oidc.session?.uid
-  );
-}
-
-/**
- * Entra ID always includes `sid` once a session exists, and lets an app
- * registration request `email` independently of scope via optional claims.
- * oidc-provider has no per-token-type claims customizer for ID Tokens
- * (unlike `formats.customizers.jwt`, which only covers Access/Client
- * Credentials tokens), so this re-signs the already-issued ID Token to add
- * both claims after the fact.
- */
-async function patchIdToken(
-  idToken: string,
-  ctx: KoaContextWithOIDC,
-  keys: SigningKeys,
-  userStore: MockUserStore,
-): Promise<string> {
-  const payload = { ...decodeJwt(idToken) };
-  const sid = sessionIdFor(ctx);
-  if (sid) payload.sid = sid;
-  const client = ctx.oidc.client;
-  if (emailOptionalClaimFor(client) && payload.email === undefined) {
-    const sub = typeof payload.sub === "string" ? payload.sub : undefined;
-    const user = sub ? userStore.find(sub) : undefined;
-    if (user) payload.email = user.mail;
-  }
-  const header = decodeProtectedHeader(idToken) as JWTHeaderParameters;
-  return new SignJWT(payload).setProtectedHeader(header).sign(keys.normal.privateKey);
-}
+import type { ApiResourceStore } from "../resources/store.js";
+import { graphResource, internalOfflineScope, oidcScopes, resolveScopes } from "./scopes.js";
+import { registerEntraGrants } from "./entra-grants.js";
+import { findRedirect, spaOriginAllowed } from "../clients/redirect-uri.js";
+import { diagnosticError } from "./errors.js";
+import { pairwiseSubject } from "./claims.js";
 
 function logFaultInjected(
   logger: FastifyBaseLogger,
@@ -123,15 +67,9 @@ export function createProvider(
   keys: SigningKeys,
   rolloverState: SigningKeyRolloverState,
   logger: FastifyBaseLogger,
+  resources: ApiResourceStore,
 ): Provider {
-  const claimDecisions = new WeakMap<object, FaultDecision | null>();
-  const claimDecisionFor = (ctx: { req: object; path: string }): FaultDecision | null => {
-    if (claimDecisions.has(ctx.req)) return claimDecisions.get(ctx.req) ?? null;
-    const decision = ctx.path === "/token" ? store.consumeForRequest("claims", store.getRequestTicket(ctx.req)) : null;
-    claimDecisions.set(ctx.req, decision);
-    if (decision) logFaultInjected(logger, decision, "[MOCK-IDP] claim fault injected");
-    return decision;
-  };
+  const resourcesClientIds = () => registeredClients.get(provider) ?? [];
   const policy = interactionPolicy.base();
   // A session can outlive an Admin-managed user. The default no_session check
   // only checks accountId, so it otherwise reaches consent without a Grant.
@@ -142,12 +80,29 @@ export function createProvider(
         Boolean(ctx.oidc.session?.accountId && !ctx.oidc.account),
       ),
     );
+  // The provider's default check compares its internal account ID to sub.
+  // Entra subjects are generated per receiving application instead.
+  const loginChecks = policy.get("login")!.checks;
+  loginChecks.remove("id_token_hint");
+  loginChecks.add(
+    new interactionPolicy.Check(
+      "id_token_hint",
+      "id_token_hint and authenticated subject do not match",
+      "login_required",
+      (ctx) => {
+        const hint = ctx.oidc.entities.IdTokenHint?.payload;
+        if (!hint) return false;
+        const user = userStore.findByOid(ctx.oidc.session?.accountId ?? "");
+        return !user || hint.sub !== pairwiseSubject(config.tenantId, user, ctx.oidc.client!.clientId);
+      },
+    ),
+  );
   authorizationFaultDefinitions.forEach((definition, index) => {
     policy.add(
       new interactionPolicy.Prompt(
         { name: definition.promptName, requestable: false },
         new interactionPolicy.Check(definition.promptName, definition.errorDescription, definition.error, (ctx) => {
-          if (ctx.method !== "GET") return false;
+          if (!["GET", "POST"].includes(ctx.method)) return false;
           if (store.get().scenario !== definition.scenario) return false;
           const decision = store.consumeForRequest("authorization", store.getRequestTicket(ctx.req));
           if (!decision) return false;
@@ -168,72 +123,39 @@ export function createProvider(
     authorizationFaultDefinitions.length + 1,
   );
 
-  const configuration: Configuration = {
+  const configuration: Configuration & { enableHttpPostMethods: boolean } = {
     adapter: createInMemoryAdapterFactory(),
     jwks: { keys: [keys.normal.privateJwk] },
     claims: {
-      openid: ["sub", "oid", "tid", "name", "preferred_username", "groups", "iat", "nbf", "ver", "sid"],
+      openid: ["sub", "tid", "nbf", "ver", "sid", "groups", "_claim_names", "_claim_sources"],
+      profile: ["oid", "name", "preferred_username"],
       email: ["email"],
     },
-    scopes: supportedScopes,
+    scopes: [...oidcScopes, internalOfflineScope],
     responseTypes: ["code"],
-    pkce: { required: () => true },
-    extraClientMetadata: {
-      properties: [
-        "mock_access_token_audience",
-        "mock_access_token_scope",
-        "mock_access_token_version",
-        "mock_email_optional_claim",
-      ],
-      validator: (_ctx, key, value) => {
-        if (key === "mock_access_token_audience") {
-          if (typeof value !== "string")
-            throw new errors.InvalidClientMetadata("mock_access_token_audience must be a string");
-          try {
-            const resource = new URL(value);
-            if (resource.username || resource.password || value.includes("#")) throw new Error("invalid resource URI");
-          } catch {
-            throw new errors.InvalidClientMetadata(
-              "mock_access_token_audience must be an absolute URI without credentials or a fragment",
-            );
-          }
-        }
-        if (key === "mock_access_token_scope" && typeof value !== "string")
-          throw new errors.InvalidClientMetadata("mock_access_token_scope must be a string");
-        if (key === "mock_email_optional_claim" && typeof value !== "boolean")
-          throw new errors.InvalidClientMetadata("mock_email_optional_claim must be a boolean");
-        if (key === "mock_access_token_version" && value !== "1.0" && value !== "2.0")
-          throw new errors.InvalidClientMetadata("mock_access_token_version must be 1.0 or 2.0");
+    allowOmittingSingleRegisteredRedirectUri: false,
+    enableHttpPostMethods: true,
+    pkce: {
+      required: (ctx, client) => {
+        const config = client.metadata().mock_config as OidcClientConfig;
+        return findRedirect(config.redirectUris, String(ctx.oidc.params?.redirect_uri))?.type === "spa";
       },
     },
-    formats: {
-      customizers: {
-        jwt: (ctx, token, jwt) => {
-          jwt.header = { ...jwt.header, typ: "JWT" };
-          const accountId = "accountId" in token && typeof token.accountId === "string" ? token.accountId : undefined;
-          const user = accountId ? userStore.find(accountId) : undefined;
-          const tokenScope = "scope" in token ? token.scope : undefined;
-          const client = ctx.oidc.client;
-          const metadata = client?.metadata();
-          applyAccessTokenClaims(
-            jwt.payload,
-            config,
-            client
-              ? {
-                  clientId: client.clientId,
-                  tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
-                  accessTokenScope:
-                    typeof metadata?.mock_access_token_scope === "string" ? metadata.mock_access_token_scope : "",
-                  accessTokenVersion: metadata?.mock_access_token_version === "1.0" ? "1.0" : "2.0",
-                }
-              : undefined,
-            user,
-            includesScope(tokenScope, "email") || emailOptionalClaimFor(client),
-            user ? claimDecisionFor(ctx) : null,
-            sessionIdFor(ctx),
-          );
-          return jwt;
-        },
+    clientBasedCORS: (ctx, origin, client) => {
+      const config = client.metadata().mock_config as OidcClientConfig;
+      return config.clientType === "PUBLIC" && spaOriginAllowed(config.redirectUris, origin);
+    },
+    extraClientMetadata: {
+      properties: ["mock_config"],
+      validator: (_ctx, key, value) => {
+        if (key === "mock_config" && (!value || typeof value !== "object"))
+          throw new errors.InvalidClientMetadata("mock_config is required");
+      },
+    },
+    extraParams: {
+      mock_validate: (ctx, _value, client) => {
+        const config = client.metadata().mock_config as OidcClientConfig;
+        resolveScopes(parameterValue(ctx.oidc.params?.scope), config, resources);
       },
     },
     routes: oidcInternalRoutes,
@@ -251,76 +173,107 @@ export function createProvider(
     renderError: (ctx, out) => {
       if (!browserFacingRoutePath(ctx.path)) {
         ctx.type = "application/json; charset=utf-8";
-        ctx.body = out;
+        ctx.body = diagnosticError(out);
         return;
       }
       ctx.type = "text/html; charset=utf-8";
-      ctx.body = errorPageHtml(out);
+      ctx.body = errorPageHtml(diagnosticError(out));
     },
     features: {
       devInteractions: { enabled: false },
       userinfo: { enabled: false },
+      dPoP: { enabled: false },
       // Entra ID's discovery document does not advertise a PAR endpoint.
       pushedAuthorizationRequests: { enabled: false },
       resourceIndicators: {
         enabled: true,
-        defaultResource: (_ctx, client) => String(client.metadata().mock_access_token_audience),
+        defaultResource: (ctx, client, oneOf) => {
+          if (oneOf?.length) return oneOf[0]!;
+          const resolved = resolveScopes(
+            parameterValue(ctx.oidc.params?.scope),
+            client.metadata().mock_config as OidcClientConfig,
+            resources,
+          );
+          const targets = resolved.targets.map((target) => target.resource.identifierUri);
+          return targets.length ? targets : graphResource;
+        },
         useGrantedResource: () => true,
         getResourceServerInfo: (_ctx, resource, client) => {
-          const metadata = client.metadata();
-          const audience = String(metadata.mock_access_token_audience);
-          if (resource !== audience) throw new errors.InvalidTarget();
+          if (resource === graphResource)
+            return { scope: [...oidcScopes, internalOfflineScope].join(" "), accessTokenFormat: "opaque" };
+          const target = resources.list().find((item) => item.identifierUri === resource);
+          const clientSettings = client.metadata().mock_config as OidcClientConfig;
+          const permission = clientSettings.requiredResourceAccess.find(
+            (item) => item.resourceAppId === target?.resourceAppId,
+          );
+          if (!target || !permission) throw new errors.InvalidTarget();
           return {
-            scope: supportedScopes.join(" "),
-            audience,
+            scope: [
+              ...permission.scopes.map((name) => `${target.identifierUri}/${name}`),
+              ...permission.scopes.map((name) => `${target.resourceAppId}/${name}`),
+              `${target.identifierUri}/.default`,
+              `${target.resourceAppId}/.default`,
+            ].join(" "),
+            audience: target.requestedAccessTokenVersion === 2 ? target.resourceAppId : target.identifierUri,
             accessTokenFormat: "jwt",
-            jwt: { sign: { alg: "RS256", kid: keys.normal.publicJwk.kid } },
           };
         },
       },
     },
-    findAccount: (ctx, sub) => {
-      const user = userStore.find(sub);
-      if (!user) return undefined;
-      const scenario = claimDecisionFor(ctx);
-      return {
-        accountId: user.sub,
-        claims: (_use, scope) => {
-          const issuedAt = Math.floor(Date.now() / 1000);
-          return {
-            ...userClaims(
-              user,
-              config.tenantId,
-              scenario,
-              includesScope(scope, "email") || emailOptionalClaimFor(ctx.oidc.client),
-            ),
-            iat: issuedAt,
-            nbf: issuedAt,
-            ver: "2.0",
-          };
-        },
-      };
+    findAccount: (_ctx, oid) => {
+      const user = userStore.findByOid(oid);
+      return user ? { accountId: user.oid, claims: () => ({ sub: user.oid }) } : undefined;
     },
     interactions: {
       policy,
       url: (_ctx, interaction) => `${config.issuerPath}/interaction/${interaction.uid}`,
     },
     cookies: {
+      long: { sameSite: "none" },
       keys: ["mock-cookie-key-one-at-least-32-bytes", "mock-cookie-key-two-at-least-32-bytes"],
     },
     ttl: {
       AccessToken: mockTokenTtlSeconds,
-      AuthorizationCode: 600,
-      Grant: 14 * 24 * 3600,
+      AuthorizationCode: 60,
+      Grant: 90 * 24 * 3600,
       IdToken: mockTokenTtlSeconds,
       Interaction: 600,
-      RefreshToken: 14 * 24 * 3600,
-      Session: 14 * 24 * 3600,
+      RefreshToken: 90 * 24 * 3600,
+      Session: 90 * 24 * 3600,
     },
   };
 
   const provider = new Provider(config.issuer, configuration);
   provider.proxy = config.trustProxy;
+  // Override the documented URI policy methods; the typed registry is authoritative.
+  const clientPrototype = provider.Client.prototype;
+  clientPrototype.redirectUriAllowed = function (value: string) {
+    return !!findRedirect((this.metadata().mock_config as OidcClientConfig).redirectUris, value);
+  };
+  clientPrototype.postLogoutRedirectUriAllowed = function (value: string) {
+    return !!findRedirect((this.metadata().mock_config as OidcClientConfig).redirectUris, value);
+  };
+  registerEntraGrants(provider, config, resources, userStore, store, keys);
+  const compatibleRequest = requestCompatibility(provider, resourcesClientIds);
+  // Compatibility checks run before the provider's route-specific error handlers.
+  provider.use(async (ctx: KoaContextWithOIDC, next) => {
+    try {
+      await compatibleRequest(ctx, next);
+    } catch (error) {
+      if (!(error instanceof errors.OIDCProviderError)) throw error;
+      ctx.status = error.statusCode;
+      ctx.set("Cache-Control", "no-store");
+      ctx.set("Pragma", "no-cache");
+      const out = { error: error.error, error_description: error.error_description };
+      if (browserFacingRoutePath(ctx.path) && ctx.accepts("json", "html") === "html") {
+        ctx.type = "text/html; charset=utf-8";
+        ctx.body = errorPageHtml(diagnosticError(out));
+      } else {
+        ctx.type = "application/json; charset=utf-8";
+        ctx.body = diagnosticError(out);
+      }
+    }
+  });
   provider.on("authorization.success", (ctx: KoaContextWithOIDC, out: Record<string, unknown>) => {
     const decision = store.consumeForRequest("authorization-response", store.getRequestTicket(ctx.req));
     if (!decision) return;
@@ -329,8 +282,9 @@ export function createProvider(
   });
   provider.use(async (ctx: KoaContextWithOIDC, next) => {
     await next();
+    const path = ctx.path.replace(/\/$/, "");
     if (
-      ctx.path === "/.well-known/openid-configuration" &&
+      path === "/.well-known/openid-configuration" &&
       ctx.status === 200 &&
       typeof ctx.body === "object" &&
       ctx.body !== null
@@ -353,27 +307,40 @@ export function createProvider(
               token_endpoint: `${config.issuerOrigin}${config.tokenPath}`,
               jwks_uri: `${config.issuerOrigin}${config.jwksPath}`,
               end_session_endpoint: `${config.issuerOrigin}${config.logoutPath}`,
+              claims_parameter_supported: false,
+              subject_types_supported: ["pairwise"],
+              claim_types_supported: ["normal", "distributed"],
+              token_endpoint_auth_signing_alg_values_supported: undefined,
+              code_challenge_methods_supported: ["S256", "plain"],
+              scopes_supported: [
+                ...oidcScopes,
+                ...resources
+                  .list()
+                  .flatMap((resource) => resource.scopes.map((name) => `${resource.identifierUri}/${name}`)),
+              ],
+              token_endpoint_auth_methods_supported: ["none", "client_secret_basic", "client_secret_post"],
             };
     }
-    if (ctx.path === "/jwks" && ctx.status === 200 && rolloverState.published) {
+    if (path === "/jwks" && ctx.status === 200 && rolloverState.published) {
       ctx.body = {
         keys: [keys.normal.publicJwk, keys.rollover.publicJwk],
       };
     }
-    if (ctx.path !== "/token" || ctx.status !== 200) return;
     if (
+      path === "/token" &&
+      ctx.status >= 400 &&
+      ctx.body &&
       typeof ctx.body === "object" &&
-      ctx.body !== null &&
-      typeof (ctx.body as Record<string, unknown>).id_token === "string"
+      "error" in ctx.body &&
+      typeof ctx.body.error === "string"
     ) {
-      const responseBody = ctx.body as Record<string, unknown>;
-      responseBody.id_token = await patchIdToken(responseBody.id_token as string, ctx, keys, userStore);
-      ctx.body = responseBody;
+      ctx.body = diagnosticError(ctx.body as { error: string });
     }
+    if (path !== "/token" || ctx.status !== 200) return;
     // Checked and consumed with no await in between, like the authorization
     // fault Checks above, so the scenario cannot change between the two.
     const active = store.get().scenario;
-    if (active !== "NORMAL" && !tokenResponseFaultApplies(active, ctx.body)) return;
+    if (active !== "NORMAL" && !tokenResponseFaultApplies(active, ctx.body, store.get().parameters?.claim)) return;
     const decision = store.consumeForRequest("token-jwt", store.getRequestTicket(ctx.req));
     if (!decision) return;
     logFaultInjected(logger, decision, "[MOCK-IDP] token fault injected");
@@ -410,19 +377,25 @@ type ProviderClientModel = {
   adapter: ClientAdapter;
 };
 
+const registeredClients = new WeakMap<Provider, string[]>();
 function clientMetadata(client: OidcClientConfig): Record<string, unknown> {
+  const native = client.redirectUris.some((item) => !["http:", "https:"].includes(new URL(item.uri).protocol));
+  const redirectUris = client.redirectUris.map(({ uri }) => {
+    const parsed = new URL(uri);
+    return native && parsed.protocol === "https:" && ["localhost", "127.0.0.1"].includes(parsed.hostname)
+      ? uri.replace(/^https:/i, "http:")
+      : uri;
+  });
   return {
     client_id: client.clientId,
     ...(client.clientSecret ? { client_secret: client.clientSecret } : {}),
-    redirect_uris: client.redirectUris,
-    post_logout_redirect_uris: client.postLogoutRedirectUris,
+    application_type: native ? "native" : "web",
+    redirect_uris: redirectUris,
+    post_logout_redirect_uris: redirectUris,
     response_types: ["code"],
     grant_types: ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: client.tokenEndpointAuthMethod,
-    mock_access_token_audience: client.accessTokenAudience,
-    mock_access_token_scope: client.accessTokenScope,
-    mock_access_token_version: client.accessTokenVersion,
-    mock_email_optional_claim: client.emailOptionalClaim,
+    mock_config: client,
   };
 }
 
@@ -444,9 +417,14 @@ export async function applyProviderClient(provider: Provider, client: OidcClient
   const Client = providerClientModel(provider);
   const validated = new Client(clientMetadata(client));
   await Client.adapter.upsert(client.clientId, validated.metadata());
+  registeredClients.set(provider, [...new Set([...(registeredClients.get(provider) ?? []), client.clientId])]);
 }
 
 export async function removeProviderClient(provider: Provider, clientId: string): Promise<void> {
   const Client = providerClientModel(provider);
   await Client.adapter.destroy(clientId);
+  registeredClients.set(
+    provider,
+    (registeredClients.get(provider) ?? []).filter((id) => id !== clientId),
+  );
 }

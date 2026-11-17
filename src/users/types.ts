@@ -1,5 +1,6 @@
 /**
- * A test user as stored in users.json. `tid` is deliberately absent: it is
+ * A test user as stored in users.json. `sub` is the internal account key,
+ * not the pairwise JWT subject emitted to a client or API. `tid` is deliberately absent: it is
  * always the mock's tenant ID and is added when claims are issued.
  */
 export interface MockUser {

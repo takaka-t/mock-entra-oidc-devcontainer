@@ -1,3 +1,7 @@
+import { SerialQueue } from "./persistence/json-file.js";
+import { ApiResourceStore, ResourceConflictError } from "./resources/store.js";
+import { validateResourceReferences } from "./oidc/scopes.js";
+import { createCorsMiddleware } from "./oidc/cors.js";
 import formbody from "@fastify/formbody";
 import middie from "@fastify/middie";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -24,6 +28,7 @@ export interface AppContext {
   app: FastifyInstance;
   store: InMemoryScenarioStore;
   clientStore: OidcClientStore;
+  resourceStore: ApiResourceStore;
   userStore: MockUserStore;
   accessLog: InMemoryAccessLog;
 }
@@ -244,14 +249,39 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions): Pro
   const keys = await loadSigningKeys(config.keyDirectory);
   const userStore = new MockUserStore(config.userConfigFile);
   await userStore.initialize();
-  const provider = createProvider(config, store, userStore, keys, rolloverState, app.log);
+  const configurationQueue = new SerialQueue();
+  let currentClients: () => ReturnType<OidcClientStore["list"]> = () => [];
+  const resourceStore = new ApiResourceStore(
+    config.resourceConfigFile,
+    configurationQueue,
+    (id) =>
+      currentClients().some((client) =>
+        client.requiredResourceAccess.some((permission) => permission.resourceAppId === id),
+      ),
+    (resources) => {
+      for (const client of currentClients()) {
+        try {
+          validateResourceReferences(client, resources);
+        } catch {
+          throw new ResourceConflictError("クライアントが参照する API 権限は削除できません");
+        }
+      }
+    },
+  );
+  await resourceStore.initialize();
+  const provider = createProvider(config, store, userStore, keys, rolloverState, app.log, resourceStore);
   const clientStore = new OidcClientStore(
     config.clientConfigFile,
     (client) => applyProviderClient(provider, client),
     (clientId) => removeProviderClient(provider, clientId),
-    (client) => validateProviderClient(provider, client),
+    (client) => {
+      validateResourceReferences(client, resourceStore.list());
+      validateProviderClient(provider, client);
+    },
+    configurationQueue,
   );
   await clientStore.initialize();
+  currentClients = () => clientStore.list();
   const providerHandler = provider.callback();
   const routedIssuerPath = decodeRoutingPath(config.issuerPath);
   await app.register(middie);
@@ -274,6 +304,7 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions): Pro
     }
     next();
   });
+  app.use(createCorsMiddleware(config, clientStore));
   app.use(createHttpFaultMiddleware(store, app.log, resolveHttpFaultEndpoints(config), resolveCorsPathnames(config)));
   app.use((req, res, next) => {
     const url = req.url ?? "/";
@@ -302,6 +333,6 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions): Pro
     }
   });
   registerCommonProbeRoute(app, config);
-  await registerRoutes(app, provider, store, clientStore, userStore, accessLog, config, keys);
-  return { app, store, clientStore, userStore, accessLog };
+  await registerRoutes(app, provider, store, clientStore, userStore, accessLog, config, keys, resourceStore);
+  return { app, store, clientStore, resourceStore, userStore, accessLog };
 }
