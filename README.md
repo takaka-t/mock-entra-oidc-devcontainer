@@ -11,6 +11,7 @@ Microsoft Entra IDをIdPとするアプリケーションのローカル開発�
 - [TLS証明書とローカルCA](#tls証明書とローカルca)
 - [ホストと別Composeからの接続](#ホストと別composeからの接続)
 - [OIDCクライアントとテストユーザー](#oidcクライアントとテストユーザー)
+- [開発用アクセストークンの直接発行](#開発用アクセストークンの直接発行)
 - [シナリオ API](#シナリオ-api)
 - [アクセスログ](#アクセスログ)
 - [鍵と状態](#鍵と状態)
@@ -180,7 +181,7 @@ networks:
 | Redirect URI                   | `http://localhost:3000/callback`   |
 | Access token audience/resource | `urn:mock-api`                     |
 
-全clientでAuthorization Code FlowとS256 PKCEが必須です。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
+通常のOIDCフローでは全clientでAuthorization Code FlowとS256 PKCEが必須です。バックエンドAPIだけを検証する場合は[開発用アクセストークンの直接発行](#開発用アクセストークンの直接発行)も利用できます。Discovery、issuer、audience、期限、署名、JWKS、redirect URI、client IDの検証を無効化せず利用してください。
 
 - **設定項目**: Client ID、Public/Confidential種別、secret、Token Endpoint認証方式（Publicは`none`、Confidentialは`client_secret_basic`または`client_secret_post`）、Redirect URI、Post Logout Redirect URI、Access Token Audience、Access Tokenの`scp`（委任scope名）、Access Tokenのバージョン、emailのoptional claim化。
 - `accessTokenScope`と`emailOptionalClaim`はAdmin API（`POST`/`PUT /__mock/api/clients`）では必須項目です。Admin UIでは新規作成時に`accessTokenScope`へ`access_as_user`が初期値として入力されています。
@@ -297,6 +298,54 @@ curl --cacert "$CURL_CA" -X POST https://mock-idp.test:9000/__mock/api/users/res
 - **`email`**: ユーザーの`mail`の値です。`email` scopeを要求した場合、またはクライアント設定で「emailをoptional claimとして常に含める」を有効にした場合（Entra IDの[optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims)機能に相当）だけ含まれます。表示・連絡先用途とし、ユーザー識別には`oid`と`tid`の組または`sub`を使用してください。
 - `mail` claimは含みません。Microsoft Graphのユーザープロパティ名であり、Entra IDのトークンclaimには存在しないためです。
 - Access TokenのJWTヘッダーは、v1.0／v2.0ともEntra IDと同じ`typ:"JWT"`です。従来の`typ:"at+jwt"`またはJWTの`scope` claimに依存している検証・権限取得処理は、`typ:"JWT"`と`scp`に合わせてください。**既知の制限**として、ID Tokenには実際のEntra IDが付与する`typ:"JWT"`を設定していません。
+
+## 開発用アクセストークンの直接発行
+
+フロントエンドやブラウザのサインイン操作を経由せず、バックエンドAPIの検証用アクセストークンを発行できます。Admin UIの「アクセストークン発行」を開き、登録済みクライアントとテストユーザーを選択して「発行」を押します。表示されたトークンは「アクセストークンをコピー」でコピーできます。候補を取得できない場合や別の画面で設定を変更した場合は「候補を再読み込み」を使用してください。
+
+### Admin APIで発行してAPIを呼び出す
+
+`POST /__mock/api/tokens`はJSONの`clientId`と`userSub`を必須として受け付けます。PUBLIC／CONFIDENTIALのどちらも選択でき、クライアントシークレットは不要です。既存の管理APIと同じくローカル試験専用で、Host・Origin・JSON本文の検証とキャッシュ抑止を適用します。
+
+以下の例は`jq`を使用します。呼び出し先のURLは検証対象のバックエンドAPIに置き換えてください。
+
+```bash
+CURL_CA=.data/tls/ca.crt
+MOCK_ORIGIN=https://mock-idp.test:9000
+
+TOKEN_RESPONSE=$(curl --fail-with-body --silent --show-error --cacert "$CURL_CA" \
+  "$MOCK_ORIGIN/__mock/api/tokens" \
+  -H 'content-type: application/json' \
+  -d '{"clientId":"mock-public-client","userSub":"user-admin"}')
+ACCESS_TOKEN=$(printf '%s' "$TOKEN_RESPONSE" | jq -er '.access_token')
+
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8080/api/example
+```
+
+成功時は200で次の形式を返します。
+
+```json
+{
+  "access_token": "<署名済みJWT>",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "access_as_user",
+  "fault": null
+}
+```
+
+入力不正は400（`invalid_token_request`）、未登録のクライアントは404（`client_not_found`）、未登録のユーザーは404（`user_not_found`）です。日本語の`message`を返します。
+
+- `aud`、`scp`、バージョン、issuerは発行時のクライアント設定に従います。署名鍵は通常のOIDCフローと共通で、バックエンドは既存のDiscovery・JWKSで検証できます。
+- ユーザー情報とgroupsを含めます。emailは`emailOptionalClaim: true`のときに含めます。ブラウザセッションを作成しないため`sid`は付与せず、ID Token・Refresh Token・アプリ権限のトークンは発行しません。
+- 通常の有効期間は3,600秒です。`expires_in`は通常のToken endpointと同様に障害適用前の有効期間を示すため、期限切れ障害などの適用後はJWTの実際の期限と異なります。
+- JWTはファイルやブラウザストレージへ保存せず、管理APIの要求は既存どおりアクセスログへ記録しません。コピー失敗時は表示されたトークンを手動でコピーできます。
+
+### 適用する障害シナリオ
+
+現在有効な`NO_GROUPS`、`WRONG_AUDIENCE`、`WRONG_ISSUER`、`EXPIRED_TOKEN`、`FUTURE_NBF`、`INVALID_SIGNATURE`、`UNKNOWN_KID`、`SIGNING_KEY_ROLLOVER`、`ALG_NONE`、`WRONG_TENANT`、`MISSING_CLAIM`を自動適用します。既存のパラメーターを使用し、適用時は`fault`にシナリオ名・モード・パラメーター・残り回数などの`FaultDecision`を返します。Admin UIにも適用した障害を表示し、発行後にシナリオ状態を更新します。
+
+LIMITEDは1要求につき最大1回消費し、残り0でNORMALへ戻ります。入力不正・対象未登録では消費しません。ID Token専用の`NONCE_MISMATCH`、`NONCE_MISSING`、`TOKEN_NO_ID_TOKEN`と、HTTP・認可・Discovery・JWKS障害は直接発行に適用せず、回数も消費しません。JWKSやDiscovery自体に設定された障害は、それらのURLを取得したときに従来どおり作用します。
 
 ## シナリオ API
 

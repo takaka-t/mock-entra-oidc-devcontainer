@@ -16,35 +16,12 @@ import { mutateTokenResponse, tokenResponseFaultApplies } from "../faults/token-
 import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { FaultDecision } from "../scenario/types.js";
 import type { MockUserStore } from "../users/store.js";
-import type { MockUser } from "../users/types.js";
 import type { SigningKeys } from "./keys.js";
 import type { SigningKeyRolloverState } from "./key-rollover.js";
 import { createInMemoryAdapterFactory } from "./in-memory-adapter.js";
 import { browserFacingRoutePath, oidcInternalRoutes } from "./routes.js";
 import { v1TokenValidationPaths } from "./access-token-version.js";
-
-type UserClaims = Omit<MockUser, "groups" | "mail"> & {
-  tid: string;
-  groups?: string[];
-  email?: string;
-};
-
-function userClaims(
-  user: MockUser,
-  tenantId: string,
-  decision: FaultDecision | null | undefined,
-  includeEmail: boolean,
-): UserClaims {
-  const { mail, groups, ...rest } = user;
-  const claims: UserClaims = {
-    ...rest,
-    tid: tenantId,
-    ...(includeEmail ? { email: mail } : {}),
-    groups: [...groups],
-  };
-  if (decision?.scenario === "NO_GROUPS") delete claims.groups;
-  return claims;
-}
+import { applyAccessTokenClaims, userClaims } from "./claims.js";
 
 const supportedScopes = ["openid", "profile", "email", "offline_access"];
 
@@ -233,39 +210,28 @@ export function createProvider(
       customizers: {
         jwt: (ctx, token, jwt) => {
           jwt.header = { ...jwt.header, typ: "JWT" };
-          // Entra uses scp for API permissions. Leaving oidc-provider's
-          // OIDC scope claim would hide scp in consumers that prefer scope.
-          delete jwt.payload.scope;
           const accountId = "accountId" in token && typeof token.accountId === "string" ? token.accountId : undefined;
           const user = accountId ? userStore.find(accountId) : undefined;
           const tokenScope = "scope" in token ? token.scope : undefined;
           const client = ctx.oidc.client;
-          if (user)
-            Object.assign(
-              jwt.payload,
-              userClaims(
-                user,
-                config.tenantId,
-                claimDecisionFor(ctx),
-                includesScope(tokenScope, "email") || emailOptionalClaimFor(client),
-              ),
-            );
-          const v1 = client?.metadata().mock_access_token_version === "1.0";
-          jwt.payload.ver = v1 ? "1.0" : "2.0";
-          if (v1) {
-            jwt.payload.iss = `${config.issuerOrigin}${v1TokenValidationPaths(config.issuerPath).issuerPath}`;
-            if (user) jwt.payload.unique_name = user.preferred_username;
-            delete jwt.payload.preferred_username;
-          }
-          if (client) {
-            jwt.payload[v1 ? "appid" : "azp"] = client.clientId;
-            jwt.payload[v1 ? "appidacr" : "azpacr"] = client.tokenEndpointAuthMethod === "none" ? "0" : "1";
-            const scope = client.metadata().mock_access_token_scope;
-            if (typeof scope === "string" && scope) jwt.payload.scp = scope;
-          }
-          const sid = sessionIdFor(ctx);
-          if (sid) jwt.payload.sid = sid;
-          if (typeof jwt.payload.iat === "number") jwt.payload.nbf = jwt.payload.iat;
+          const metadata = client?.metadata();
+          applyAccessTokenClaims(
+            jwt.payload,
+            config,
+            client
+              ? {
+                  clientId: client.clientId,
+                  tokenEndpointAuthMethod: client.tokenEndpointAuthMethod,
+                  accessTokenScope:
+                    typeof metadata?.mock_access_token_scope === "string" ? metadata.mock_access_token_scope : "",
+                  accessTokenVersion: metadata?.mock_access_token_version === "1.0" ? "1.0" : "2.0",
+                }
+              : undefined,
+            user,
+            includesScope(tokenScope, "email") || emailOptionalClaimFor(client),
+            user ? claimDecisionFor(ctx) : null,
+            sessionIdFor(ctx),
+          );
           return jwt;
         },
       },

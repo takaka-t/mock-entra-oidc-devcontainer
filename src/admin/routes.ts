@@ -9,6 +9,9 @@ import {
   type OidcClientStore,
 } from "../clients/store.js";
 import type { AppConfig } from "../config.js";
+import { issueAccessToken } from "../oidc/direct-token.js";
+import type { SigningKeys } from "../oidc/keys.js";
+import { identifier } from "../validation/common.js";
 import { authorizationFaultForPrompt, type AuthorizationFaultDefinition } from "../faults/authorization-fault.js";
 import { routedPathname } from "../http-path.js";
 import type { InMemoryScenarioStore } from "../scenario/store.js";
@@ -20,6 +23,7 @@ import { renderAdminHtml } from "./ui.js";
 
 const interactionBodySchema = z.object({ accountId: z.string().min(1) }).strict();
 const resetBodySchema = z.object({}).strict();
+const tokenBodySchema = z.object({ clientId: identifier, userSub: identifier }).strict();
 
 function adminMutation(method: string, requestPath: string): boolean {
   return requestPath.startsWith("/__mock/") && ["DELETE", "PATCH", "POST", "PUT"].includes(method);
@@ -180,6 +184,7 @@ export async function registerRoutes(
   userStore: MockUserStore,
   accessLog: InMemoryAccessLog,
   config: AppConfig,
+  keys: SigningKeys,
 ): Promise<void> {
   app.addHook("onRequest", async (request, reply) => {
     const requestPath = routedPathname(request.url);
@@ -209,6 +214,30 @@ export async function registerRoutes(
   app.get("/__mock", adminUi);
   app.get("/__mock/", adminUi);
   app.get("/__mock/api/scenario", async () => store.get());
+  app.post("/__mock/api/tokens", async (request, reply) => {
+    const parsed = tokenBodySchema.safeParse(request.body);
+    if (!parsed.success)
+      return reply.code(400).send({
+        error: "invalid_token_request",
+        message: formatZodIssues(parsed.error, {
+          clientId: "クライアント ID（clientId）",
+          userSub: "ユーザー ID（userSub）",
+        }),
+      });
+    const client = clientStore.list().find((entry) => entry.clientId === parsed.data.clientId);
+    if (!client) return clientError(reply, new ClientNotFoundError());
+    const user = userStore.find(parsed.data.userSub);
+    if (!user) return userError(reply, new UserNotFoundError());
+    try {
+      const result = await issueAccessToken(config, keys, store, client, user, store.getRequestTicket(request.raw));
+      if (result.fault)
+        app.log.warn({ ...result.fault, faultInjected: true }, "[MOCK-IDP] direct token fault injected");
+      return result;
+    } catch (error) {
+      app.log.error({ err: error }, "[MOCK-IDP] direct token issuance failed");
+      return reply.code(500).send({ error: "token_issue_failed", message: "アクセストークンの発行に失敗しました" });
+    }
+  });
   app.put("/__mock/api/scenario", async (request, reply) => {
     try {
       return store.set(parseScenarioInput(request.body));

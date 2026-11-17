@@ -46,6 +46,14 @@ details.card>summary{display:flex;align-items:center;gap:.5rem;cursor:pointer;li
 <div id="errorFields" class="hidden"><label for="errorCode">OAuth エラー（error）</label><input id="errorCode" value="${scenarioUiDefaults.tokenError}"><label for="errorDescription">エラーの説明（errorDescription）</label><input id="errorDescription"></div></div></div>
 <p id="rolloverNote" class="warning">SIGNING_KEY_ROLLOVERを有効にすると、シナリオの完了後、NORMALに戻した後、または別のシナリオを選択した後も、新しい署名鍵はJWKSで公開され続けます。シナリオを初期状態に戻すと、初期の鍵セットに戻ります。</p>
 <div class="actions"><button class="primary" type="submit">適用</button><div class="action"><button id="normal" type="button">NORMALに戻す</button><p class="action-hint">シナリオを停止します（履歴は残ります）</p></div><div class="action"><button id="reset" class="danger" type="button">シナリオを初期状態に戻す</button><p class="action-hint danger-hint">履歴と鍵の状態を初期化します</p></div></div><p id="error" class="error" aria-live="polite"></p></form></section>
+<details class="card" id="tokenPanel"><summary><h2>アクセストークン発行</h2></summary>
+<p class="hint">バックエンド API の動作確認用に、登録済みユーザーのアクセストークンを発行します。クライアント設定の対象者・スコープ・バージョンを使用します。有効期間は通常 3,600 秒です。</p>
+<p class="hint">有効な JWT・claim 障害シナリオを適用します。ID Token 専用・HTTP・認可・Discovery・JWKS 障害は直接発行に適用しません。</p>
+<form id="tokenForm"><div class="grid"><div><label for="tokenClient" class="required">クライアント</label><select id="tokenClient" required disabled><option value="">読み込み中…</option></select></div><div><label for="tokenUser" class="required">テストユーザー</label><select id="tokenUser" required disabled><option value="">読み込み中…</option></select></div></div>
+<div class="actions"><button id="issueToken" class="primary" type="submit" disabled>発行</button><button id="refreshTokenChoices" type="button">候補を再読み込み</button></div></form>
+<p id="tokenChoicesError" class="error" role="alert"></p><p id="tokenError" class="error" role="alert"></p>
+<div id="tokenResult" class="hidden"><p id="tokenSubject"></p><label for="issuedToken">アクセストークン</label><textarea id="issuedToken" rows="5" readonly spellcheck="false"></textarea><p id="tokenFault" aria-live="polite"></p><button id="copyToken" type="button" disabled>アクセストークンをコピー</button><p id="tokenMessage" role="status"></p></div>
+</details>
 <details class="card" id="accessLogPanel"><summary><h2>アクセスログ <span id="accessLogCount" class="count"></span></h2></summary>
 <div id="accessLogNotice" class="notice hidden"><p id="accessLogMessage" role="status" aria-atomic="true"></p><button id="dismissAccessLogNotice" type="button" aria-label="アクセスログの通知を閉じる">閉じる</button></div>
 <div class="actions"><button id="refreshAccessLog" type="button">アクセスログを再読み込み</button><div class="action"><button id="clearAccessLog" class="danger" type="button">アクセスログをクリア</button><p class="action-hint danger-hint">記録済みのアクセスログをすべて削除します（シナリオの状態は変わりません）</p></div></div>
@@ -93,6 +101,148 @@ function renderLatest(id,state){if(id<lastSettled)return false;lastSettled=id;re
 function showLatestError(id,error,visible=true){if(id<lastSettled)return;lastSettled=id;if(visible)$('error').textContent=message(error)}
 function message(error){return error instanceof Error?error.message:String(error)}
 async function refresh(showError=true){if(pendingUpdates)return;const id=++sequence;try{if(renderLatest(id,await request('/__mock/api/scenario')))$('error').textContent=''}catch(error){showLatestError(id,error,showError)}}
+let tokenClients = [],
+  tokenUsers = [],
+  tokenBusy = false,
+  tokenResultSequence = 0;
+const tokenChoiceState = {
+  client: { loading: true, error: '' },
+  user: { loading: true, error: '' },
+};
+function clearTokenResult() {
+  tokenResultSequence++;
+  $("issuedToken").value = "";
+  $("tokenSubject").textContent = "";
+  $("tokenFault").textContent = "";
+  $("tokenMessage").textContent = "";
+  $("copyToken").disabled = true;
+  $("tokenResult").classList.add("hidden");
+}
+function updateTokenControls() {
+  const disabled = tokenBusy || Object.values(tokenChoiceState).some(state => state.loading);
+  $("tokenClient").disabled = disabled || !tokenClients.length;
+  $("tokenUser").disabled = disabled || !tokenUsers.length;
+  $("issueToken").disabled =
+    disabled ||
+    !tokenClients.length ||
+    !tokenUsers.length ||
+    !$("tokenClient").value ||
+    !$("tokenUser").value;
+  $("refreshTokenChoices").disabled = disabled;
+  $("issueToken").textContent = tokenBusy ? "発行中…" : "発行";
+  $("tokenForm").setAttribute("aria-busy", String(disabled));
+}
+function setTokenChoiceStatus(kind, loading, error = '') {
+  tokenChoiceState[kind] = { loading, error };
+  $('tokenChoicesError').textContent = Object.values(tokenChoiceState)
+    .map(state => state.error).filter(Boolean).join(' ');
+  updateTokenControls();
+}
+function setTokenChoices(kind, items) {
+  const select = $(kind === "client" ? "tokenClient" : "tokenUser"),
+    previous = select.value;
+  select.replaceChildren();
+  if (kind === "client") tokenClients = items;
+  else tokenUsers = items;
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = kind === "client" ? item.clientId : item.sub;
+    option.textContent =
+      kind === "client" ? item.clientId : item.name + "（" + item.sub + "）";
+    select.append(option);
+  }
+  if (!items.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent =
+      "登録済みの" +
+      (kind === "client" ? "クライアント" : "テストユーザー") +
+      "がありません";
+    select.append(option);
+  } else if (
+    items.some(
+      (item) => (kind === "client" ? item.clientId : item.sub) === previous,
+    )
+  )
+    select.value = previous;
+  setTokenChoiceStatus(kind, false);
+}
+async function loadTokenChoices() {
+  await Promise.all([clientEditor.load(), userEditor.load()]);
+}
+$("tokenClient").onchange = () => {
+  clearTokenResult();
+  updateTokenControls();
+};
+$("tokenUser").onchange = () => {
+  clearTokenResult();
+  updateTokenControls();
+};
+$("refreshTokenChoices").onclick = () => void loadTokenChoices();
+$("tokenForm").onsubmit = async (event) => {
+  event.preventDefault();
+  if ($("issueToken").disabled) return;
+  clearTokenResult();
+  $("tokenError").textContent = "";
+  const id = ++tokenResultSequence;
+  const subject = { clientId: $('tokenClient').value, userSub: $('tokenUser').value };
+  tokenBusy = true;
+  updateTokenControls();
+  try {
+    const data = await request("/__mock/api/tokens", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(subject),
+    });
+    if (id !== tokenResultSequence) return;
+    $("issuedToken").value = data.access_token;
+    $('tokenSubject').textContent = '発行対象: クライアント ' + subject.clientId + ' / ユーザー ' + subject.userSub;
+    $("tokenFault").textContent = data.fault
+      ? "適用した障害: " +
+        data.fault.scenario +
+        (data.fault.mode === "LIMITED"
+          ? "（残り " +
+            data.fault.remainingBefore +
+            " → " +
+            data.fault.remainingAfter +
+            "）"
+          : "")
+      : "適用した障害: なし";
+    $("tokenResult").classList.remove("hidden");
+    $("copyToken").disabled = false;
+  } catch (error) {
+    if (id === tokenResultSequence) {
+      clearTokenResult();
+      $("tokenError").textContent = message(error);
+    }
+  } finally {
+    tokenBusy = false;
+    updateTokenControls();
+    await refresh();
+  }
+};
+$("copyToken").onclick = async () => {
+  const value = $("issuedToken").value;
+  if (!value) return;
+  try {
+    try {
+      if (navigator.clipboard?.writeText)
+        await navigator.clipboard.writeText(value);
+      else copyFallback(value);
+    } catch {
+      copyFallback(value);
+    }
+    if ($("issuedToken").value === value)
+      $("tokenMessage").textContent = "アクセストークンをコピーしました";
+  } catch {
+    if ($("issuedToken").value === value) {
+      $("tokenMessage").textContent =
+        "コピーできませんでした。トークンを選択して手動でコピーしてください。";
+      $("issuedToken").focus();
+      $("issuedToken").select();
+    }
+  }
+};
 function createNotice(kind,focusTarget){const cap=kind[0].toUpperCase()+kind.slice(1),notice=$(kind+'Notice'),message=$(kind+'Message'),dismiss=$('dismiss'+cap+'Notice');let timer=null;function clear(){if(timer){clearTimeout(timer);timer=null}notice.classList.add('hidden');message.textContent=''}function schedule(){if(timer)clearTimeout(timer);timer=setTimeout(clear,10000)}function show(text){notice.classList.remove('hidden');message.textContent=text;schedule()}notice.addEventListener('mouseenter',()=>{if(timer){clearTimeout(timer);timer=null}});notice.addEventListener('mouseleave',()=>{if(!notice.classList.contains('hidden'))schedule()});notice.addEventListener('focusin',()=>{if(timer){clearTimeout(timer);timer=null}});notice.addEventListener('focusout',()=>{if(!notice.classList.contains('hidden'))schedule()});dismiss.onclick=()=>{clear();focusTarget().focus({preventScroll:true})};return{clear,show}}
 const scenarioNotice=createNotice('scenario',()=>$('scenario'));
 async function update(url,options,successMessage){pendingUpdates++;let id=++sequence;scenarioNotice.clear();try{await request(url,options);id=++sequence;if(renderLatest(id,await request('/__mock/api/scenario'))){$('error').textContent='';if(successMessage)scenarioNotice.show(successMessage)}}catch(error){showLatestError(id,error)}finally{pendingUpdates--}}
@@ -154,6 +304,17 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     retry.classList.add('hidden');
     savedRefreshPending = false;
     loadSequence++;
+    retry.disabled = false;
+    setTokenChoiceStatus(kind, false);
+  }
+  function replaceItems(items) {
+    // A mutation response supersedes every GET started before it completed.
+    loadSequence++;
+    renderItems(items);
+    listError.textContent = '';
+    retry.classList.add('hidden');
+    retry.disabled = false;
+    savedRefreshPending = false;
   }
   function setBusy(value) {
     busy = value;
@@ -213,6 +374,7 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     savedRefreshPending = savedRefreshPending || saved;
     const sequence = ++loadSequence;
     retry.disabled = true;
+    setTokenChoiceStatus(kind, true);
     try {
       const items = await request(url);
       if (sequence !== loadSequence) return;
@@ -227,6 +389,8 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
       else if (focused === retry) newButton.focus({ preventScroll: true });
     } catch (error) {
       if (sequence !== loadSequence) return;
+      setTokenChoices(kind, []);
+      setTokenChoiceStatus(kind, false, label + 'の候補を読み込めませんでした。 ' + message(error));
       listError.textContent =
         (savedRefreshPending
           ? '保存は完了しましたが、一覧を更新できませんでした。'
@@ -267,7 +431,7 @@ function createEditor(kind, label, idKey, errorId, renderItems, describeItem) {
     );
     await load(true);
   }
-  return { open, save, load, beginChange, notice: notice.show };
+  return { open, save, load, replaceItems, beginChange, notice: notice.show };
 }
 const clientEditor = createEditor(
   'client',
@@ -290,17 +454,17 @@ function openClient(client){$('clientId').value=client?.clientId??'';$('clientId
 // Lists show only what identifies an item; every field stays editable in the dialog.
 function listTable(root,headers){const table=document.createElement('table');table.className='data-table list-table';const head=document.createElement('thead'),headRow=document.createElement('tr');for(const text of headers){const th=document.createElement('th');th.scope='col';th.textContent=text;headRow.append(th)}head.append(headRow);const body=document.createElement('tbody');table.append(head,body);root.replaceChildren(table);return body}
 function rowActions(editId,onEdit,onDelete){const actions=document.createElement('div');actions.className='actions';const edit=document.createElement('button');edit.type='button';edit.textContent='編集';edit.dataset.editId=editId;edit.onclick=onEdit;const del=document.createElement('button');del.type='button';del.className='danger';del.textContent='削除';del.onclick=onDelete;actions.append(edit,del);const td=document.createElement('td');td.className='ops';td.append(actions);return td}
-function renderClients(items){const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','Access Token バージョン','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri;uris.append(line)}row.append(id,cell(client.clientType),cell('v'+(client.accessTokenVersion??'2.0')),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients();clientEditor.notice('OIDC クライアント「'+client.clientId+'」を削除しました。')}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
+function renderClients(items){setTokenChoices('client',items);const root=$('clients');$('clientCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みの OIDC クライアントはありません。';return}const body=listTable(root,['クライアント ID（client_id）','種別（clientType）','Access Token バージョン','リダイレクト URI（redirectUris）','操作']);for(const client of items){const row=document.createElement('tr'),id=document.createElement('td'),code=document.createElement('code');code.textContent=client.clientId;id.append(code);const uris=document.createElement('td');for(const uri of client.redirectUris){const line=document.createElement('div');line.textContent=uri;uris.append(line)}row.append(id,cell(client.clientType),cell('v'+(client.accessTokenVersion??'2.0')),uris,rowActions(client.clientId,()=>openClient(client),async()=>{if(!confirm('OIDC クライアント（クライアント ID（client_id）：'+client.clientId+'）を削除しますか？'))return;clientEditor.beginChange();try{await request('/__mock/api/clients/'+encodeURIComponent(client.clientId),{method:'DELETE'});await loadClients();clientEditor.notice('OIDC クライアント「'+client.clientId+'」を削除しました。')}catch(error){$('clientError').textContent=message(error)}}));body.append(row)}}
 async function loadClients(){await clientEditor.load()}
 $('newClient').onclick=()=>openClient(null);$('clientType').onchange=clientTypeFields;
 $('clientForm').onsubmit=async event=>{event.preventDefault();const type=$('clientType').value,payload={clientType:type,...(type==='CONFIDENTIAL'?{clientSecret:$('clientSecret').value,tokenEndpointAuthMethod:$('authMethod').value}:{tokenEndpointAuthMethod:'none'}),redirectUris:lines($('redirectUris').value),postLogoutRedirectUris:lines($('logoutUris').value),accessTokenAudience:$('audience').value,accessTokenScope:$('scope').value,accessTokenVersion:$('accessTokenVersion').value,emailOptionalClaim:$('emailOptionalClaim').checked};await clientEditor.save({clientId:$('clientId').value,...payload})};
-$('resetClients').onclick=async()=>{if(!confirm('すべての OIDC クライアントを初期状態に戻しますか？'))return;clientEditor.beginChange();try{renderClients(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent='';clientEditor.notice('OIDC クライアントを初期状態に戻しました。')}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
+$('resetClients').onclick=async()=>{if(!confirm('すべての OIDC クライアントを初期状態に戻しますか？'))return;clientEditor.beginChange();try{clientEditor.replaceItems(await request('/__mock/api/clients/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('clientError').textContent='';clientEditor.notice('OIDC クライアントを初期状態に戻しました。')}catch(error){$('clientError').textContent=message(error)}};clientTypeFields();void loadClients();
 function newUuid(){if(crypto.randomUUID)return crypto.randomUUID();const b=crypto.getRandomValues(new Uint8Array(16));b[6]=b[6]&15|64;b[8]=b[8]&63|128;const h=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20)}
 function openUser(user){$('userSub').value=user?.sub??newUuid();$('userSub').disabled=!!user;$('userOid').value=user?.oid??newUuid();$('userName').value=user?.name??'';$('userPreferredUsername').value=user?.preferred_username??'';$('userMail').value=user?.mail??'';$('userGroups').value=(user?.groups??[]).join('\\n');userEditor.open(user?.sub??null)}
-function renderUsers(items){const root=$('users');$('userCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みのテストユーザーはありません。';return}const body=listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作']);for(const user of items){const row=document.createElement('tr');row.append(cell(user.name),cell(user.preferred_username),cell(user.groups.join(', ')||'なし',user.groups.length?'':'muted'),rowActions(user.sub,()=>openUser(user),async()=>{if(!confirm('テストユーザー（ユーザー ID（sub）：'+user.sub+'）を削除しますか？'))return;userEditor.beginChange();try{await request('/__mock/api/users/'+encodeURIComponent(user.sub),{method:'DELETE'});await loadUsers();userEditor.notice('テストユーザー「'+user.name+'（'+user.sub+'）」を削除しました。')}catch(error){$('userError').textContent=message(error)}}));body.append(row)}}
+function renderUsers(items){setTokenChoices('user',items);const root=$('users');$('userCount').textContent='（'+items.length+' 件）';if(!items.length){root.textContent='登録済みのテストユーザーはありません。';return}const body=listTable(root,['表示名（name）','優先ユーザー名（preferred_username）','グループ（groups）','操作']);for(const user of items){const row=document.createElement('tr');row.append(cell(user.name),cell(user.preferred_username),cell(user.groups.join(', ')||'なし',user.groups.length?'':'muted'),rowActions(user.sub,()=>openUser(user),async()=>{if(!confirm('テストユーザー（ユーザー ID（sub）：'+user.sub+'）を削除しますか？'))return;userEditor.beginChange();try{await request('/__mock/api/users/'+encodeURIComponent(user.sub),{method:'DELETE'});await loadUsers();userEditor.notice('テストユーザー「'+user.name+'（'+user.sub+'）」を削除しました。')}catch(error){$('userError').textContent=message(error)}}));body.append(row)}}
 async function loadUsers(){await userEditor.load()}
 $('newUser').onclick=()=>openUser(null);
 $('userForm').onsubmit=async event=>{event.preventDefault();const payload={oid:$('userOid').value.trim(),name:$('userName').value,preferred_username:$('userPreferredUsername').value,mail:$('userMail').value.trim(),groups:lines($('userGroups').value)},sub=$('userSub').value.trim();await userEditor.save({...(sub?{sub}:{}),...payload})};
-$('resetUsers').onclick=async()=>{if(!confirm('すべてのテストユーザーを初期状態に戻しますか？'))return;userEditor.beginChange();try{renderUsers(await request('/__mock/api/users/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('userError').textContent='';userEditor.notice('テストユーザーを初期状態に戻しました。')}catch(error){$('userError').textContent=message(error)}};void loadUsers();
+$('resetUsers').onclick=async()=>{if(!confirm('すべてのテストユーザーを初期状態に戻しますか？'))return;userEditor.beginChange();try{userEditor.replaceItems(await request('/__mock/api/users/reset',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}));$('userError').textContent='';userEditor.notice('テストユーザーを初期状態に戻しました。')}catch(error){$('userError').textContent=message(error)}};void loadUsers();
 </script></body></html>`;
 }

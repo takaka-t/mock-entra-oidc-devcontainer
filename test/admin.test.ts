@@ -612,6 +612,7 @@ describe("admin API and UI", () => {
     expect(stateHtml).not.toContain("<details");
     for (const [panel, heading, count] of [
       ["connectionPanel", "アプリ接続情報", null],
+      ["tokenPanel", "アクセストークン発行", null],
       ["accessLogPanel", "アクセスログ", "accessLogCount"],
       ["clientPanel", "OIDC クライアント一覧", "clientCount"],
       ["userPanel", "テストユーザー一覧", "userCount"],
@@ -625,7 +626,7 @@ describe("admin API and UI", () => {
       if (count) expect(details[1]).toContain(`<span id="${count}" class="count">`);
       else expect(details[1]).not.toContain('class="count"');
     }
-    expect(response.body.match(/<details class="card"/g)).toHaveLength(4);
+    expect(response.body.match(/<details class="card"/g)).toHaveLength(5);
     expect(response.body).not.toMatch(/<details[^>]* open[ >]/);
     // The page never polls and never injects markup from API responses.
     expect(response.body).not.toContain("setInterval");

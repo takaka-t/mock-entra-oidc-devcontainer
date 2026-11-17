@@ -302,6 +302,6 @@ export async function buildApp(config: AppConfig, options: BuildAppOptions): Pro
     }
   });
   registerCommonProbeRoute(app, config);
-  await registerRoutes(app, provider, store, clientStore, userStore, accessLog, config);
+  await registerRoutes(app, provider, store, clientStore, userStore, accessLog, config, keys);
   return { app, store, clientStore, userStore, accessLog };
 }
