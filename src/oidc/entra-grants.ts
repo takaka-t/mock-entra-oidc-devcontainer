@@ -11,8 +11,10 @@ import type { InMemoryScenarioStore } from "../scenario/store.js";
 import type { MockUserStore } from "../users/store.js";
 import { SerialQueue } from "../persistence/json-file.js";
 import { sessionGuid, userClaims } from "./claims.js";
+import { encodeClientInfo } from "./client-info.js";
 import { signAccessToken } from "./direct-token.js";
 import type { SigningKeys } from "./keys.js";
+import { validateClaimsRequest } from "./requested-claims.js";
 import { narrowedScopes, resolveScopes, type ResolvedScopes } from "./scopes.js";
 
 interface RefreshRecord {
@@ -73,12 +75,13 @@ export function registerEntraGrants(
   const refreshTokens = new Map<string, RefreshRecord>();
   const codeQueue = new SerialQueue();
   const codeBindings = new Map<string, CodeBinding>();
-  provider.on("authorization.success", (ctx: KoaContextWithOIDC) => {
+  provider.on("authorization.success", (ctx: KoaContextWithOIDC, out: Record<string, unknown>) => {
     const code = ctx.oidc.entities.AuthorizationCode;
     if (!code?.redirectUri) return;
     const redirect = findRedirect(clientConfig(ctx).redirectUris, code.redirectUri);
     const user = users.findByOid(code.accountId!);
     if (!redirect || !user) return;
+    if (ctx.oidc.params?.client_info === "1") out.client_info = encodeClientInfo(user.oid, config.tenantId);
     for (const [id, binding] of codeBindings) if (binding.expiresAt <= Date.now()) codeBindings.delete(id);
     if (codeBindings.size >= 1000) codeBindings.delete(codeBindings.keys().next().value!);
     codeBindings.set(code.jti, {
@@ -161,6 +164,7 @@ export function registerEntraGrants(
         ? target.scopes.map((name) => `${target.resource.identifierUri}/${name}`).join(" ")
         : resolved.oidc.filter((name) => name !== "offline_access").join(" "),
       ...(idToken ? { id_token: idToken } : {}),
+      ...(ctx.oidc.params?.client_info === "1" ? { client_info: encodeClientInfo(user.oid, config.tenantId) } : {}),
       ...(issueRefresh ? { refresh_token: saveRefresh({ ...record, expiresAt: now() + lifetime }) } : {}),
     };
     ctx.status = 200;
@@ -172,6 +176,7 @@ export function registerEntraGrants(
     async (ctx) => {
       const client = clientConfig(ctx),
         params = ctx.oidc.params!;
+      validateClaimsRequest(params.claims);
       if (!params.code || !params.redirect_uri) throw new errors.InvalidRequest("code and redirect_uri are required");
       const validated = await codeQueue.run(async () => {
         const code = await provider.AuthorizationCode.find(String(params.code), { ignoreExpiration: true });
@@ -247,13 +252,14 @@ export function registerEntraGrants(
       });
       await issue(ctx, client, validated.record, validated.resolved, validated.offline);
     },
-    ["code", "redirect_uri", "code_verifier", "scope"],
+    ["code", "redirect_uri", "code_verifier", "scope", "client_info", "claims"],
   );
   provider.registerGrantType(
     "refresh_token",
     async (ctx) => {
       const client = clientConfig(ctx),
         value = ctx.oidc.params!.refresh_token;
+      validateClaimsRequest(ctx.oidc.params!.claims);
       if (!value) throw new errors.InvalidRequest("refresh_token is required");
       const record = refreshTokens.get(parameterValue(value));
       if (!record || record.clientId !== client.clientId || record.expiresAt <= now())
@@ -267,6 +273,6 @@ export function registerEntraGrants(
       narrowedScopes(resolved, record.scopes);
       await issue(ctx, client, record, resolved, true);
     },
-    ["refresh_token", "scope"],
+    ["refresh_token", "scope", "client_info", "claims"],
   );
 }

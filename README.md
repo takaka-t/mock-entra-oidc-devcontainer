@@ -2,7 +2,7 @@
 
 Microsoft Entra IDをIdPとするアプリケーションのローカル開発・障害試験用OIDC Providerです。認可とセッション管理は`oidc-provider`、Entra 固有のトークン発行は公開 grant 拡張と`jose`、HTTP障害・遅延・不正JWT・claim変更の注入は独立したシナリオ層が担います。Entra ID完全互換ではなく、Microsoft Graph APIも提供しません。
 
-対応フローは固定単一テナントの認可コード・更新・ログアウトです。認証はユーザー選択式、同意は自動で、MFA・条件付きアクセス・管理者同意は再現しません。client_credentials・OBO・device code・implicit・SAML、front-channel／back-channel logout、動的claims・claims challenge・DPoPは未対応です。
+対応フローは固定単一テナントの認可コード・更新・ログアウトです。認証はユーザー選択式、同意は自動で、MFA・条件付きアクセス・管理者同意は再現しません。任意の `claims` 要求は受け付けますが、要求によるトークン内容の変更は行いません。client_credentials・OBO・device code・implicit・SAML、front-channel／back-channel logout、claims challenge・DPoPは未対応です。
 
 > ローカル試験専用です。インターネットへ公開しないでください。HTTPSでもAdmin APIは認証なし、ユーザー認証は選択式です。Client Secretは設定ファイル・Admin API・Admin UIで平文として扱います。
 
@@ -72,6 +72,37 @@ Mock IdPは直接HTTPSで待ち受け、HTTP listenerやHTTPSへのredirectは�
 - endpointのpathはEntra準拠です。`protocolMode`の既定値（AAD）で動作するかを使用するSDK/バージョンで確認してください。`OIDC`への変更は不要な場合があります。
 - MSAL.NETなど他の実装でも、対象versionとflowが提供するcustom OIDC authority APIを使用します。
 - authority metadata、Discovery、issuer、署名、audience、証明書の検証は無効化しないでください。
+
+#### `claims` パラメーター
+
+認可（GET・form POST）、認可コード交換・更新（form POST）で `claims` を受け付けます。MSAL が既定で追加する次の任意要求を含め、mock が持たない情報はトークンに追加せず省略します。クライアント側でこの要求を取り除く設定は不要です。
+
+```json
+{
+  "id_token": {
+    "signin_state": { "essential": false },
+    "login_hint": { "essential": false },
+    "tenant_region_sub_scope": { "essential": false }
+  }
+}
+```
+
+- 個々の claim は `null` または要求オブジェクトで指定します。空の要求や未知の claim も受け付けます。[OIDC の仕様](https://openid.net/specs/openid-connect-core-1_0.html#IndividualClaimsRequests)に従い、通常の claim は `essential: true` であっても情報がなければ省略します。トークン内容は既存の scope とクライアント・API 設定で決まり、要求から値を転記したり profile 情報を追加したりしません。`userinfo` の要求を受け付けても UserInfo endpoint は提供しません。
+- `access_token.xms_cc` の機能通知（例：`{"access_token":{"xms_cc":{"values":["CP1"]}}}`）も受け付けます。`values` は文字列の配列で、大文字小文字や未知の機能名でも拒否しません。`xms_cc` の発行には API 側の optional claim 設定が必要です。この mock は `xms_cc` 用の設定を提供していないため、アクセストークンから省略します。[Microsoft の仕様](https://learn.microsoft.com/en-us/entra/identity-platform/claims-challenge)
+- `acr` の任意要求（`essential` の省略または `false`）は `value` / `values` があっても受け付け、この mock では省略します。`sub` の `value` / `values` によるユーザー指定、`acr` の `essential: true`、`acrs` の `essential: true` または `value` / `values` による認証制約は未対応です。認証制約と任意要求が混在していても `invalid_request` を返します。
+- 不正 JSON、不正な型、`value` と `values` の併用、`claims` パラメーターの重複は `invalid_request` です。単一の空値（`claims=`）は未指定として扱います。認可では検証済みの redirect URI に `state` とエラーを要求された response mode で返し、コード交換・更新では HTTP 400 の JSON を返します。コード交換で拒否しても認可コードは消費しません。
+
+[Microsoft の公開 Discovery](https://login.microsoftonline.com/organizations/v2.0/.well-known/openid-configuration)と同様に `claims_parameter_supported` は省略します。任意要求を受け付けるための互換処理であり、汎用的な claim 選択や条件付きアクセスの完全互換を示すものではありません。
+
+### 公開プロトコルの互換性
+
+Entra ID v2 と OIDC / OAuth の仕様を基準にしています。要求例と期待する応答は、[claims の互換性テスト](test/claims-compatibility.test.ts)と[公開プロトコルの互換性テスト](test/protocol-compatibility.test.ts)で確認できます。
+
+- 認可の `query`・`fragment`・`form_post` に対応します。検証済みのクライアントと redirect URI がある場合、認可の意味検証エラーも指定された形式で `state` とともに返します。不明なクライアント、不正・未登録・重複した redirect URI には返しません。本文サイズ・項目数の上限を超えた要求は直接拒否します。
+- 認可・コード交換・更新・ログアウトで、単一の空パラメーターは未指定として扱います。空白だけの値は空値ではありません。空値を含む重複パラメーターは正規化で消さず、認識するパラメーターの重複を拒否します。未知の拡張パラメーターは無視します。
+- `login_hint` は `preferred_username` と空でない `mail` を大文字小文字を区別せず照合します。`prompt=none` で現在のユーザーと一致しない場合は `login_required` です。対話型では既存のユーザー選択を行い、明示的な選択後は hint と異なるユーザーでも認証できます。opaque な hint は解釈しません。hint 自体で認証を成立させることはありません。
+- 認可・コード交換・更新で `client_info=1` を指定すると、応答パラメーター `client_info` に Base64url 形式の JSON `{"uid":"<ユーザーの oid>","utid":"<固定 Tenant ID>"}` を返します。各リクエストで判断し、省略・空値・`0`・未知の値では追加しません。JWT の claim や保存形式は変えません。固定単一テナントのため、ゲストのホームテナント情報は再現しません。
+- `domain_hint` によるフェデレーション先の選択や、`logout_hint` による確認画面の省略は再現しません。ログアウトは引き続き確認フローを経由します。
 
 ## TLS証明書とローカルCA
 

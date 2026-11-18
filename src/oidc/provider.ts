@@ -7,7 +7,7 @@ import Provider, {
   type KoaContextWithOIDC,
 } from "oidc-provider";
 import type { FastifyBaseLogger } from "fastify";
-import { requestCompatibility } from "./request-compatibility.js";
+import { requestCompatibility, validateAuthorizationCompatibility } from "./request-compatibility.js";
 import { mockTokenTtlSeconds, type AppConfig } from "../config.js";
 import { escapeHtml } from "../admin/html.js";
 import type { OidcClientConfig } from "../clients/types.js";
@@ -83,6 +83,18 @@ export function createProvider(
   // The provider's default check compares its internal account ID to sub.
   // Entra subjects are generated per receiving application instead.
   const loginChecks = policy.get("login")!.checks;
+  loginChecks.add(
+    new interactionPolicy.Check("login_hint", "the hinted user is not signed in", "login_required", (ctx) => {
+      const hint = parameterValue(ctx.oidc.params?.login_hint);
+      // A hint guides SSO; an explicit login may select a different account.
+      if (!hint || ctx.oidc.result?.login) return false;
+      const user = userStore.findByOid(ctx.oidc.session?.accountId ?? "");
+      return (
+        !user ||
+        ![user.preferred_username, user.mail].some((value) => value && value.toLowerCase() === hint.toLowerCase())
+      );
+    }),
+  );
   loginChecks.remove("id_token_hint");
   loginChecks.add(
     new interactionPolicy.Check(
@@ -153,7 +165,11 @@ export function createProvider(
       },
     },
     extraParams: {
+      client_info: (_ctx, value) => {
+        parameterValue(value);
+      },
       mock_validate: (ctx, _value, client) => {
+        validateAuthorizationCompatibility(ctx);
         const config = client.metadata().mock_config as OidcClientConfig;
         resolveScopes(parameterValue(ctx.oidc.params?.scope), config, resources);
       },
@@ -307,7 +323,9 @@ export function createProvider(
               token_endpoint: `${config.issuerOrigin}${config.tokenPath}`,
               jwks_uri: `${config.issuerOrigin}${config.jwksPath}`,
               end_session_endpoint: `${config.issuerOrigin}${config.logoutPath}`,
-              claims_parameter_supported: false,
+              // Like Entra metadata, omit this flag: optional claims are tolerated,
+              // but the mock does not implement generic claims selection.
+              claims_parameter_supported: undefined,
               subject_types_supported: ["pairwise"],
               claim_types_supported: ["normal", "distributed"],
               token_endpoint_auth_signing_alg_values_supported: undefined,

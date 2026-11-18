@@ -699,13 +699,17 @@ describe("Entra protocol conformance", () => {
       ...extra,
     });
     const response = await context.app.inject({ url: config.authorizePath + "?" + params.toString() });
-    expect(response.statusCode).toBe(400);
-    expect(response.headers.location).toBeUndefined();
-    expect(response.json()).toMatchObject({ error: expect.any(String), trace_id: expect.any(String) });
+    expect(response.statusCode).toBe(303);
+    const callback = new URL(String(response.headers.location));
+    expect(callback.origin).toBe("http://localhost:3000");
+    expect(callback.searchParams.get("error")).toBe(extra.scope ? "invalid_scope" : "invalid_request");
+    expect(callback.searchParams.has("code")).toBe(false);
     expect(response.headers["cache-control"]).toBe("no-store");
     const trailing = await context.app.inject({ url: config.authorizePath + "/?" + params.toString() });
-    expect(trailing.statusCode).toBe(400);
-    expect(trailing.headers.location).toBeUndefined();
+    expect(trailing.statusCode).toBe(303);
+    expect(new URL(String(trailing.headers.location)).searchParams.get("error")).toBe(
+      callback.searchParams.get("error"),
+    );
   });
   it("rejects unsupported DPoP proofs without consuming authorization codes", async () => {
     const flow = await authorize(context, config);
