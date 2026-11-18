@@ -227,7 +227,7 @@ describe("OIDC provider", () => {
       ver: "2.0",
     });
     expect(id.payload.mail).toBeUndefined();
-    expect(id.payload.email).toBeUndefined();
+    expect(id.payload.email).toBe("admin@example.com");
     expect(id.payload.sid).toBeTypeOf("string");
     expect(id.payload.nbf).toBe(id.payload.iat);
     const access = await jwtVerify(tokens.access_token, createLocalJWKSet(jwks), {
@@ -244,7 +244,7 @@ describe("OIDC provider", () => {
       scp: "access_as_user",
     });
     expect(access.payload.mail).toBeUndefined();
-    expect(access.payload.email).toBeUndefined();
+    expect(access.payload.email).toBe("admin@example.com");
     expect(access.payload.scope).toBeUndefined();
     expect(access.payload.sid).toBe(id.payload.sid);
     expect(access.payload.nbf).toBe(access.payload.iat);
@@ -290,7 +290,7 @@ describe("OIDC provider", () => {
           tid: mockTenantId,
           name: user.name,
           preferred_username: user.preferred_username,
-          ...(token === tokens.id_token ? { email: user.mail } : {}),
+          email: user.mail,
           groups: ["a0000000-0000-4000-8000-000000000005"],
         });
         expect(payload.mail).toBeUndefined();

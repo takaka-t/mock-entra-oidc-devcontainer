@@ -98,12 +98,18 @@ describe("OIDC client store", () => {
     const store = new OidcClientStore(file, apply, remove);
     await store.initialize();
     expect(store.list()).toEqual(defaultClients());
+    for (const client of store.list())
+      expect(client).toMatchObject({ emailOptionalClaim: true, groupMembershipClaims: "SecurityGroup" });
     expect((await stat(file)).mode & 0o777).toBe(0o600);
-    await store.create(publicClient);
+    await store.create({ ...publicClient, groupMembershipClaims: "None" });
     expect(store.list().at(-1)?.redirectUris).toEqual([{ uri: "http://localhost/callback", type: "native" }]);
     const reloaded = new OidcClientStore(file, apply, remove);
     await reloaded.initialize();
     expect(reloaded.list().some((client) => client.clientId === "a172cedc-ae47-474b-815c-54d510a5d84a")).toBe(true);
+    expect(reloaded.list().find((client) => client.clientId === publicClient.clientId)).toMatchObject({
+      emailOptionalClaim: false,
+      groupMembershipClaims: "None",
+    });
     await reloaded.reset();
     expect(reloaded.list()).toEqual(defaultClients());
   });

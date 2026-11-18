@@ -223,7 +223,8 @@ describe("Entra protocol conformance", () => {
     const minimal = (await login(publicClientId, "openid")).tokens;
     expect(minimal.access_token.split(".")).toHaveLength(1);
     const id = decodeJwt(minimal.id_token!);
-    for (const key of ["oid", "name", "preferred_username", "email"]) expect(id).not.toHaveProperty(key);
+    for (const key of ["oid", "name", "preferred_username"]) expect(id).not.toHaveProperty(key);
+    expect(id).toMatchObject({ email: "admin@example.com", groups: context.userStore.find("user-admin")!.groups });
     expect(decodeJwt((await login(publicClientId, "openid profile email")).tokens.id_token!)).toMatchObject({
       name: "Admin User",
       email: "admin@example.com",
@@ -234,18 +235,50 @@ describe("Entra protocol conformance", () => {
     const client = context.clientStore.list()[0]!,
       { clientId, ...input } = client;
     await context.clientStore.update(clientId, { ...input, emailOptionalClaim: true });
-    let tokens = (await login()).tokens;
+    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
+    await context.resourceStore.update(resourceAppId, { ...resource, emailOptionalClaim: false });
+    let tokens = (await login(publicClientId, `openid profile email ${defaultResourceUri}/access_as_user`)).tokens;
     expect(decodeJwt(tokens.id_token!)).toHaveProperty("email");
     expect(decodeJwt(tokens.access_token)).not.toHaveProperty("email");
-    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
     await context.resourceStore.update(resourceAppId, { ...resource, emailOptionalClaim: true });
-    tokens = (await login()).tokens;
+    await context.clientStore.update(clientId, { ...input, emailOptionalClaim: false });
+    tokens = (await login(publicClientId, `openid profile ${defaultResourceUri}/access_as_user`)).tokens;
+    expect(decodeJwt(tokens.id_token!)).not.toHaveProperty("email");
     expect(decodeJwt(tokens.access_token)).toHaveProperty("email");
+    await context.clientStore.update(clientId, { ...input, emailOptionalClaim: true });
     const { sub, ...user } = context.userStore.find("user-admin")!;
     await context.userStore.update(sub, { ...user, mail: "" });
     tokens = (await login()).tokens;
     expect(decodeJwt(tokens.id_token!)).not.toHaveProperty("email");
     expect(decodeJwt(tokens.access_token)).not.toHaveProperty("email");
+  });
+  it("keeps groups disabled and includes email only when requested after opting out of defaults", async () => {
+    const { clientId, ...input } = context.clientStore.list()[0]!;
+    await context.clientStore.update(clientId, { ...input, emailOptionalClaim: false, groupMembershipClaims: "None" });
+    const minimal = decodeJwt((await login(clientId, "openid")).tokens.id_token!);
+    expect(minimal).not.toHaveProperty("groups");
+    expect(minimal).not.toHaveProperty("email");
+    const withEmail = decodeJwt((await login(clientId, "openid email")).tokens.id_token!);
+    expect(withEmail).toHaveProperty("email", "admin@example.com");
+    expect(withEmail).not.toHaveProperty("groups");
+  });
+  it.each([false, true])("uses the API group policy independently of the client: %s", async (enabled) => {
+    const { clientId, ...client } = context.clientStore.list().find((item) => item.clientId === publicClientId)!;
+    await context.clientStore.update(clientId, {
+      ...client,
+      groupMembershipClaims: enabled ? "None" : "SecurityGroup",
+    });
+    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
+    await context.resourceStore.update(resourceAppId, {
+      ...resource,
+      groupMembershipClaims: enabled ? "SecurityGroup" : "None",
+    });
+    const { tokens } = await login();
+    const access = decodeJwt(tokens.access_token),
+      id = decodeJwt(tokens.id_token!);
+    const groups = context.userStore.find("user-admin")!.groups;
+    expect(access.groups).toEqual(enabled ? groups : undefined);
+    expect(id.groups).toEqual(enabled ? undefined : groups);
   });
   it.each([200, 201])("emits groups/overage for %s group memberships", async (count) => {
     const { sub, ...user } = context.userStore.find("user-admin")!;
@@ -348,6 +381,10 @@ describe("Entra protocol conformance", () => {
     expect((await refresh(first.refresh_token!)).statusCode).toBe(200);
   });
   it("respects explicit OIDC scope narrowing without reducing the refresh grant", async () => {
+    const { clientId, ...input } = context.clientStore.list()[0]!;
+    await context.clientStore.update(clientId, { ...input, emailOptionalClaim: false });
+    const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;
+    await context.resourceStore.update(resourceAppId, { ...resource, emailOptionalClaim: false });
     const { tokens } = await login(
       publicClientId,
       `openid profile email offline_access ${defaultResourceUri}/api.read`,

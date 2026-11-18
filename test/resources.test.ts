@@ -62,6 +62,48 @@ describe("API registration and references", () => {
     expect(await readFile(config.resourceConfigFile, "utf8")).toBe(before);
     expect(context.resourceStore.list()).toEqual(defaultResources());
   });
+  it("enables both API attributes on initial creation and explicit reset", async () => {
+    expect(context.resourceStore.find(defaultResourceAppId)).toMatchObject({
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup",
+    });
+    const { resourceAppId, ...input } = context.resourceStore.find(defaultResourceAppId)!;
+    await context.resourceStore.update(resourceAppId, {
+      ...input,
+      emailOptionalClaim: false,
+      groupMembershipClaims: "None",
+    });
+    const reset = await request("POST", "/__mock/api/resources/reset", {});
+    expect(reset.statusCode).toBe(200);
+    expect(reset.json()).toEqual([
+      expect.objectContaining({ emailOptionalClaim: true, groupMembershipClaims: "SecurityGroup" }),
+    ]);
+    const reload = new ApiResourceStore(config.resourceConfigFile);
+    await reload.initialize();
+    expect(reload.find(resourceAppId)).toMatchObject({
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup",
+    });
+  });
+  it.each([
+    { email: false, groups: "None" },
+    { email: true, groups: "None" },
+    { email: false, groups: "SecurityGroup" },
+    { email: true, groups: "SecurityGroup" },
+  ])("preserves saved API attributes without rewriting the file: $email / $groups", async ({ email, groups }) => {
+    const { resourceAppId, ...input } = context.resourceStore.find(defaultResourceAppId)!;
+    const saved = await request("PUT", `/__mock/api/resources/${resourceAppId}`, {
+      ...input,
+      emailOptionalClaim: email,
+      groupMembershipClaims: groups,
+    });
+    expect(saved.statusCode).toBe(200);
+    const before = await readFile(config.resourceConfigFile, "utf8");
+    const reload = new ApiResourceStore(config.resourceConfigFile);
+    await reload.initialize();
+    expect(reload.find(resourceAppId)).toMatchObject({ emailOptionalClaim: email, groupMembershipClaims: groups });
+    expect(await readFile(config.resourceConfigFile, "utf8")).toBe(before);
+  });
   it.each([
     { resourceAppId: "not-a-guid" },
     { scopes: ["invalid scope"] },

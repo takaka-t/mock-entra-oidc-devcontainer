@@ -53,7 +53,7 @@ function refineClient(value: Omit<OidcClientConfig, "clientId">, ctx: z.Refineme
     if (value.redirectUris.slice(0, index).some((item) => redirectMatches(item.uri, value.redirectUris[index]!.uri)))
       ctx.addIssue({
         code: "custom",
-        path: ["redirectUris"],
+        path: ["redirectUris", index, "uri"],
         message: "localhost のポートだけが異なる URI を含め、同じ URI は重複登録できません",
       });
   if (

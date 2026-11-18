@@ -101,6 +101,18 @@ function formatZodIssues(error: ZodError, fieldLabels: Record<string, string> = 
     .join("; ");
 }
 
+function registrationIssues(error: ZodError) {
+  return error.issues.map((issue) => {
+    let message = localizedZodMessage(issue);
+    if (issue.code === "invalid_format" && issue.format === "guid") message = "GUID形式で入力してください";
+    if (issue.code === "invalid_format" && issue.format === "email") message = "有効なメールアドレスを入力してください";
+    if (issue.code === "too_small")
+      message = issue.origin === "array" ? "1件以上入力してください" : "値を入力してください";
+    if (issue.code === "too_big") message = `${issue.maximum}以下にしてください（文字数または件数）`;
+    return { path: issue.path.filter((part) => typeof part === "string" || typeof part === "number"), message };
+  });
+}
+
 function interactionHtml(uid: string, issuerPath: string, users: readonly MockUser[]): string {
   const buttons = users
     .map(
@@ -444,6 +456,7 @@ function userError(reply: FastifyReply, error: unknown) {
     return reply.code(400).send({
       error: "invalid_user",
       message: formatZodIssues(error, userFieldLabels),
+      issues: registrationIssues(error),
     });
   throw error;
 }
@@ -463,6 +476,7 @@ function clientError(reply: import("fastify").FastifyReply, error: unknown) {
     return reply.code(400).send({
       error: "invalid_client",
       message: formatZodIssues(error, clientFieldLabels),
+      issues: registrationIssues(error),
     });
   if (error instanceof ClientValidationError)
     return reply.code(400).send({
@@ -477,6 +491,8 @@ function resourceError(reply: FastifyReply, error: unknown) {
     return reply.code(409).send({ error: "resource_conflict", message: error.message });
   if (error instanceof ResourceNotFoundError) return reply.code(404).send({ error: "resource_not_found" });
   if (error instanceof ZodError)
-    return reply.code(400).send({ error: "invalid_resource", message: formatZodIssues(error) });
+    return reply
+      .code(400)
+      .send({ error: "invalid_resource", message: formatZodIssues(error), issues: registrationIssues(error) });
   throw error;
 }

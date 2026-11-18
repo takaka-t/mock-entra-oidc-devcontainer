@@ -510,14 +510,40 @@ describe("admin API and UI", () => {
     for (const requiredFor of [
       "clientId",
       "clientSecret",
-      "redirectUris",
-      "permissions",
+      "platform",
+      "resourceAppId",
+      "resourceUri",
+      "resourceScopes",
       "userOid",
       "userName",
       "userPreferredUsername",
       "failureCount",
     ])
       expect(response.body).toContain(`for="${requiredFor}" class="required"`);
+    expect(response.body).toContain("<legend>リダイレクト URI</legend>");
+    expect(response.body).toContain('<div id="redirectUris"></div>');
+    expect(response.body).toContain('id="platform" required');
+    expect(response.body).toContain('id="addRedirectUri" type="button"');
+    expect(response.body).not.toContain('id="addPlatform"');
+    expect(response.body).not.toContain('id="platformChoices"');
+    expect(response.body).toContain("クライアントの認証区分（clientType）");
+    expect(response.body).toContain("<legend>IDトークンの属性</legend>");
+    expect(response.body).toContain("<legend>アクセストークンの属性</legend>");
+    expect(response.body).toContain('id="resourceGroups" type="checkbox" checked');
+    expect(response.body).toContain('id="resourceEmail" type="checkbox" checked');
+    expect(response.body).not.toContain('<select id="resourceGroups"');
+    expect(response.body).toContain("<legend>API権限（自API）</legend>");
+    expect(response.body).toContain('id="permissionApi"');
+    expect(response.body).toContain('id="applyPermission"');
+    expect(response.body).not.toContain('id="reloadPermissions"');
+    expect(response.body).not.toContain('<textarea id="permissions"');
+    expect(response.body).toContain('id="clientGroups" type="checkbox" checked');
+    expect(response.body).toContain('id="emailOptionalClaim" type="checkbox" checked');
+    expect(response.body).not.toContain('<select id="clientGroups"');
+    expect(response.body).toContain(
+      '<div class="actions"><button id="newResource" class="primary" type="button">API を登録</button><button id="resetResources" class="danger" type="button">API を初期状態に戻す</button></div>',
+    );
+    expect(response.body).not.toContain('<textarea id="redirectUris"');
     for (const notRequiredFor of ["userSub", "logoutUris", "userGroups", "clientType", "retryAfter"])
       expect(response.body).not.toContain(`for="${notRequiredFor}" class="required"`);
     for (const id of [
@@ -539,7 +565,6 @@ describe("admin API and UI", () => {
       "tenantId",
       "copyAuthority",
       "copyTenantId",
-      "connectionMessage",
       "accessLog",
       "accessLogRows",
       "accessLogError",
@@ -627,22 +652,74 @@ describe("admin API and UI", () => {
   });
   it("serves accessible registration dialogs and dismissible result notices", async () => {
     const { body } = await context.app.inject("/__mock");
-    for (const kind of ["client", "user"]) {
+    const notices = /<div id="notices" class="notice-stack">([\s\S]*?)<\/div>\s*<details/.exec(body)?.[1];
+    expect(notices).toBeDefined();
+    expect(body).not.toContain('id="refreshTokenChoices"');
+    expect(body).not.toContain('id="connectionMessage"');
+    expect(body).not.toContain('id="tokenMessage"');
+    expect(body).toContain('id="copyToken" class="icon-button"');
+    for (const kind of ["client", "user", "resource"]) {
       const cap = kind[0]!.toUpperCase() + kind.slice(1);
       const dialog = new RegExp(`<dialog id="${kind}Editor"[^>]*>[\\s\\S]*?</dialog>`).exec(body)?.[0];
       expect(dialog).toBeDefined();
       expect(dialog).toContain(`aria-labelledby="${kind}EditorTitle"`);
       expect(dialog).not.toMatch(/<dialog[^>]*\bopen(?:\s|>)/);
-      expect(dialog).toContain(`<form id="${kind}Form">`);
+      expect(dialog).toContain(`<form id="${kind}Form" novalidate>`);
       expect(dialog).toContain(`id="close${cap}" type="button"`);
       expect(dialog).toContain(`id="cancel${cap}" type="button"`);
       expect(dialog).toContain(`id="save${cap}" class="primary" type="submit"`);
       expect(dialog).toContain('role="alert" tabindex="-1"');
       expect(body).toContain(`<p id="${kind}Message" role="status" aria-atomic="true">`);
+      expect(notices).toContain(`id="${kind}Notice"`);
       expect(body).toContain(`id="dismiss${cap}Notice" type="button"`);
       expect(body).toContain(`id="retry${cap}s" class="hidden" type="button"`);
       expect(body.indexOf(`id="${kind}Notice"`)).toBeLessThan(body.indexOf(`id="${kind}s"`));
     }
+  });
+  it("returns structured field paths alongside compatible registration error messages", async () => {
+    const request = (url: string, payload: unknown) =>
+      context.app.inject({
+        method: "POST",
+        url,
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify(payload),
+      });
+    const client = await request("/__mock/api/clients", {
+      ...context.clientStore.list()[0]!,
+      redirectUris: [
+        { type: "native", uri: "https://example.test/callback" },
+        { type: "native", uri: "bad URI" },
+      ],
+    });
+    expect(client.statusCode).toBe(400);
+    expect(client.json()).toMatchObject({
+      error: "invalid_client",
+      message: expect.stringContaining("リダイレクト URI"),
+      issues: [{ path: ["redirectUris", 1], message: expect.any(String) }],
+    });
+    const user = await request("/__mock/api/users", {
+      ...context.userStore.list()[0]!,
+      groups: ["11111111-1111-1111-1111-111111111111", "bad"],
+    });
+    expect(user.statusCode).toBe(400);
+    expect(user.json()).toMatchObject({
+      error: "invalid_user",
+      issues: [{ path: ["groups", 1], message: "GUID形式で入力してください" }],
+    });
+    const resource = await request("/__mock/api/resources", {
+      ...context.resourceStore.list()[0]!,
+      identifierUri: "bad URI",
+      scopes: ["ok", "bad/scope"],
+    });
+    expect(resource.statusCode).toBe(400);
+    expect(resource.json()).toMatchObject({
+      error: "invalid_resource",
+      message: expect.any(String),
+      issues: [
+        { path: ["identifierUri"], message: expect.any(String) },
+        { path: ["scopes", 1], message: expect.any(String) },
+      ],
+    });
   });
   it("returns localized Admin API messages without changing error codes", async () => {
     const scenario = await context.app.inject({

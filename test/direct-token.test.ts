@@ -92,6 +92,7 @@ describe("direct development access tokens", () => {
         tid: config.tenantId,
         name: "Admin User",
         preferred_username: "admin@example.com",
+        email: "admin@example.com",
         groups: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2"],
         ver: "2.0",
         azp: clientId,
@@ -101,7 +102,7 @@ describe("direct development access tokens", () => {
       expect(payload.nbf).toBe(payload.iat);
       expect(payload.exp! - payload.iat!).toBe(mockTokenTtlSeconds);
       expect(payload.jti).toEqual(expect.any(String));
-      for (const claim of ["scope", "email", "mail", "sid", "roles", "appid", "unique_name"])
+      for (const claim of ["scope", "mail", "sid", "roles", "appid", "unique_name"])
         expect(payload).not.toHaveProperty(claim);
       expect(result).not.toHaveProperty("id_token");
       expect(result).not.toHaveProperty("refresh_token");
@@ -148,6 +149,26 @@ describe("direct development access tokens", () => {
     });
     for (const claim of ["azp", "azpacr", "preferred_username", "sid"]) expect(payload).not.toHaveProperty(claim);
     expect(result.scope).toBe("api://55555555-5555-4555-8555-555555555555/access_as_user");
+  });
+  it.each([false, true])("applies API attribute settings independently of client settings: %s", async (enabled) => {
+    const { clientId, ...client } = context.clientStore.list().find((item) => item.clientId === input.clientId)!;
+    await context.clientStore.update(clientId, {
+      ...client,
+      emailOptionalClaim: !enabled,
+      groupMembershipClaims: enabled ? "None" : "SecurityGroup",
+    });
+    const { resourceAppId, ...resource } = context.resourceStore.find(input.resourceAppId)!;
+    await context.resourceStore.update(resourceAppId, {
+      ...resource,
+      emailOptionalClaim: enabled,
+      groupMembershipClaims: enabled ? "SecurityGroup" : "None",
+    });
+    const response = await issue();
+    expect(response.statusCode).toBe(200);
+    const payload = decodeJwt(response.json<DirectTokenResponse>().access_token);
+    const user = context.userStore.find(input.userId)!;
+    expect(payload.email).toEqual(enabled ? user.mail : undefined);
+    expect(payload.groups).toEqual(enabled ? user.groups : undefined);
   });
   it.each(["user-normal", "user-unauthorized"])("preserves the groups of %s", async (userId) => {
     const result = (await issue({ ...input, userId })).json<DirectTokenResponse>();

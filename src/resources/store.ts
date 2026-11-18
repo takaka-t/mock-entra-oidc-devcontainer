@@ -16,7 +16,7 @@ export const defaultResources = (): ApiResourceConfig[] => [
     identifierUri: defaultResourceUri,
     scopes: ["access_as_user", "api.read", "api.write"],
     requestedAccessTokenVersion: 2,
-    emailOptionalClaim: false,
+    emailOptionalClaim: true,
     groupMembershipClaims: "SecurityGroup",
   },
 ];

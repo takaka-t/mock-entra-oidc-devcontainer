@@ -38,7 +38,7 @@ export const defaultClients = (): OidcClientConfig[] => [
     requiredResourceAccess: [
       { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
     ],
-    emailOptionalClaim: false,
+    emailOptionalClaim: true,
     groupMembershipClaims: "SecurityGroup",
   },
   {
@@ -50,7 +50,7 @@ export const defaultClients = (): OidcClientConfig[] => [
     requiredResourceAccess: [
       { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
     ],
-    emailOptionalClaim: false,
+    emailOptionalClaim: true,
     groupMembershipClaims: "SecurityGroup",
   },
   {
@@ -61,7 +61,7 @@ export const defaultClients = (): OidcClientConfig[] => [
     requiredResourceAccess: [
       { resourceAppId: defaultResourceAppId, scopes: ["access_as_user", "api.read", "api.write"] },
     ],
-    emailOptionalClaim: false,
+    emailOptionalClaim: true,
     groupMembershipClaims: "SecurityGroup",
   },
 ];
