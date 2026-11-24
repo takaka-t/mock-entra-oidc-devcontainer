@@ -113,6 +113,35 @@ describe("direct development access tokens", () => {
       expect(decodeJwt((await issue()).json<DirectTokenResponse>().access_token).jti).not.toBe(payload.jti);
     },
   );
+  it("supports one app registration that signs in and exposes its own API", async () => {
+    const appId = "66666666-6666-4666-8666-666666666666";
+    await context.resourceStore.create({
+      resourceAppId: appId,
+      identifierUri: `api://${appId}`,
+      scopes: ["access_as_user"],
+      requestedAccessTokenVersion: 2,
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup",
+    });
+    await context.clientStore.create({
+      clientId: appId,
+      clientType: "PUBLIC",
+      tokenEndpointAuthMethod: "none",
+      redirectUris: [{ uri: "http://localhost:3000/callback", type: "spa" }],
+      requiredResourceAccess: [{ resourceAppId: appId, scopes: ["access_as_user"] }],
+      emailOptionalClaim: true,
+      groupMembershipClaims: "SecurityGroup",
+    });
+    const response = await issue({ ...input, clientId: appId, resourceAppId: appId });
+    expect(response.statusCode).toBe(200);
+    const result = response.json<DirectTokenResponse>();
+    expect(result.scope).toBe(`api://${appId}/access_as_user`);
+    const { payload } = await jwtVerify(result.access_token, await jwks(), {
+      issuer: config.issuer,
+      audience: appId,
+    });
+    expect(payload).toMatchObject({ aud: appId, azp: appId, azpacr: "0", scp: "access_as_user" });
+  });
   it("reflects current client settings, user changes and v1 metadata", async () => {
     const clientId = context.clientStore.list()[0]!.clientId;
     const { resourceAppId, ...resource } = context.resourceStore.list()[0]!;

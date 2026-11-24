@@ -204,6 +204,21 @@ API 登録・OIDC クライアント・テストユーザーを Admin UI また�
 
 API 登録でアクセストークンの形式と公開スコープを、クライアント登録で要求可能な API 権限と ID トークンの claim 設定を管理します。
 
+### Entra ID のアプリ登録との対応
+
+Entra ID のアプリ登録は1種類で、設定内容によってクライアント・API の役割が決まります。このモックでは役割ごとに次の登録へ分けて管理します。
+
+| Entra ID のアプリ登録の設定                                                          | このモックの登録先                                                                                           |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| 認証（プラットフォーム・リダイレクト URI）、証明書とシークレット                     | OIDCクライアント（`redirectUris`・`clientType`・`clientSecret`）                                             |
+| API のアクセス許可                                                                   | OIDCクライアント（`requiredResourceAccess`）                                                                 |
+| API の公開（Application ID URI・スコープ）、マニフェストのアクセストークンバージョン | API 登録（`identifierUri`・`scopes`・`requestedAccessTokenVersion`）                                         |
+| トークン構成（groups・email）                                                        | ID トークンは OIDCクライアント、アクセストークンは API 登録（`groupMembershipClaims`・`emailOptionalClaim`） |
+
+- SPA とバックエンド API をそれぞれアプリ登録する構成では、SPA を OIDCクライアント、バックエンド API を API 登録として登録し、SPA の API 権限でバックエンド API のスコープを許可します。トークンを検証するだけのバックエンド API は OIDCクライアントの登録が不要です。
+- 1つのアプリ登録がサインインと API の公開を兼ねる構成は、同じ GUID で OIDCクライアントと API 登録の両方を登録して再現します（例: `identifierUri` を `api://<clientId>` とし、クライアントの API 権限に自身の API を追加）。アクセストークンの `aud` と `azp` は同じ値になります。
+- Entra ID の `groupMembershipClaims` はアプリ単位の設定です。同じ GUID で両方を登録する場合は、OIDCクライアントと API 登録の groups 設定をそろえてください。このモックは両者を別々に保存し、一致を検証しません。
+
 ### API 登録
 
 初期 API は次の設定です。
